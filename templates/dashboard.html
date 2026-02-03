@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticket Extractor Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
+            --danger-color: #e74c3c;
+        }
+        body {
+            background-color: #f5f6fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .navbar {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
+        }
+        .stat-card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        .stat-card .card-body {
+            padding: 1.5rem;
+        }
+        .stat-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        .table-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 1.5rem;
+        }
+        .badge-portal {
+            font-size: 0.75rem;
+            padding: 0.4em 0.8em;
+        }
+        .badge-dhiraagu { background-color: #e74c3c; }
+        .badge-ooredoo { background-color: #9b59b6; }
+        .badge-rol { background-color: #3498db; }
+        .badge-medianet { background-color: #1abc9c; }
+        .znuny-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .znuny-yes { color: var(--success-color); }
+        .znuny-no { color: var(--danger-color); }
+        .filter-section {
+            background: white;
+            border-radius: 15px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        .ticket-row {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .ticket-row:hover {
+            background-color: #f8f9fa;
+        }
+        .modal-header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
+            color: white;
+        }
+        .notes-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .notes-timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+        .notes-timeline::before {
+            content: '';
+            position: absolute;
+            left: 10px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, var(--secondary-color), #e0e0e0);
+        }
+        .note-card {
+            position: relative;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 12px 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .note-card::before {
+            content: '';
+            position: absolute;
+            left: -24px;
+            top: 15px;
+            width: 12px;
+            height: 12px;
+            background: var(--secondary-color);
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .note-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        .note-source {
+            display: inline-block;
+            background: var(--primary-color);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .note-source.hdc { background: #e74c3c; }
+        .note-source.dhiraagu { background: #3498db; }
+        .note-source.remark { background: #f39c12; }
+        .note-datetime {
+            color: #666;
+            font-size: 0.8rem;
+        }
+        .note-datetime i {
+            margin-right: 3px;
+        }
+        .note-content {
+            color: #333;
+            line-height: 1.5;
+            margin-bottom: 8px;
+            white-space: pre-wrap;
+        }
+        .note-author {
+            color: #888;
+            font-size: 0.8rem;
+            font-style: italic;
+        }
+        .note-author i {
+            margin-right: 3px;
+        }
+        .notes-history {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .notes-item {
+            padding: 0.5rem;
+            border-left: 3px solid var(--secondary-color);
+            margin-bottom: 0.5rem;
+            background-color: #f8f9fa;
+        }
+        .refresh-btn {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+        .loading-overlay.show {
+            display: flex;
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="navbar navbar-dark mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-ticket-detailed me-2"></i>
+                Ticket Extractor Dashboard
+            </span>
+            <div class="d-flex align-items-center">
+                <span class="text-white-50 me-3" id="lastUpdate">Last update: --</span>
+                <button class="btn btn-outline-light btn-sm" onclick="checkAllZnuny()">
+                    <i class="bi bi-arrow-repeat me-1"></i>Check Znuny Status
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid px-4">
+        <!-- Stats Cards -->
+        <div class="row mb-4" id="statsRow">
+            <div class="col-md-3 mb-3">
+                <div class="stat-card card">
+                    <div class="card-body d-flex align-items-center">
+                        <div class="stat-icon bg-primary text-white me-3">
+                            <i class="bi bi-ticket"></i>
+                        </div>
+                        <div>
+                            <div class="stat-value" id="totalTickets">0</div>
+                            <div class="text-muted">Total Tickets</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="stat-card card">
+                    <div class="card-body d-flex align-items-center">
+                        <div class="stat-icon bg-danger text-white me-3">
+                            <i class="bi bi-exclamation-triangle"></i>
+                        </div>
+                        <div>
+                            <div class="stat-value" id="notInZnuny">0</div>
+                            <div class="text-muted">Not in Znuny</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <div class="stat-card card">
+                    <div class="card-body">
+                        <h6 class="text-muted mb-2">Tickets by Portal</h6>
+                        <div class="d-flex flex-wrap gap-2" id="portalStats">
+                            <!-- Filled by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filter-section">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Search</label>
+                    <input type="text" class="form-control" id="searchInput" placeholder="Ticket ID, customer, address...">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Portal</label>
+                    <select class="form-select" id="portalFilter">
+                        <option value="">All Portals</option>
+                        <option value="dhiraagu">Dhiraagu</option>
+                        <option value="ooredoo">Ooredoo</option>
+                        <option value="rol">ROL</option>
+                        <option value="medianet">Medianet</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" id="statusFilter">
+                        <option value="">All Status</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Ticket Type</label>
+                    <select class="form-select" id="typeFilter">
+                        <option value="">All Types</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Znuny Status</label>
+                    <select class="form-select" id="znunyFilter">
+                        <option value="">All</option>
+                        <option value="false">Not in Znuny</option>
+                        <option value="true">In Znuny</option>
+                    </select>
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                    <button class="btn btn-primary w-100" onclick="loadTickets()">
+                        <i class="bi bi-search"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tickets Table -->
+        <div class="table-container">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>Portal</th>
+                            <th>Ticket ID</th>
+                            <th>Customer</th>
+                            <th>Address</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Portal Created</th>
+                            <th>Extracted</th>
+                            <th>Completed</th>
+                            <th>Znuny</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ticketsTable">
+                        <!-- Filled by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <div class="text-muted" id="paginationInfo">Showing 0 tickets</div>
+                <nav>
+                    <ul class="pagination mb-0" id="pagination">
+                        <!-- Filled by JavaScript -->
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ticket Detail Modal -->
+    <div class="modal fade" id="ticketModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-ticket-detailed me-2"></i>
+                        Ticket Details
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="ticketModalBody">
+                    <!-- Filled by JavaScript -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="checkZnunyBtn">
+                        <i class="bi bi-arrow-repeat me-1"></i>Check Znuny
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Refresh Button -->
+    <button class="btn btn-primary refresh-btn" onclick="refreshAll()" title="Refresh">
+        <i class="bi bi-arrow-clockwise"></i>
+    </button>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentPage = 0;
+        const pageSize = 50;
+        let currentTicketId = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadTickets();
+
+            // Search on enter
+            document.getElementById('searchInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') loadTickets();
+            });
+
+            // Auto-refresh every 5 minutes
+            setInterval(refreshAll, 300000);
+        });
+
+        function showLoading(show) {
+            document.getElementById('loadingOverlay').classList.toggle('show', show);
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+
+                document.getElementById('totalTickets').textContent = stats.total || 0;
+                document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
+
+                // Portal stats
+                const portalStats = document.getElementById('portalStats');
+                portalStats.innerHTML = '';
+                const portals = stats.by_portal || {};
+                for (const [portal, count] of Object.entries(portals)) {
+                    portalStats.innerHTML += `
+                        <span class="badge badge-portal badge-${portal}">${portal}: ${count}</span>
+                    `;
+                }
+
+                // Update status filter options
+                const statusFilter = document.getElementById('statusFilter');
+                const currentStatus = statusFilter.value;
+                statusFilter.innerHTML = '<option value="">All Status</option>';
+                for (const status of Object.keys(stats.by_status || {})) {
+                    statusFilter.innerHTML += `<option value="${status}">${status}</option>`;
+                }
+                statusFilter.value = currentStatus;
+
+                // Update type filter options
+                const typeFilter = document.getElementById('typeFilter');
+                const currentType = typeFilter.value;
+                typeFilter.innerHTML = '<option value="">All Types</option>';
+                for (const type of Object.keys(stats.by_type || {})) {
+                    typeFilter.innerHTML += `<option value="${type}">${type}</option>`;
+                }
+                typeFilter.value = currentType;
+
+                document.getElementById('lastUpdate').textContent =
+                    'Last update: ' + new Date().toLocaleTimeString();
+
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadTickets() {
+            showLoading(true);
+            try {
+                const params = new URLSearchParams();
+
+                const search = document.getElementById('searchInput').value;
+                const portal = document.getElementById('portalFilter').value;
+                const status = document.getElementById('statusFilter').value;
+                const type = document.getElementById('typeFilter').value;
+                const znuny = document.getElementById('znunyFilter').value;
+
+                if (search) params.append('search', search);
+                if (portal) params.append('portal', portal);
+                if (status) params.append('status', status);
+                if (type) params.append('ticket_type', type);
+                if (znuny) params.append('in_znuny', znuny);
+                params.append('limit', pageSize);
+                params.append('offset', currentPage * pageSize);
+
+                const response = await fetch('/api/tickets?' + params.toString());
+                const data = await response.json();
+
+                renderTickets(data.tickets);
+                renderPagination(data.total);
+
+            } catch (error) {
+                console.error('Error loading tickets:', error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function renderTickets(tickets) {
+            const tbody = document.getElementById('ticketsTable');
+            tbody.innerHTML = '';
+
+            if (tickets.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="11" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                            No tickets found
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            for (const ticket of tickets) {
+                const row = document.createElement('tr');
+                row.className = 'ticket-row';
+                row.onclick = () => showTicketDetail(ticket.id);
+
+                const znunyIcon = ticket.in_znuny
+                    ? '<i class="bi bi-check-circle-fill znuny-yes"></i> Yes'
+                    : '<i class="bi bi-x-circle-fill znuny-no"></i> No';
+
+                const portalCreatedStr = ticket.portal_created_at
+                    ? new Date(ticket.portal_created_at).toLocaleString()
+                    : '-';
+
+                const extractedStr = ticket.created_at
+                    ? new Date(ticket.created_at).toLocaleString()
+                    : '-';
+
+                const completedStr = ticket.completed_at
+                    ? new Date(ticket.completed_at).toLocaleString()
+                    : '-';
+
+                row.innerHTML = `
+                    <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
+                    <td><strong>${ticket.ticket_id}</strong></td>
+                    <td>${ticket.customer_name || '-'}</td>
+                    <td>${ticket.address || '-'}</td>
+                    <td>${ticket.ticket_type || '-'}</td>
+                    <td>${ticket.status || '-'}</td>
+                    <td>${portalCreatedStr}</td>
+                    <td>${extractedStr}</td>
+                    <td>${completedStr}</td>
+                    <td class="znuny-status">${znunyIcon}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); checkZnuny(${ticket.id})">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            }
+        }
+
+        function renderPagination(total) {
+            const totalPages = Math.ceil(total / pageSize);
+            const info = document.getElementById('paginationInfo');
+            const start = currentPage * pageSize + 1;
+            const end = Math.min((currentPage + 1) * pageSize, total);
+            info.textContent = `Showing ${start}-${end} of ${total} tickets`;
+
+            const pagination = document.getElementById('pagination');
+            pagination.innerHTML = '';
+
+            if (totalPages <= 1) return;
+
+            // Previous button
+            pagination.innerHTML += `
+                <li class="page-item ${currentPage === 0 ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="goToPage(${currentPage - 1})">&laquo;</a>
+                </li>
+            `;
+
+            // Page numbers
+            for (let i = 0; i < totalPages && i < 5; i++) {
+                pagination.innerHTML += `
+                    <li class="page-item ${i === currentPage ? 'active' : ''}">
+                        <a class="page-link" href="#" onclick="goToPage(${i})">${i + 1}</a>
+                    </li>
+                `;
+            }
+
+            // Next button
+            pagination.innerHTML += `
+                <li class="page-item ${currentPage >= totalPages - 1 ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="goToPage(${currentPage + 1})">&raquo;</a>
+                </li>
+            `;
+        }
+
+        function goToPage(page) {
+            currentPage = page;
+            loadTickets();
+        }
+
+        async function showTicketDetail(ticketId) {
+            showLoading(true);
+            currentTicketId = ticketId;
+
+            try {
+                const response = await fetch(`/api/tickets/${ticketId}`);
+                const data = await response.json();
+                const ticket = data.ticket;
+                const notesHistory = data.notes_history || [];
+
+                const body = document.getElementById('ticketModalBody');
+                body.innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Portal:</strong> <span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></p>
+                            <p><strong>Ticket ID:</strong> ${ticket.ticket_id}</p>
+                            <p><strong>Customer:</strong> ${ticket.customer_name || '-'}</p>
+                            <p><strong>Address:</strong> ${ticket.address || '-'}</p>
+                            <p><strong>Service Type:</strong> ${ticket.service_type || '-'}</p>
+                            <p><strong>KPI:</strong> ${ticket.kpi || '-'}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Ticket Type:</strong> ${ticket.ticket_type || '-'}</p>
+                            <p><strong>Status:</strong> ${ticket.status || '-'}</p>
+                            <p><strong>In Znuny:</strong>
+                                <span class="znuny-status ${ticket.in_znuny ? 'znuny-yes' : 'znuny-no'}">
+                                    ${ticket.in_znuny ? '<i class="bi bi-check-circle-fill"></i> Yes' : '<i class="bi bi-x-circle-fill"></i> No'}
+                                    ${ticket.znuny_ticket_id ? ` (${ticket.znuny_ticket_id})` : ''}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+                    <hr>
+                    <h6>Timestamps</h6>
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <div class="p-2 bg-light rounded">
+                                <small class="text-muted d-block">Portal Created</small>
+                                <strong>${ticket.portal_created_at ? new Date(ticket.portal_created_at).toLocaleString() : '-'}</strong>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="p-2 bg-light rounded">
+                                <small class="text-muted d-block">Extracted to DB</small>
+                                <strong>${ticket.created_at ? new Date(ticket.created_at).toLocaleString() : '-'}</strong>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="p-2 bg-light rounded">
+                                <small class="text-muted d-block">Completed</small>
+                                <strong>${ticket.completed_at ? new Date(ticket.completed_at).toLocaleString() : '-'}</strong>
+                            </div>
+                        </div>
+                    </div>
+                    <hr>
+                    <h6><i class="bi bi-chat-left-text me-2"></i>Notes (${parseNotes(ticket.notes).length})</h6>
+                    <div class="notes-container">
+                        ${renderNotesTimeline(ticket.notes)}
+                    </div>
+                    ${notesHistory.length > 0 ? `
+                        <hr>
+                        <h6><i class="bi bi-clock-history me-2"></i>Notes History</h6>
+                        <div class="notes-history">
+                            ${notesHistory.map(n => `
+                                <div class="notes-item">
+                                    <small class="text-muted">${new Date(n.recorded_at).toLocaleString()}</small>
+                                    <p class="mb-0 small">${n.note.substring(0, 100)}${n.note.length > 100 ? '...' : ''}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                `;
+
+                document.getElementById('checkZnunyBtn').onclick = () => checkZnuny(ticketId);
+                new bootstrap.Modal(document.getElementById('ticketModal')).show();
+
+            } catch (error) {
+                console.error('Error loading ticket detail:', error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function checkZnuny(ticketId) {
+            showLoading(true);
+            try {
+                const response = await fetch(`/api/tickets/${ticketId}/check-znuny`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                alert(data.in_znuny
+                    ? `Ticket found in Znuny! (ID: ${data.znuny_ticket_id})`
+                    : 'Ticket not found in Znuny'
+                );
+
+                loadStats();
+                loadTickets();
+
+            } catch (error) {
+                console.error('Error checking Znuny:', error);
+                alert('Error checking Znuny status');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function checkAllZnuny() {
+            if (!confirm('Check Znuny status for all tickets not yet marked? This may take a while.')) {
+                return;
+            }
+
+            showLoading(true);
+            try {
+                const response = await fetch('/api/tickets/check-all-znuny', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                alert(`Checked ${data.checked} tickets. ${data.updated} were found in Znuny.`);
+
+                loadStats();
+                loadTickets();
+
+            } catch (error) {
+                console.error('Error checking all Znuny:', error);
+                alert('Error checking Znuny status');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function refreshAll() {
+            loadStats();
+            loadTickets();
+        }
+
+        function parseNotes(notesStr) {
+            if (!notesStr) return [];
+
+            const notes = [];
+            // Split by the separator
+            const noteBlocks = notesStr.split('---').map(n => n.trim()).filter(n => n);
+
+            for (const block of noteBlocks) {
+                const note = {
+                    source: '',
+                    content: '',
+                    author: '',
+                    datetime: ''
+                };
+
+                // Parse each note block
+                // Format: [Source] Note content
+                //         - Author (date time)
+                const lines = block.split('\n');
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+
+                    if (line.startsWith('[') && line.includes(']')) {
+                        // Extract source and start of content
+                        const bracketEnd = line.indexOf(']');
+                        note.source = line.substring(1, bracketEnd).trim();
+                        note.content = line.substring(bracketEnd + 1).trim();
+                    } else if (line.startsWith('- ') && line.includes('(') && line.includes(')')) {
+                        // Author line: "- Author Name (date time)"
+                        const authorMatch = line.match(/^-\s*(.+?)\s*\((.+?)\)$/);
+                        if (authorMatch) {
+                            note.author = authorMatch[1].trim();
+                            note.datetime = authorMatch[2].trim();
+                        }
+                    } else if (note.content && line) {
+                        // Additional content lines
+                        note.content += '\n' + line;
+                    }
+                }
+
+                if (note.content || note.source) {
+                    notes.push(note);
+                }
+            }
+
+            return notes;
+        }
+
+        function renderNotesTimeline(notesStr) {
+            const notes = parseNotes(notesStr);
+
+            if (notes.length === 0) {
+                return '<div class="text-muted text-center py-3"><i class="bi bi-chat-left fs-3 d-block mb-2"></i>No notes available</div>';
+            }
+
+            let html = '<div class="notes-timeline">';
+
+            for (const note of notes) {
+                const sourceClass = note.source.toLowerCase().includes('hdc') ? 'hdc' :
+                                   note.source.toLowerCase().includes('remark') ? 'remark' :
+                                   note.source.toLowerCase().includes('dhiraagu') ? 'dhiraagu' : '';
+
+                html += `
+                    <div class="note-card">
+                        <div class="note-header">
+                            <span class="note-source ${sourceClass}">${escapeHtml(note.source) || 'Note'}</span>
+                            ${note.datetime ? `<span class="note-datetime"><i class="bi bi-calendar-event"></i>${escapeHtml(note.datetime)}</span>` : ''}
+                        </div>
+                        <div class="note-content">${escapeHtml(note.content)}</div>
+                        ${note.author ? `<div class="note-author"><i class="bi bi-person"></i>${escapeHtml(note.author)}</div>` : ''}
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
