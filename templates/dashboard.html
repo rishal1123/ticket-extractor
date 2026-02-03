@@ -228,39 +228,59 @@
     <div class="container-fluid px-4">
         <!-- Stats Cards -->
         <div class="row mb-4" id="statsRow">
-            <div class="col-md-3 mb-3">
-                <div class="stat-card card">
-                    <div class="card-body d-flex align-items-center">
-                        <div class="stat-icon bg-primary text-white me-3">
-                            <i class="bi bi-ticket"></i>
-                        </div>
-                        <div>
-                            <div class="stat-value" id="totalTickets">0</div>
-                            <div class="text-muted">Total Tickets</div>
-                        </div>
+            <!-- Portal Cards -->
+            <div class="col-6 col-md-4 col-lg-2 mb-3">
+                <div class="stat-card card h-100" style="border-left: 4px solid #e74c3c;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-building fs-2 text-danger mb-2"></i>
+                        <div class="stat-value" id="dhiraaguCount">0</div>
+                        <div class="text-muted small">Dhiraagu</div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-3 mb-3">
-                <div class="stat-card card">
-                    <div class="card-body d-flex align-items-center">
-                        <div class="stat-icon bg-danger text-white me-3">
-                            <i class="bi bi-exclamation-triangle"></i>
-                        </div>
-                        <div>
-                            <div class="stat-value" id="notInZnuny">0</div>
-                            <div class="text-muted">Not in Znuny</div>
-                        </div>
+            <div class="col-6 col-md-4 col-lg-2 mb-3">
+                <div class="stat-card card h-100" style="border-left: 4px solid #9b59b6;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-building fs-2 text-purple mb-2" style="color: #9b59b6;"></i>
+                        <div class="stat-value" id="ooredooCount">0</div>
+                        <div class="text-muted small">Ooredoo</div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-6 mb-3">
-                <div class="stat-card card">
-                    <div class="card-body">
-                        <h6 class="text-muted mb-2">Tickets by Portal</h6>
-                        <div class="d-flex flex-wrap gap-2" id="portalStats">
-                            <!-- Filled by JavaScript -->
-                        </div>
+            <div class="col-6 col-md-4 col-lg-2 mb-3">
+                <div class="stat-card card h-100" style="border-left: 4px solid #3498db;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-building fs-2 text-primary mb-2"></i>
+                        <div class="stat-value" id="rolCount">0</div>
+                        <div class="text-muted small">ROL</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-lg-2 mb-3">
+                <div class="stat-card card h-100" style="border-left: 4px solid #1abc9c;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-building fs-2 mb-2" style="color: #1abc9c;"></i>
+                        <div class="stat-value" id="medianetCount">0</div>
+                        <div class="text-muted small">Medianet</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Total and Znuny Cards -->
+            <div class="col-6 col-md-4 col-lg-2 mb-3">
+                <div class="stat-card card h-100" style="border-left: 4px solid #2c3e50;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-ticket-detailed fs-2 text-dark mb-2"></i>
+                        <div class="stat-value" id="totalTickets">0</div>
+                        <div class="text-muted small">Total Tickets</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-lg-2 mb-3">
+                <div class="stat-card card h-100" style="border-left: 4px solid #e74c3c;">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-exclamation-triangle fs-2 text-danger mb-2"></i>
+                        <div class="stat-value text-danger" id="notInZnuny">0</div>
+                        <div class="text-muted small">Not in Znuny</div>
                     </div>
                 </div>
             </div>
@@ -407,15 +427,12 @@
                 document.getElementById('totalTickets').textContent = stats.total || 0;
                 document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
 
-                // Portal stats
-                const portalStats = document.getElementById('portalStats');
-                portalStats.innerHTML = '';
+                // Portal stats - update individual cards
                 const portals = stats.by_portal || {};
-                for (const [portal, count] of Object.entries(portals)) {
-                    portalStats.innerHTML += `
-                        <span class="badge badge-portal badge-${portal}">${portal}: ${count}</span>
-                    `;
-                }
+                document.getElementById('dhiraaguCount').textContent = portals['dhiraagu'] || 0;
+                document.getElementById('ooredooCount').textContent = portals['ooredoo'] || 0;
+                document.getElementById('rolCount').textContent = portals['rol'] || 0;
+                document.getElementById('medianetCount').textContent = portals['medianet'] || 0;
 
                 // Update status filter options
                 const statusFilter = document.getElementById('statusFilter');
