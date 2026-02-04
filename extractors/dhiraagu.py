@@ -200,10 +200,10 @@ class DhiraaguExtractor(BaseExtractor):
                         'customer_name': None  # Will be extracted from detail page
                     }
 
-                    if not order_data['order_num']:
+                    if not order_data['service_num']:
                         continue
 
-                    self.logger.info(f"Processing order {row_idx + 1}/{row_count}: {order_data['order_num']}")
+                    self.logger.info(f"Processing order {row_idx + 1}/{row_count}: {order_data['service_num']}")
 
                     # Find and click the link in this row
                     link = row.find_elements(By.CSS_SELECTOR, self.ORDER_LINK_SELECTOR)
@@ -262,8 +262,9 @@ class DhiraaguExtractor(BaseExtractor):
             # Create ticket with all data
             return Ticket(
                 portal="dhiraagu",
-                ticket_id=order_data['order_num'],
+                ticket_id=order_data['service_num'],  # Service Number as ticket ID
                 address=address,
+                account=order_data.get('order_num'),  # Order Number as account
                 customer_name=customer_name,
                 ticket_type=order_data.get('order_type'),
                 portal_created_at=portal_created_at,

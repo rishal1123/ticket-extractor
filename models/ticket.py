@@ -8,6 +8,7 @@ class Ticket:
     portal: str
     ticket_id: str
     address: Optional[str] = None
+    account: Optional[str] = None  # Account ID (e.g., Ooredoo Account ID)
     customer_name: Optional[str] = None
     ticket_type: Optional[str] = None
     portal_created_at: Optional[datetime] = None  # When ticket was created on ISP portal
@@ -21,6 +22,9 @@ class Ticket:
     id: Optional[int] = None
     in_znuny: bool = False
     znuny_ticket_id: Optional[str] = None
+    znuny_created_at: Optional[datetime] = None  # When ticket was created in Znuny
+    znuny_created_by: Optional[str] = None       # Staff who created ticket in Znuny
+    znuny_address: Optional[str] = None          # Address from Znuny phone ticket
 
     def to_dict(self) -> dict:
         return {
@@ -28,6 +32,7 @@ class Ticket:
             "portal": self.portal,
             "ticket_id": self.ticket_id,
             "address": self.address,
+            "account": self.account,
             "customer_name": self.customer_name,
             "ticket_type": self.ticket_type,
             "portal_created_at": self.portal_created_at.isoformat() if self.portal_created_at else None,
@@ -39,7 +44,10 @@ class Ticket:
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "in_znuny": self.in_znuny,
-            "znuny_ticket_id": self.znuny_ticket_id
+            "znuny_ticket_id": self.znuny_ticket_id,
+            "znuny_created_at": self.znuny_created_at.isoformat() if self.znuny_created_at else None,
+            "znuny_created_by": self.znuny_created_by,
+            "znuny_address": self.znuny_address
         }
 
     @classmethod
@@ -60,11 +68,16 @@ class Ticket:
         if isinstance(completed_at, str):
             completed_at = datetime.fromisoformat(completed_at)
 
+        znuny_created_at = data.get("znuny_created_at")
+        if isinstance(znuny_created_at, str):
+            znuny_created_at = datetime.fromisoformat(znuny_created_at)
+
         return cls(
             id=data.get("id"),
             portal=data["portal"],
             ticket_id=data["ticket_id"],
             address=data.get("address"),
+            account=data.get("account"),
             customer_name=data.get("customer_name"),
             ticket_type=data.get("ticket_type"),
             portal_created_at=portal_created_at,
@@ -76,5 +89,8 @@ class Ticket:
             updated_at=updated_at,
             completed_at=completed_at,
             in_znuny=data.get("in_znuny", False),
-            znuny_ticket_id=data.get("znuny_ticket_id")
+            znuny_ticket_id=data.get("znuny_ticket_id"),
+            znuny_created_at=znuny_created_at,
+            znuny_created_by=data.get("znuny_created_by"),
+            znuny_address=data.get("znuny_address")
         )

@@ -1,56 +1,58 @@
 import time
 from datetime import datetime
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from .base import BaseExtractor
 from models.ticket import Ticket
 
 
 class ROLExtractor(BaseExtractor):
-    """Extractor for ROL portal."""
+    """Extractor for ROL portal (Kayako helpdesk system)."""
 
     # ============================================================
-    # CSS SELECTORS - Update these based on actual portal HTML
+    # URL Configuration
+    # ============================================================
+    # Filter URLs - HDC department (55)
+    # Status codes: 4=Open, 5=On Hold, 6=Closed, 7=Today
+    OPEN_TICKETS_URL = "https://support.rol.net.mv/staff/index.php?/Tickets/Manage/Filter/55/4/-1"
+
+    # ============================================================
+    # CSS SELECTORS
     # ============================================================
 
     # Login page selectors
-    LOGIN_USERNAME_SELECTOR = "#username"  # TODO: Update with actual selector
-    LOGIN_PASSWORD_SELECTOR = "#password"  # TODO: Update with actual selector
-    LOGIN_BUTTON_SELECTOR = "#loginButton"  # TODO: Update with actual selector
+    LOGIN_USERNAME_SELECTOR = "input[name='username']"
+    LOGIN_PASSWORD_SELECTOR = "input[name='password']"
+    LOGIN_BUTTON_SELECTOR = "input[type='submit']"
 
-    # Navigation selectors
-    TICKETS_MENU_SELECTOR = "a[href*='tickets']"  # TODO: Update with actual selector
+    # Grid selectors
+    GRID_CONTAINER_SELECTOR = ".gridcontents_ticketmanagegrid_parent"
+    GRID_ROW_SELECTOR = "tr[id^='gridrowid_ticketmanagegrid_']"
 
-    # Ticket list selectors
-    TICKET_TABLE_SELECTOR = "table.tickets-table"  # TODO: Update with actual selector
-    TICKET_ROW_SELECTOR = "table.tickets-table tbody tr"  # TODO: Update with actual selector
+    # Ticket detail page selectors
+    TICKET_GENERAL_CONTAINER_SELECTOR = ".ticketgeneralcontainer"
+    TICKET_POST_CONTAINER_SELECTOR = ".ticketpostcontainer"
+    TICKET_INFO_SELECTOR = ".ticketinfoitem"
 
-    # Ticket detail selectors (within each row)
-    TICKET_ID_SELECTOR = "td.ticket-id"  # TODO: Update with actual selector
-    ADDRESS_SELECTOR = "td.address"  # TODO: Update with actual selector
-    CUSTOMER_NAME_SELECTOR = "td.customer-name"  # TODO: Update with actual selector
-    TICKET_TYPE_SELECTOR = "td.ticket-type"  # TODO: Update with actual selector
-    TIME_SELECTOR = "td.time"  # TODO: Update with actual selector
-    SERVICE_TYPE_SELECTOR = "td.service-type"  # TODO: Update with actual selector
-    STATUS_SELECTOR = "td.status"  # TODO: Update with actual selector
-    KPI_SELECTOR = "td.kpi"  # TODO: Update with actual selector
-    NOTES_SELECTOR = "td.notes"  # TODO: Update with actual selector
-
-    # Pagination selectors
-    NEXT_PAGE_SELECTOR = "a.next-page"  # TODO: Update with actual selector
-    PAGINATION_SELECTOR = ".pagination"  # TODO: Update with actual selector
-
-    # Logout selector
-    LOGOUT_SELECTOR = "a[href*='logout']"  # TODO: Update with actual selector
+    # Logout
+    LOGOUT_SELECTOR = "[onclick*='Logout']"
 
     # ============================================================
 
     def login(self) -> bool:
+        """Login to ROL portal."""
         self.logger.info(f"Logging into ROL portal: {self.config.url}")
 
         try:
             self.navigate_to(self.config.url)
             time.sleep(2)
+
+            # Check if already logged in
+            if self.is_logged_in():
+                self.logger.info("Already logged in")
+                return True
 
             # Enter username
             if not self.wait_and_type(By.CSS_SELECTOR, self.LOGIN_USERNAME_SELECTOR, self.config.username):
@@ -68,117 +70,222 @@ class ROLExtractor(BaseExtractor):
                 return False
 
             # Wait for login to complete
-            time.sleep(3)
+            time.sleep(5)
 
+            # Verify login success
+            if "login" in self.browser.driver.current_url.lower():
+                self.logger.error("Login failed - still on login page")
+                return False
+
+            self.logger.info("Login successful")
             return True
 
         except Exception as e:
             self.logger.error(f"Login error: {e}")
             return False
 
+    def is_logged_in(self) -> bool:
+        """Check if currently logged in by looking for logout button."""
+        try:
+            logout_elements = self.browser.driver.find_elements(By.CSS_SELECTOR, self.LOGOUT_SELECTOR)
+            return len(logout_elements) > 0
+        except:
+            return False
+
     def extract_tickets(self) -> list[Ticket]:
+        """Extract tickets from the ROL grid."""
         tickets = []
 
         try:
-            # Navigate to tickets page if needed
-            if self.TICKETS_MENU_SELECTOR:
-                self.wait_and_click(By.CSS_SELECTOR, self.TICKETS_MENU_SELECTOR)
-                time.sleep(2)
+            # Navigate to Open tickets page
+            self.logger.info("Navigating to Open tickets")
+            self.navigate_to(self.OPEN_TICKETS_URL)
+            time.sleep(3)
 
-            # Extract tickets from all pages
-            while True:
-                page_tickets = self._extract_tickets_from_page()
-                tickets.extend(page_tickets)
+            # Wait for grid to load
+            WebDriverWait(self.browser.driver, 15).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, self.GRID_CONTAINER_SELECTOR))
+            )
 
-                if not self._go_to_next_page():
-                    break
+            # Extract tickets from grid
+            tickets = self._extract_tickets_from_grid()
+            self.logger.info(f"Extracted {len(tickets)} tickets from grid")
 
         except Exception as e:
             self.logger.error(f"Error extracting tickets: {e}")
 
         return tickets
 
-    def _extract_tickets_from_page(self) -> list[Ticket]:
+    def _extract_tickets_from_grid(self) -> list[Ticket]:
+        """Extract tickets from the grid rows."""
         tickets = []
 
         try:
-            rows = self.find_elements(By.CSS_SELECTOR, self.TICKET_ROW_SELECTOR)
-            self.logger.info(f"Found {len(rows)} ticket rows on current page")
+            rows = self.browser.driver.find_elements(By.CSS_SELECTOR, self.GRID_ROW_SELECTOR)
+            self.logger.info(f"Found {len(rows)} ticket rows")
 
-            for row in rows:
+            for i, row in enumerate(rows):
                 try:
-                    ticket = self._parse_ticket_row(row)
+                    ticket = self._parse_grid_row(row, i)
                     if ticket:
                         tickets.append(ticket)
                 except Exception as e:
-                    self.logger.warning(f"Error parsing ticket row: {e}")
+                    self.logger.warning(f"Error parsing row {i}: {e}")
                     continue
 
         except Exception as e:
-            self.logger.error(f"Error extracting tickets from page: {e}")
+            self.logger.error(f"Error extracting from grid: {e}")
 
         return tickets
 
-    def _parse_ticket_row(self, row) -> Ticket | None:
+    def _parse_grid_row(self, row, index: int) -> Ticket | None:
+        """Parse a grid row to extract ticket data."""
         try:
-            ticket_id = self._get_cell_text(row, self.TICKET_ID_SELECTOR)
-            if not ticket_id:
+            # Get row ID to extract ticket internal ID
+            row_id = row.get_attribute('id') or ""
+            # Format: gridrowid_ticketmanagegrid_115385
+            internal_id = row_id.split('_')[-1] if row_id else None
+
+            # Get all cells
+            cells = row.find_elements(By.TAG_NAME, "td")
+
+            if len(cells) < 14:
+                self.logger.warning(f"Row {index} has insufficient cells: {len(cells)}")
                 return None
 
-            address = self._get_cell_text(row, self.ADDRESS_SELECTOR)
-            customer_name = self._get_cell_text(row, self.CUSTOMER_NAME_SELECTOR)
-            ticket_type = self._get_cell_text(row, self.TICKET_TYPE_SELECTOR)
-            time_str = self._get_cell_text(row, self.TIME_SELECTOR)
-            service_type = self._get_cell_text(row, self.SERVICE_TYPE_SELECTOR)
-            status = self._get_cell_text(row, self.STATUS_SELECTOR)
-            kpi = self._get_cell_text(row, self.KPI_SELECTOR)
-            notes = self._get_cell_text(row, self.NOTES_SELECTOR)
+            # Extract data from cells (0-indexed)
+            # Cell 5 = Date
+            date_text = cells[5].text.strip() if len(cells) > 5 else ""
 
-            ticket_time = None
-            if time_str:
-                try:
-                    ticket_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    self.logger.warning(f"Could not parse time: {time_str}")
+            # Cell 6 = Display ID (ROL250141)
+            display_id = ""
+            try:
+                link = cells[6].find_element(By.TAG_NAME, "a")
+                display_id = link.text.strip()
+            except:
+                display_id = cells[6].text.strip() if len(cells) > 6 else ""
+
+            if not display_id:
+                self.logger.warning(f"Row {index} has no display ID")
+                return None
+
+            # Cell 7 = Owner/Customer name
+            customer_name = cells[7].text.strip() if len(cells) > 7 else ""
+
+            # Cell 8 = Priority
+            priority = cells[8].text.strip() if len(cells) > 8 else ""
+
+            # Cell 9 = Type (New Connection, etc)
+            ticket_type = cells[9].text.strip() if len(cells) > 9 else ""
+
+            # Cell 12 = Department (HDC)
+            department = cells[12].text.strip() if len(cells) > 12 else ""
+
+            # Cell 13 = Reply Due (KPI)
+            kpi = cells[13].text.strip() if len(cells) > 13 else ""
+
+            # Parse date
+            ticket_time = self._parse_date(date_text)
+
+            # Get ticket detail for notes and address
+            notes = None
+            address = None
+
+            if internal_id:
+                self.logger.info(f"Getting details for ticket {display_id} (ID: {internal_id})")
+                notes, address = self._get_ticket_details(internal_id)
 
             return Ticket(
                 portal="rol",
-                ticket_id=ticket_id,
+                ticket_id=internal_id,  # ROL internal ticket ID (e.g., 115385)
                 address=address,
+                account=display_id,  # ROL display ID (e.g., ROL250141)
                 customer_name=customer_name,
                 ticket_type=ticket_type,
-                time=ticket_time,
-                service_type=service_type,
-                status=status,
+                portal_created_at=ticket_time,
+                service_type=department,
+                status="Open",  # We're viewing Open tickets
                 kpi=kpi,
                 notes=notes
             )
 
         except Exception as e:
-            self.logger.warning(f"Error parsing ticket: {e}")
+            self.logger.warning(f"Error parsing grid row: {e}")
             return None
 
-    def _get_cell_text(self, row, selector: str) -> str | None:
+    def _get_ticket_details(self, internal_id: str) -> tuple[str | None, str | None]:
+        """Navigate to ticket detail page and extract notes and address."""
+        notes = None
+        address = None
+
         try:
-            element = row.find_element(By.CSS_SELECTOR, selector)
-            return element.text.strip() if element else None
-        except:
+            # Store current URL to navigate back
+            current_url = self.browser.driver.current_url
+            detail_url = f"https://support.rol.net.mv/staff/index.php?/Tickets/Ticket/View/{internal_id}/inbox/55/4/-1"
+
+            self.browser.driver.get(detail_url)
+            time.sleep(2)
+
+            # Wait for page to load
+            WebDriverWait(self.browser.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, self.TICKET_POST_CONTAINER_SELECTOR))
+            )
+
+            # Get post content (contains the ticket description/notes)
+            try:
+                post_container = self.browser.driver.find_element(By.CSS_SELECTOR, self.TICKET_POST_CONTAINER_SELECTOR)
+                post_text = post_container.text.strip()
+
+                if post_text:
+                    notes = post_text
+                    # Try to extract address from "Location -" line
+                    for line in post_text.split('\n'):
+                        line_lower = line.lower()
+                        if 'location' in line_lower and '-' in line:
+                            address = line.split('-', 1)[1].strip()
+                            break
+            except Exception as e:
+                self.logger.debug(f"Error getting post content: {e}")
+
+            # Navigate back to grid
+            self.browser.driver.get(current_url)
+            time.sleep(1)
+
+            # Wait for grid to reload
+            WebDriverWait(self.browser.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, self.GRID_CONTAINER_SELECTOR))
+            )
+
+        except Exception as e:
+            self.logger.debug(f"Error getting ticket details: {e}")
+
+        return notes, address
+
+    def _parse_date(self, date_str: str) -> datetime | None:
+        """Parse ROL date format."""
+        if not date_str:
             return None
 
-    def _go_to_next_page(self) -> bool:
         try:
-            next_btn = self.browser.driver.find_element(By.CSS_SELECTOR, self.NEXT_PAGE_SELECTOR)
-            if next_btn and next_btn.is_enabled():
-                next_btn.click()
-                time.sleep(2)
-                return True
-        except:
+            # Format: "27 January 2026 03:28 PM"
+            return datetime.strptime(date_str, "%d %B %Y %I:%M %p")
+        except ValueError:
             pass
-        return False
+
+        try:
+            # Try alternate format with short month
+            return datetime.strptime(date_str, "%d %b %Y %I:%M %p")
+        except ValueError:
+            pass
+
+        self.logger.warning(f"Could not parse date: {date_str}")
+        return None
 
     def logout(self):
+        """Logout from ROL portal."""
         try:
             self.wait_and_click(By.CSS_SELECTOR, self.LOGOUT_SELECTOR)
             time.sleep(1)
+            self.logger.info("Logged out successfully")
         except Exception as e:
             self.logger.warning(f"Logout error: {e}")

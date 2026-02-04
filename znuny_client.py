@@ -1,237 +1,513 @@
-import httpx
+"""
+Znuny client using Selenium for web-based ticket search.
+Searches tickets by subject/title using *ticketid* pattern.
+Fetches ticket details including creator, creation time, and article history.
+"""
+
+import time
+import re
+from datetime import datetime
 from typing import Optional
+from dataclasses import dataclass, field
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+
 from config import Config
 from utils.logger import get_logger
 
 logger = get_logger("znuny")
 
 
+@dataclass
+class ZnunyArticle:
+    """Represents an article/note in a Znuny ticket."""
+    article_number: int
+    sender: str  # Customer/caller for Phone, staff for Internal
+    via: str  # Phone, Internal, Email, etc.
+    subject: str
+    created_at: datetime | None
+    created_at_str: str
+    created_by: str = ""  # Staff who created the article (from "by X" in detail)
+    body: str = ""  # The actual note/article content
+
+
+@dataclass
+class ZnunyTicketDetails:
+    """Details fetched from a Znuny ticket."""
+    ticket_number: str
+    created_at: datetime | None
+    created_at_str: str
+    created_by: str
+    owner: str
+    state: str
+    address: str = ""  # Address from phone ticket or first article
+    articles: list[ZnunyArticle] = field(default_factory=list)
+
+
 class ZnunyClient:
-    """Client for interacting with Znuny REST API."""
+    """Client for searching tickets in Znuny using Selenium."""
+
+    # Znuny URLs
+    BASE_URL = "https://10.241.1.110"
+    LOGIN_URL = f"{BASE_URL}/otrs/index.pl"
+    DASHBOARD_URL = f"{BASE_URL}/otrs/index.pl?Action=AgentDashboard"
+    SEARCH_URL = f"{BASE_URL}/otrs/index.pl?Action=AgentTicketSearch"
+
+    # CSS Selectors
+    LOGIN_USER_SELECTOR = "input[name='User']"
+    LOGIN_PASSWORD_SELECTOR = "input[name='Password']"
+    LOGIN_BUTTON_SELECTOR = "#LoginButton"
+
+    # Search form selectors
+    SEARCH_TITLE_SELECTOR = "input[name='Title']"
+    SEARCH_SUBMIT_SELECTOR = "#SearchFormSubmit"
+
+    # Results selectors
+    TICKET_LINK_SELECTOR = "a[href*='AgentTicketZoom']"
+    TICKET_TITLE_SELECTOR = ".MasterActionLink"
 
     def __init__(self):
-        self.base_url = Config.ZNUNY_URL.rstrip("/")
         self.username = Config.ZNUNY_USERNAME
         self.password = Config.ZNUNY_PASSWORD
-        self.session_id: Optional[str] = None
+        self.driver = None
+        self._logged_in = False
+        self._open_tickets_cache = None  # Cache for open tickets
 
-    async def _get_session(self) -> str | None:
-        """Get or create a session with Znuny."""
-        if self.session_id:
-            return self.session_id
+    def _setup_browser(self):
+        """Setup Chrome browser with options."""
+        if self.driver:
+            return
+
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--ignore-ssl-errors")
+
+        service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=options)
+        self.driver.implicitly_wait(10)
+        logger.info("Znuny browser started")
+
+    def _login(self) -> bool:
+        """Login to Znuny."""
+        if self._logged_in:
+            # Check if still logged in
+            try:
+                self.driver.get(self.DASHBOARD_URL)
+                time.sleep(2)
+                if "Dashboard" in self.driver.title:
+                    return True
+            except:
+                pass
+            self._logged_in = False
 
         try:
-            async with httpx.AsyncClient() as client:
-                # Znuny uses different API endpoints depending on version
-                # Common endpoint for session creation
-                response = await client.post(
-                    f"{self.base_url}/otrs/nph-genericinterface.pl/Webservice/REST/Session",
-                    json={
-                        "UserLogin": self.username,
-                        "Password": self.password
-                    },
-                    timeout=30.0
+            self._setup_browser()
+            self.driver.get(self.LOGIN_URL)
+            time.sleep(2)
+
+            # Check if already on dashboard
+            if "Dashboard" in self.driver.title:
+                self._logged_in = True
+                return True
+
+            # Enter credentials
+            user_field = self.driver.find_element(By.CSS_SELECTOR, self.LOGIN_USER_SELECTOR)
+            user_field.clear()
+            user_field.send_keys(self.username)
+
+            password_field = self.driver.find_element(By.CSS_SELECTOR, self.LOGIN_PASSWORD_SELECTOR)
+            password_field.clear()
+            password_field.send_keys(self.password)
+
+            # Click login
+            login_btn = self.driver.find_element(By.CSS_SELECTOR, self.LOGIN_BUTTON_SELECTOR)
+            login_btn.click()
+            time.sleep(3)
+
+            # Verify login
+            if "Dashboard" in self.driver.title:
+                self._logged_in = True
+                logger.info("Znuny login successful")
+                return True
+            else:
+                logger.error("Znuny login failed")
+                return False
+
+        except Exception as e:
+            logger.error(f"Znuny login error: {e}")
+            return False
+
+    def get_open_tickets(self, force_refresh: bool = False) -> list[dict]:
+        """
+        Get all open tickets from the dashboard widget.
+        Returns list of tickets with ticket_number and title.
+        Handles pagination to get all tickets.
+        Uses cache to avoid repeated fetches.
+        """
+        # Return cached results if available
+        if self._open_tickets_cache is not None and not force_refresh:
+            return self._open_tickets_cache
+
+        if not self._login():
+            return []
+
+        try:
+            self.driver.get(self.DASHBOARD_URL)
+            time.sleep(2)
+
+            all_tickets = []
+            page = 1
+            max_pages = 10  # Safety limit
+
+            while page <= max_pages:
+                # Get tickets from current page of the Open Tickets widget
+                rows = self.driver.find_elements(By.CSS_SELECTOR, "#Dashboard0130-TicketOpen tr.MasterAction")
+
+                for row in rows:
+                    try:
+                        # Get ticket number from MasterActionLink
+                        link = row.find_element(By.CSS_SELECTOR, "a.MasterActionLink")
+                        ticket_number = link.text.strip()
+                        href = link.get_attribute('href') or ""
+
+                        # Get title from the last td div
+                        title_divs = row.find_elements(By.CSS_SELECTOR, "td div[title]")
+                        title = ""
+                        if title_divs:
+                            title = title_divs[-1].get_attribute('title') or title_divs[-1].text
+
+                        if ticket_number:
+                            all_tickets.append({
+                                "ticket_number": ticket_number,
+                                "title": title,
+                                "href": href
+                            })
+                    except:
+                        continue
+
+                # Check for next page
+                next_page = page + 1
+                next_page_link = self.driver.find_elements(
+                    By.CSS_SELECTOR, f"#Dashboard0130-TicketOpenPage{next_page}"
                 )
 
-                if response.status_code == 200:
-                    data = response.json()
-                    self.session_id = data.get("SessionID")
-                    logger.info("Znuny session created successfully")
-                    return self.session_id
+                if next_page_link and "Selected" not in next_page_link[0].get_attribute("class"):
+                    next_page_link[0].click()
+                    time.sleep(2)
+                    page += 1
                 else:
-                    logger.error(f"Failed to create Znuny session: {response.status_code}")
-                    return None
+                    break
+
+            logger.info(f"Znuny dashboard: found {len(all_tickets)} open tickets")
+            self._open_tickets_cache = all_tickets
+            return all_tickets
 
         except Exception as e:
-            logger.error(f"Error creating Znuny session: {e}")
-            return None
+            logger.error(f"Znuny get_open_tickets error: {e}")
+            return []
 
-    async def search_ticket(self, ticket_number: str) -> dict | None:
+    def clear_cache(self):
+        """Clear the open tickets cache."""
+        self._open_tickets_cache = None
+
+    def search_by_title(self, search_term: str) -> list[dict]:
         """
-        Search for a ticket in Znuny by ticket number.
-        Returns ticket data if found, None otherwise.
+        Search for tickets by checking if search_term appears in any open ticket's title.
+        Uses cached dashboard data for efficiency.
+        Returns list of matching tickets with ticket_number and title.
         """
-        session_id = await self._get_session()
-        if not session_id:
+        # Get all open tickets from dashboard (uses cache)
+        all_tickets = self.get_open_tickets()
+
+        if not all_tickets:
+            logger.info(f"Znuny search for '{search_term}': no open tickets found")
+            return []
+
+        # Filter tickets that contain the search term in the title
+        search_lower = search_term.lower()
+        matching = [
+            t for t in all_tickets
+            if search_lower in t.get("title", "").lower()
+        ]
+
+        logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
+        return matching
+
+    def get_ticket_details(self, ticket_number: str) -> ZnunyTicketDetails | None:
+        """
+        Fetch detailed information about a Znuny ticket.
+        Returns ticket details including creation time, creator, and all articles.
+        """
+        if not self._login():
             return None
 
         try:
-            async with httpx.AsyncClient() as client:
-                # Search for ticket by ticket number
-                response = await client.get(
-                    f"{self.base_url}/otrs/nph-genericinterface.pl/Webservice/REST/Ticket",
-                    params={
-                        "SessionID": session_id,
-                        "TicketNumber": ticket_number
-                    },
-                    timeout=30.0
-                )
+            # Find the ticket in cache to get its URL
+            all_tickets = self.get_open_tickets()
+            ticket_info = next((t for t in all_tickets if t["ticket_number"] == ticket_number), None)
 
-                if response.status_code == 200:
-                    data = response.json()
-                    tickets = data.get("Ticket", [])
-                    if tickets:
-                        return tickets[0] if isinstance(tickets, list) else tickets
-                    return None
-                else:
-                    logger.warning(f"Ticket search returned {response.status_code}")
-                    return None
+            if not ticket_info or not ticket_info.get("href"):
+                logger.warning(f"Ticket {ticket_number} not found in open tickets")
+                return None
+
+            # Navigate to ticket detail page
+            self.driver.get(ticket_info["href"])
+            time.sleep(2)
+
+            # Parse ticket details from sidebar
+            created_at = None
+            created_at_str = ""
+            created_by = ""
+            owner = ""
+            state = ""
+
+            # Get sidebar content
+            sidebar = self.driver.find_elements(By.CSS_SELECTOR, ".SidebarColumn")
+            if sidebar:
+                sidebar_text = sidebar[0].text
+
+                # Extract "Created:" line - format: "02/04/2026 11:32 (Indian/Maldives)"
+                created_match = re.search(r"Created:\s*\n?(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", sidebar_text)
+                if created_match:
+                    created_at_str = created_match.group(1)
+                    try:
+                        created_at = datetime.strptime(created_at_str, "%m/%d/%Y %H:%M")
+                    except ValueError:
+                        pass
+
+                # Extract "Created by:" line
+                created_by_match = re.search(r"Created by:\s*\n?([^\n]+)", sidebar_text)
+                if created_by_match:
+                    created_by = created_by_match.group(1).strip()
+
+                # Extract "Owner:" line
+                owner_match = re.search(r"Owner:\s*\n?([^\n]+)", sidebar_text)
+                if owner_match:
+                    owner = owner_match.group(1).strip()
+
+                # Extract "State:" line
+                state_match = re.search(r"State:\s*\n?([^\n]+)", sidebar_text)
+                if state_match:
+                    state = state_match.group(1).strip()
+
+            # Parse articles from article overview table
+            articles = []
+            article_rows = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple table tbody tr")
+
+            # First pass: collect basic article info
+            article_data = []
+            for row in article_rows:
+                try:
+                    cells = row.find_elements(By.TAG_NAME, "td")
+                    if len(cells) >= 7:
+                        article_num_text = cells[0].text.strip()
+                        if not article_num_text.isdigit():
+                            continue
+
+                        article_data.append({
+                            "num": int(article_num_text),
+                            "sender": cells[3].text.strip(),
+                            "via": cells[4].text.strip(),
+                            "subject": cells[5].text.strip(),
+                            "created_str": cells[6].text.strip(),
+                            "row": row
+                        })
+                except:
+                    continue
+
+            # Second pass: click each article to get the "by [Staff]" info and body content
+            for data in article_data:
+                try:
+                    # Click on the article row to open detail
+                    data["row"].click()
+                    time.sleep(0.5)
+
+                    # Look for the article header with "by [Staff Name]"
+                    created_by = ""
+                    article_headers = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple h2")
+                    for header in article_headers:
+                        header_text = header.text
+                        # Look for "by [Name]" at the end of the header
+                        by_match = re.search(r'\bby\s+([A-Za-z][A-Za-z\s]+)$', header_text, re.MULTILINE)
+                        if by_match:
+                            created_by = by_match.group(1).strip()
+                            break
+
+                    # If no "by" found, use sender for Internal articles
+                    if not created_by and data["via"] == "Internal":
+                        created_by = data["sender"]
+
+                    # Get the article body content
+                    body = ""
+                    try:
+                        # Look for article body in the expanded content area
+                        # Znuny article body is typically in .ArticleBody or similar container
+                        body_elements = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleBody, .ArticleMailContent, .MessageBody")
+                        if body_elements:
+                            body = body_elements[0].text.strip()
+                        else:
+                            # Try finding the content in a more general way
+                            content_divs = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple .Content")
+                            for div in content_divs:
+                                div_text = div.text.strip()
+                                # Skip if it's the header or metadata
+                                if div_text and len(div_text) > 20 and "by" not in div_text[:50]:
+                                    body = div_text
+                                    break
+                    except:
+                        pass
+
+                    # Parse article created time
+                    article_created = None
+                    time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
+                    if time_match:
+                        try:
+                            article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M")
+                        except ValueError:
+                            pass
+
+                    articles.append(ZnunyArticle(
+                        article_number=data["num"],
+                        sender=data["sender"],
+                        via=data["via"],
+                        subject=data["subject"],
+                        created_at=article_created,
+                        created_at_str=data["created_str"],
+                        created_by=created_by,
+                        body=body
+                    ))
+                except Exception as e:
+                    logger.debug(f"Error parsing article {data.get('num', '?')}: {e}")
+                    continue
+
+            # Sort articles by number (newest first - descending)
+            articles.sort(key=lambda a: a.article_number, reverse=True)
+
+            # Extract address from first phone article body
+            address = ""
+            for article in articles:
+                if article.via == "Phone" and article.body:
+                    # Look for address patterns in the body
+                    # Common patterns: "Address: ...", "Location: ...", or multi-line address
+                    body_lines = article.body.split('\n')
+                    for i, line in enumerate(body_lines):
+                        line_lower = line.lower().strip()
+                        if line_lower.startswith('address:') or line_lower.startswith('location:'):
+                            # Get the address value after the label
+                            addr = line.split(':', 1)[1].strip() if ':' in line else ''
+                            if addr:
+                                address = addr
+                                break
+                        # Also check for standalone address-like content (contains street indicators)
+                        elif any(indicator in line_lower for indicator in ['flat', 'floor', 'building', 'street', 'road', 'lane', 'magu', 'hingun']):
+                            address = line.strip()
+                            break
+                    if address:
+                        break
+
+            logger.info(f"Fetched details for ticket {ticket_number}: created by {created_by}, {len(articles)} articles, address={address[:30] if address else 'none'}")
+
+            return ZnunyTicketDetails(
+                ticket_number=ticket_number,
+                created_at=created_at,
+                created_at_str=created_at_str,
+                created_by=created_by,
+                owner=owner,
+                state=state,
+                address=address,
+                articles=articles
+            )
 
         except Exception as e:
-            logger.error(f"Error searching ticket in Znuny: {e}")
+            logger.error(f"Error fetching ticket details for {ticket_number}: {e}")
             return None
 
-    async def ticket_exists(self, ticket_number: str) -> bool:
-        """Check if a ticket exists in Znuny."""
-        result = await self.search_ticket(ticket_number)
-        return result is not None
-
-    async def search_by_title(self, title: str) -> list[dict]:
+    def get_all_ticket_details(self) -> list[ZnunyTicketDetails]:
         """
-        Search for tickets by title/subject.
-        Useful for matching portal tickets to Znuny tickets.
+        Fetch details for all open tickets.
+        Returns list of ticket details with creator and article information.
         """
-        session_id = await self._get_session()
-        if not session_id:
-            return []
+        all_tickets = self.get_open_tickets()
+        details = []
 
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/otrs/nph-genericinterface.pl/Webservice/REST/Ticket",
-                    params={
-                        "SessionID": session_id,
-                        "Title": f"*{title}*"
-                    },
-                    timeout=30.0
-                )
+        for ticket in all_tickets:
+            ticket_number = ticket.get("ticket_number")
+            if ticket_number:
+                detail = self.get_ticket_details(ticket_number)
+                if detail:
+                    details.append(detail)
 
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get("Ticket", [])
-                return []
-
-        except Exception as e:
-            logger.error(f"Error searching tickets by title: {e}")
-            return []
-
-    async def search_by_customer(self, customer_name: str) -> list[dict]:
-        """Search for tickets by customer name."""
-        session_id = await self._get_session()
-        if not session_id:
-            return []
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/otrs/nph-genericinterface.pl/Webservice/REST/Ticket",
-                    params={
-                        "SessionID": session_id,
-                        "CustomerUserLogin": f"*{customer_name}*"
-                    },
-                    timeout=30.0
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get("Ticket", [])
-                return []
-
-        except Exception as e:
-            logger.error(f"Error searching tickets by customer: {e}")
-            return []
+        logger.info(f"Fetched details for {len(details)} tickets")
+        return details
 
     async def check_ticket_in_znuny(self, portal_ticket_id: str, customer_name: str = None) -> tuple[bool, str | None]:
         """
-        Check if a portal ticket exists in Znuny.
-        Tries multiple search strategies.
+        Check if a portal ticket exists in Znuny by searching subject.
         Returns: (exists: bool, znuny_ticket_id: str | None)
         """
-        # Strategy 1: Search by portal ticket ID in title
-        tickets = await self.search_by_title(portal_ticket_id)
-        if tickets:
-            znuny_id = tickets[0].get("TicketNumber") or tickets[0].get("TicketID")
-            return True, str(znuny_id)
+        results = self.search_by_title(portal_ticket_id)
 
-        # Strategy 2: Search by customer name if provided
-        if customer_name:
-            tickets = await self.search_by_customer(customer_name)
-            # Look for recent tickets that might match
-            for ticket in tickets:
-                title = ticket.get("Title", "")
-                if portal_ticket_id in title:
-                    znuny_id = ticket.get("TicketNumber") or ticket.get("TicketID")
-                    return True, str(znuny_id)
+        if results:
+            znuny_id = results[0].get("ticket_number")
+            return True, znuny_id
 
         return False, None
 
-    async def close_session(self):
-        """Close the Znuny session."""
-        self.session_id = None
+    def check_ticket_sync(self, portal_ticket_id: str) -> tuple[bool, str | None]:
+        """
+        Synchronous version of check_ticket_in_znuny.
+        """
+        results = self.search_by_title(portal_ticket_id)
+
+        if results:
+            znuny_id = results[0].get("ticket_number")
+            return True, znuny_id
+
+        return False, None
+
+    def close(self):
+        """Close the browser."""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
+            self.driver = None
+            self._logged_in = False
+            logger.info("Znuny browser closed")
+
+    def __del__(self):
+        self.close()
 
 
-# Synchronous wrapper for use in non-async contexts
+# Synchronous wrapper for backward compatibility
 class ZnunyClientSync:
-    """Synchronous wrapper for ZnunyClient."""
+    """Synchronous Znuny client."""
 
     def __init__(self):
-        self.base_url = Config.ZNUNY_URL.rstrip("/")
-        self.username = Config.ZNUNY_USERNAME
-        self.password = Config.ZNUNY_PASSWORD
-        self.session_id: Optional[str] = None
+        self._client = None
 
-    def _get_session(self) -> str | None:
-        if self.session_id:
-            return self.session_id
-
-        try:
-            with httpx.Client() as client:
-                response = client.post(
-                    f"{self.base_url}/otrs/nph-genericinterface.pl/Webservice/REST/Session",
-                    json={
-                        "UserLogin": self.username,
-                        "Password": self.password
-                    },
-                    timeout=30.0
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    self.session_id = data.get("SessionID")
-                    return self.session_id
-                return None
-
-        except Exception as e:
-            logger.error(f"Error creating Znuny session: {e}")
-            return None
+    def _get_client(self) -> ZnunyClient:
+        if not self._client:
+            self._client = ZnunyClient()
+        return self._client
 
     def check_ticket_in_znuny(self, portal_ticket_id: str, customer_name: str = None) -> tuple[bool, str | None]:
-        session_id = self._get_session()
-        if not session_id:
-            return False, None
+        """Check if ticket exists in Znuny."""
+        return self._get_client().check_ticket_sync(portal_ticket_id)
 
-        try:
-            with httpx.Client() as client:
-                # Search by title containing portal ticket ID
-                response = client.get(
-                    f"{self.base_url}/otrs/nph-genericinterface.pl/Webservice/REST/Ticket",
-                    params={
-                        "SessionID": session_id,
-                        "Title": f"*{portal_ticket_id}*"
-                    },
-                    timeout=30.0
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    tickets = data.get("Ticket", [])
-                    if tickets:
-                        ticket = tickets[0] if isinstance(tickets, list) else tickets
-                        znuny_id = ticket.get("TicketNumber") or ticket.get("TicketID")
-                        return True, str(znuny_id)
-
-                return False, None
-
-        except Exception as e:
-            logger.error(f"Error checking ticket in Znuny: {e}")
-            return False, None
+    def close(self):
+        if self._client:
+            self._client.close()
+            self._client = None

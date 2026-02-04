@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ticket Extractor Dashboard</title>
+    <title>All Tickets - Ticket Extractor</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <style>
@@ -22,22 +22,12 @@
             background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
             padding: 0.75rem 1rem;
         }
-        .stat-card {
-            border: none;
+        .filter-section {
+            background: white;
             border-radius: 12px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.25rem;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .stat-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-        }
-        .stat-card .card-body {
-            padding: 1.25rem;
-        }
-        .stat-value {
-            font-size: 1.75rem;
-            font-weight: 700;
         }
         .table-container {
             background: white;
@@ -82,6 +72,10 @@
         .ticket-row:hover {
             background-color: #f0f4f8 !important;
         }
+        .ticket-row.completed {
+            background-color: #f8f9fa;
+            opacity: 0.7;
+        }
         .modal-header {
             background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
             color: white;
@@ -120,55 +114,6 @@
             max-height: 300px;
             overflow-y: auto;
         }
-        .article-item {
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            margin-bottom: 0.5rem;
-            overflow: hidden;
-        }
-        .article-header {
-            background: #f8f9fa;
-            padding: 0.5rem 0.75rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.85rem;
-        }
-        .article-header:hover {
-            background: #e9ecef;
-        }
-        .article-body {
-            padding: 0.75rem;
-            background: white;
-            border-top: 1px solid #e9ecef;
-            font-size: 0.85rem;
-        }
-        .extraction-info {
-            border-top: 1px solid #eee;
-            padding-top: 8px;
-            margin-top: 5px;
-        }
-        .extraction-status {
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 0.65rem;
-            font-weight: 600;
-        }
-        .extraction-status.success { background: #d4edda; color: #155724; }
-        .extraction-status.failed { background: #f8d7da; color: #721c24; }
-        .refresh-btn {
-            position: fixed;
-            bottom: 1.5rem;
-            right: 1.5rem;
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            font-size: 1.25rem;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            z-index: 1000;
-        }
         .loading-overlay {
             position: fixed;
             top: 0;
@@ -188,8 +133,15 @@
             font-size: 0.75rem;
             padding: 0.25em 0.5em;
         }
-        .portal-name {
-            font-size: 1rem;
+        .form-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .form-control, .form-select {
+            font-size: 0.9rem;
         }
     </style>
 </head>
@@ -205,86 +157,62 @@
     <nav class="navbar navbar-dark mb-4">
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1">
-                <i class="bi bi-ticket-detailed me-2"></i>
-                Ticket Extractor
+                <i class="bi bi-list-ul me-2"></i>
+                All Tickets
             </span>
             <div class="d-flex align-items-center gap-2">
-                <span class="text-white-50 small me-2" id="lastUpdate">--</span>
-                <a href="/tickets" class="btn btn-outline-light btn-sm">
-                    <i class="bi bi-list-ul me-1"></i>All Tickets
+                <a href="/" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-house me-1"></i>Dashboard
                 </a>
                 <a href="/staff" class="btn btn-outline-light btn-sm">
                     <i class="bi bi-people me-1"></i>Staff Stats
                 </a>
-                <button class="btn btn-outline-light btn-sm" onclick="checkAllZnuny()">
-                    <i class="bi bi-arrow-repeat me-1"></i>Check Znuny
-                </button>
             </div>
         </div>
     </nav>
 
     <div class="container-fluid px-4">
-        <!-- Stats Cards -->
-        <div class="row mb-4 g-3" id="statsRow">
-            <!-- Portal Cards -->
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #e74c3c;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-danger" id="dhiraaguCount">0</div>
-                        <div class="portal-name text-danger fw-semibold mb-1">Dhiraagu</div>
-                        <div class="extraction-info" id="dhiraaguExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
+        <!-- Filters -->
+        <div class="filter-section">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label">Search</label>
+                    <input type="text" class="form-control" id="searchInput" placeholder="Ticket ID, customer, address...">
                 </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #9b59b6;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value" style="color: #9b59b6;" id="ooredooCount">0</div>
-                        <div class="portal-name fw-semibold mb-1" style="color: #9b59b6;">Ooredoo</div>
-                        <div class="extraction-info" id="ooredooExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
+                <div class="col-md-2">
+                    <label class="form-label">Portal</label>
+                    <select class="form-select" id="portalFilter">
+                        <option value="">All Portals</option>
+                        <option value="dhiraagu">Dhiraagu</option>
+                        <option value="ooredoo">Ooredoo</option>
+                        <option value="rol">ROL</option>
+                        <option value="medianet">Medianet</option>
+                    </select>
                 </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #3498db;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-primary" id="rolCount">0</div>
-                        <div class="portal-name text-primary fw-semibold mb-1">ROL</div>
-                        <div class="extraction-info" id="rolExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
+                <div class="col-md-2">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" id="statusFilter">
+                        <option value="">All Status</option>
+                    </select>
                 </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #1abc9c;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value" style="color: #1abc9c;" id="medianetCount">0</div>
-                        <div class="portal-name fw-semibold mb-1" style="color: #1abc9c;">Medianet</div>
-                        <div class="extraction-info" id="medianetExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
+                <div class="col-md-2">
+                    <label class="form-label">Type</label>
+                    <select class="form-select" id="typeFilter">
+                        <option value="">All Types</option>
+                    </select>
                 </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #2c3e50;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-dark" id="totalTickets">0</div>
-                        <div class="text-muted small">Total Active</div>
-                    </div>
+                <div class="col-md-2">
+                    <label class="form-label">Completion</label>
+                    <select class="form-select" id="completionFilter">
+                        <option value="">All</option>
+                        <option value="active">Active Only</option>
+                        <option value="completed">Completed Only</option>
+                    </select>
                 </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #e74c3c;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-danger" id="notInZnuny">0</div>
-                        <div class="text-muted small">Not in Znuny</div>
-                    </div>
+                <div class="col-md-1">
+                    <button class="btn btn-primary w-100" onclick="loadTickets()">
+                        <i class="bi bi-search"></i>
+                    </button>
                 </div>
             </div>
         </div>
@@ -348,11 +276,6 @@
         </div>
     </div>
 
-    <!-- Refresh Button -->
-    <button class="btn btn-primary refresh-btn" onclick="refreshAll()" title="Refresh">
-        <i class="bi bi-arrow-clockwise"></i>
-    </button>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentPage = 0;
@@ -394,12 +317,6 @@
             }) + ' MVT';
         }
 
-        function getNowMaldives() {
-            const now = new Date();
-            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-            return new Date(utc + (MVT_OFFSET * 60000));
-        }
-
         function formatTimeDiff(ms) {
             if (!ms || ms < 0) return '-';
             const minutes = Math.floor(ms / 60000);
@@ -413,39 +330,36 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
-            loadStats();
+            loadFilterOptions();
             loadTickets();
-            setInterval(refreshAll, 300000); // Auto-refresh every 5 min
+
+            document.getElementById('searchInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') loadTickets();
+            });
         });
 
         function showLoading(show) {
             document.getElementById('loadingOverlay').classList.toggle('show', show);
         }
 
-        async function loadStats() {
+        async function loadFilterOptions() {
             try {
-                const response = await fetch('/api/stats');
+                const response = await fetch('/api/stats?include_completed=true');
                 const stats = await response.json();
 
-                document.getElementById('totalTickets').textContent = stats.total || 0;
-                document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
+                const statusFilter = document.getElementById('statusFilter');
+                statusFilter.innerHTML = '<option value="">All Status</option>';
+                for (const status of Object.keys(stats.by_status || {})) {
+                    statusFilter.innerHTML += `<option value="${status}">${status}</option>`;
+                }
 
-                const portals = stats.by_portal || {};
-                document.getElementById('dhiraaguCount').textContent = portals['dhiraagu'] || 0;
-                document.getElementById('ooredooCount').textContent = portals['ooredoo'] || 0;
-                document.getElementById('rolCount').textContent = portals['rol'] || 0;
-                document.getElementById('medianetCount').textContent = portals['medianet'] || 0;
-
-                const lastExtraction = stats.last_extraction || {};
-                updateExtractionInfo('dhiraagu', lastExtraction['dhiraagu']);
-                updateExtractionInfo('ooredoo', lastExtraction['ooredoo']);
-                updateExtractionInfo('rol', lastExtraction['rol']);
-                updateExtractionInfo('medianet', lastExtraction['medianet']);
-
-                document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
-
+                const typeFilter = document.getElementById('typeFilter');
+                typeFilter.innerHTML = '<option value="">All Types</option>';
+                for (const type of Object.keys(stats.by_type || {})) {
+                    typeFilter.innerHTML += `<option value="${type}">${type}</option>`;
+                }
             } catch (error) {
-                console.error('Error loading stats:', error);
+                console.error('Error loading filter options:', error);
             }
         }
 
@@ -453,6 +367,26 @@
             showLoading(true);
             try {
                 const params = new URLSearchParams();
+
+                const search = document.getElementById('searchInput').value;
+                const portal = document.getElementById('portalFilter').value;
+                const status = document.getElementById('statusFilter').value;
+                const type = document.getElementById('typeFilter').value;
+                const completion = document.getElementById('completionFilter').value;
+
+                if (search) params.append('search', search);
+                if (portal) params.append('portal', portal);
+                if (status) params.append('status', status);
+                if (type) params.append('ticket_type', type);
+
+                if (completion === 'active') {
+                    params.append('include_completed', 'false');
+                } else if (completion === 'completed') {
+                    params.append('completed_only', 'true');
+                } else {
+                    params.append('include_completed', 'true');
+                }
+
                 params.append('limit', pageSize);
                 params.append('offset', currentPage * pageSize);
 
@@ -478,7 +412,7 @@
                     <tr>
                         <td colspan="10" class="text-center text-muted py-5">
                             <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-                            No active tickets
+                            No tickets found
                         </td>
                     </tr>
                 `;
@@ -487,7 +421,7 @@
 
             for (const ticket of tickets) {
                 const row = document.createElement('tr');
-                row.className = 'ticket-row';
+                row.className = 'ticket-row' + (ticket.completed_at ? ' completed' : '');
                 row.onclick = () => showTicketDetail(ticket.id);
 
                 const znunyIcon = ticket.in_znuny
@@ -777,7 +711,6 @@
                     : 'Ticket not found in Znuny'
                 );
 
-                loadStats();
                 loadTickets();
                 if (currentTicketId === ticketId) showTicketDetail(ticketId);
 
@@ -808,64 +741,6 @@
             } finally {
                 showLoading(false);
             }
-        }
-
-        async function checkAllZnuny() {
-            if (!confirm('Check Znuny status for all tickets not marked? This may take a while.')) return;
-
-            showLoading(true);
-            try {
-                const response = await fetch('/api/tickets/check-all-znuny', { method: 'POST' });
-                const data = await response.json();
-
-                alert(`Checked ${data.checked} tickets. ${data.updated} found in Znuny.`);
-                loadStats();
-                loadTickets();
-
-            } catch (error) {
-                console.error('Error checking all Znuny:', error);
-                alert('Error checking Znuny status');
-            } finally {
-                showLoading(false);
-            }
-        }
-
-        function refreshAll() {
-            loadStats();
-            loadTickets();
-        }
-
-        function updateExtractionInfo(portal, info) {
-            const el = document.getElementById(portal + 'Extraction');
-            if (!el) return;
-
-            if (!info) {
-                el.innerHTML = '<small class="text-muted">No extraction</small>';
-                return;
-            }
-
-            const statusClass = info.status === 'success' ? 'success' : 'failed';
-            const statusText = info.status === 'success' ? 'OK' : 'Fail';
-            const timeStr = info.extracted_at ? formatRelativeTime(info.extracted_at) : '--';
-
-            el.innerHTML = `
-                <small class="extraction-status ${statusClass}">${statusText}</small>
-                <small class="text-muted d-block" title="${info.extracted_at || ''}">${timeStr}</small>
-            `;
-        }
-
-        function formatRelativeTime(dateStr) {
-            if (!dateStr) return '--';
-            const date = toMaldivesTime(dateStr);
-            const now = getNowMaldives();
-            const diffMs = now - date;
-            const diffMins = Math.floor(diffMs / 60000);
-            const diffHours = Math.floor(diffMs / 3600000);
-
-            if (diffMins < 1) return 'Just now';
-            if (diffMins < 60) return diffMins + 'm ago';
-            if (diffHours < 24) return diffHours + 'h ago';
-            return formatMaldivesDateTime(dateStr);
         }
 
         function escapeHtml(text) {
