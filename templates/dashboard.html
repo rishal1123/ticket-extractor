@@ -121,10 +121,10 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #17a2b8;">
+        <div class="stat-card card h-100" style="border-left: 4px solid #e65100;">
             <div class="card-body text-center py-3">
-                <div class="stat-value text-info" id="notInZnuny">0</div>
-                <div class="text-info fw-semibold mb-1">Not in Znuny</div>
+                <div class="stat-value" style="color: #e65100;" id="notInZnuny">0</div>
+                <div class="fw-semibold mb-1" style="color: #e65100;">Not in Znuny</div>
                 <div class="extraction-info" id="znunySyncInfo">
                     <small class="text-muted">--</small>
                 </div>
@@ -473,10 +473,12 @@ async function loadZnunySyncStatus() {
             const statusClass = notInZnuny === 0 ? 'success' : (notInZnuny > 5 ? 'failed' : 'success');
             const statusText = notInZnuny === 0 ? 'Synced' : 'Pending';
             const pendingText = status.pending_sync > 0 ? `${status.pending_sync} pending` : 'Details synced';
+            const lastSyncText = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
 
             el.innerHTML = `
                 <small class="extraction-status ${statusClass}">${statusText}</small>
                 <small class="text-muted d-block">${pendingText}</small>
+                <small class="text-muted d-block">Synced ${lastSyncText}</small>
             `;
         }
     } catch (error) {

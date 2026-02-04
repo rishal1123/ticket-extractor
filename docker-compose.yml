@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  extractor:
+    build: .
+    container_name: ticket-extractor
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./tickets.db:/app/tickets.db
+    environment:
+      # Portal credentials
+      - DHIRAAGU_URL=${DHIRAAGU_URL}
+      - DHIRAAGU_USERNAME=${DHIRAAGU_USERNAME}
+      - DHIRAAGU_PASSWORD=${DHIRAAGU_PASSWORD}
+      - OOREDOO_URL=${OOREDOO_URL}
+      - OOREDOO_USERNAME=${OOREDOO_USERNAME}
+      - OOREDOO_PASSWORD=${OOREDOO_PASSWORD}
+      - ROL_URL=${ROL_URL}
+      - ROL_USERNAME=${ROL_USERNAME}
+      - ROL_PASSWORD=${ROL_PASSWORD}
+      - MEDIANET_URL=${MEDIANET_URL}
+      - MEDIANET_USERNAME=${MEDIANET_USERNAME}
+      - MEDIANET_PASSWORD=${MEDIANET_PASSWORD}
+      # Znuny configuration
+      - ZNUNY_URL=${ZNUNY_URL}
+      - ZNUNY_USERNAME=${ZNUNY_USERNAME}
+      - ZNUNY_PASSWORD=${ZNUNY_PASSWORD}
+      # Application settings
+      - EXTRACTION_INTERVAL_MINUTES=${EXTRACTION_INTERVAL_MINUTES:-5}
+      - DASHBOARD_HOST=0.0.0.0
+      - DASHBOARD_PORT=8000
+    restart: unless-stopped
+    shm_size: '2gb'  # Required for Chrome

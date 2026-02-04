@@ -112,7 +112,7 @@ def sync_znuny_for_tickets():
                 if details:
                     sync_db.update_znuny_details(
                         ticket.id,
-                        znuny_created_at=now_maldives(),
+                        znuny_created_at=details.created_at,
                         znuny_created_by=details.created_by,
                         znuny_address=details.address
                     )
@@ -274,11 +274,22 @@ async def get_znuny_sync_status():
         details_synced = sum(1 for t in tickets if t.in_znuny and t.znuny_created_by)
         pending_sync = sum(1 for t in tickets if t.in_znuny and not t.znuny_created_by)
 
+        # Get last extraction time
+        last_extraction = db.get_last_extraction_per_portal()
+        last_sync_time = None
+        if last_extraction:
+            # Get the most recent extraction time from any portal
+            for portal, info in last_extraction.items():
+                if info.get("extracted_at"):
+                    if last_sync_time is None or info["extracted_at"] > last_sync_time:
+                        last_sync_time = info["extracted_at"]
+
         return JSONResponse(content={
             "in_znuny": in_znuny,
             "not_in_znuny": not_in_znuny,
             "details_synced": details_synced,
-            "pending_sync": pending_sync
+            "pending_sync": pending_sync,
+            "last_sync_time": last_sync_time
         })
     except Exception as e:
         logger.error(f"Error getting Znuny sync status: {e}")
@@ -604,7 +615,7 @@ async def sync_znuny_details():
                     # Update ticket with Znuny creation info
                     db.update_znuny_details(
                         ticket.id,
-                        znuny_created_at=now_maldives(),
+                        znuny_created_at=details.created_at,
                         znuny_created_by=details.created_by,
                         znuny_address=details.address
                     )
@@ -667,7 +678,7 @@ async def sync_single_ticket_znuny(ticket_id: int):
         # Update ticket with Znuny creation info
         db.update_znuny_details(
             ticket.id,
-            znuny_created_at=now_maldives(),
+            znuny_created_at=details.created_at,
             znuny_created_by=details.created_by,
             znuny_address=details.address
         )
@@ -877,7 +888,7 @@ async def export_tickets_csv(
         for t in tickets:
             time_to_create = ""
             if t.created_at and t.znuny_created_at:
-                diff = (t.znuny_created_at - t.created_at).total_seconds() / 60
+                diff = (t.created_at - t.znuny_created_at).total_seconds() / 60
                 time_to_create = str(round(diff, 1))
 
             # Escape commas in fields
@@ -896,6 +907,106 @@ async def export_tickets_csv(
         )
     except Exception as e:
         logger.error(f"Error exporting tickets CSV: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Config API endpoints
+@app.get("/api/config")
+async def get_config():
+    """Get current configuration (passwords masked)."""
+    try:
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        config = {}
+
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        # Mask password values for display
+                        if 'PASSWORD' in key.upper():
+                            config[key] = '********' if value else ''
+                        else:
+                            config[key] = value
+
+        return JSONResponse(content={"config": config})
+    except Exception as e:
+        logger.error(f"Error reading config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/config/raw")
+async def get_config_raw():
+    """Get raw configuration including passwords (use with caution)."""
+    try:
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        config = {}
+
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key] = value
+
+        return JSONResponse(content={"config": config})
+    except Exception as e:
+        logger.error(f"Error reading config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config")
+async def update_config(request: Request):
+    """Update configuration in .env file."""
+    try:
+        data = await request.json()
+        new_config = data.get('config', {})
+
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+
+        # Read existing config to preserve passwords if masked
+        existing_config = {}
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        existing_config[key] = value
+
+        # Merge configs - don't overwrite passwords with masked values
+        final_config = {}
+        for key, value in new_config.items():
+            if value == '********' and key in existing_config:
+                final_config[key] = existing_config[key]
+            else:
+                final_config[key] = value
+
+        # Write config with sections
+        sections = {
+            'Dhiraagu Portal': ['DHIRAAGU_URL', 'DHIRAAGU_USERNAME', 'DHIRAAGU_PASSWORD'],
+            'Ooredoo Portal': ['OOREDOO_URL', 'OOREDOO_USERNAME', 'OOREDOO_PASSWORD'],
+            'ROL Portal': ['ROL_URL', 'ROL_USERNAME', 'ROL_PASSWORD'],
+            'Medianet Portal': ['MEDIANET_URL', 'MEDIANET_USERNAME', 'MEDIANET_PASSWORD'],
+            'Znuny API': ['ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD'],
+            'Scheduler settings': ['EXTRACTION_INTERVAL_MINUTES'],
+            'Dashboard settings': ['DASHBOARD_HOST', 'DASHBOARD_PORT']
+        }
+
+        with open(env_path, 'w') as f:
+            for section_name, keys in sections.items():
+                f.write(f"# {section_name}\n")
+                for key in keys:
+                    if key in final_config:
+                        f.write(f"{key}={final_config[key]}\n")
+                f.write("\n")
+
+        logger.info("Configuration updated successfully")
+        return JSONResponse(content={"success": True, "message": "Configuration saved"})
+    except Exception as e:
+        logger.error(f"Error updating config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

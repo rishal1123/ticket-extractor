@@ -59,6 +59,34 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.config-section {
+    background: white;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.config-section h6 {
+    color: #2c3e50;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 0.5rem;
+    margin-bottom: 1rem;
+}
+.config-section.portal-dhiraagu h6 { border-color: #e74c3c; }
+.config-section.portal-ooredoo h6 { border-color: #9b59b6; }
+.config-section.portal-rol h6 { border-color: #3498db; }
+.config-section.portal-medianet h6 { border-color: #1abc9c; }
+.config-section.portal-znuny h6 { border-color: #f39c12; }
+.password-toggle {
+    cursor: pointer;
+}
+.nav-tabs .nav-link {
+    color: #6c757d;
+}
+.nav-tabs .nav-link.active {
+    color: #2c3e50;
+    font-weight: 600;
+}
 @media (max-width: 768px) {
     .scheduler-status {
         padding: 0.75rem;
@@ -75,10 +103,31 @@
     .portal-card h6 {
         font-size: 0.85rem;
     }
+    .config-section {
+        padding: 0.75rem;
+    }
 }
 {% endblock %}
 
 {% block content %}
+<!-- Tab Navigation -->
+<ul class="nav nav-tabs mb-3" id="adminTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="status-tab" data-bs-toggle="tab" data-bs-target="#status-content" type="button" role="tab">
+            <i class="bi bi-speedometer2 me-1"></i>Status
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="config-tab" data-bs-toggle="tab" data-bs-target="#config-content" type="button" role="tab">
+            <i class="bi bi-sliders me-1"></i>Config
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="adminTabContent">
+<!-- Status Tab -->
+<div class="tab-pane fade show active" id="status-content" role="tabpanel">
+
 <!-- Scheduler Status -->
 <div class="scheduler-status mb-3">
     <div class="row g-2 align-items-center">
@@ -312,6 +361,171 @@
         </div>
     </div>
 </div>
+
+</div><!-- End Status Tab -->
+
+<!-- Config Tab -->
+<div class="tab-pane fade" id="config-content" role="tabpanel">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><i class="bi bi-sliders me-2"></i>Configuration</h5>
+        <div>
+            <button class="btn btn-outline-secondary btn-sm me-2" onclick="loadConfig()">
+                <i class="bi bi-arrow-clockwise me-1"></i>Reload
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="saveConfig()" id="saveConfigBtn">
+                <i class="bi bi-save me-1"></i>Save Changes
+            </button>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <!-- Dhiraagu -->
+        <div class="col-12 col-md-6">
+            <div class="config-section portal-dhiraagu">
+                <h6><i class="bi bi-globe me-1"></i>Dhiraagu Portal</h6>
+                <div class="mb-2">
+                    <label class="form-label small">URL</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_DHIRAAGU_URL">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Username</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_DHIRAAGU_USERNAME">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">Password</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="cfg_DHIRAAGU_PASSWORD">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('cfg_DHIRAAGU_PASSWORD')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ooredoo -->
+        <div class="col-12 col-md-6">
+            <div class="config-section portal-ooredoo">
+                <h6><i class="bi bi-globe me-1"></i>Ooredoo Portal</h6>
+                <div class="mb-2">
+                    <label class="form-label small">URL</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_OOREDOO_URL">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Username</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_OOREDOO_USERNAME">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">Password</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="cfg_OOREDOO_PASSWORD">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('cfg_OOREDOO_PASSWORD')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROL -->
+        <div class="col-12 col-md-6">
+            <div class="config-section portal-rol">
+                <h6><i class="bi bi-globe me-1"></i>ROL Portal</h6>
+                <div class="mb-2">
+                    <label class="form-label small">URL</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_ROL_URL">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Username</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_ROL_USERNAME">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">Password</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="cfg_ROL_PASSWORD">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('cfg_ROL_PASSWORD')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Medianet -->
+        <div class="col-12 col-md-6">
+            <div class="config-section portal-medianet">
+                <h6><i class="bi bi-globe me-1"></i>Medianet Portal</h6>
+                <div class="mb-2">
+                    <label class="form-label small">URL</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_MEDIANET_URL">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Username</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_MEDIANET_USERNAME">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">Password</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="cfg_MEDIANET_PASSWORD">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('cfg_MEDIANET_PASSWORD')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Znuny -->
+        <div class="col-12 col-md-6">
+            <div class="config-section portal-znuny">
+                <h6><i class="bi bi-server me-1"></i>Znuny API</h6>
+                <div class="mb-2">
+                    <label class="form-label small">URL</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_ZNUNY_URL">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Username</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_ZNUNY_USERNAME">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">Password</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="cfg_ZNUNY_PASSWORD">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('cfg_ZNUNY_PASSWORD')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- App Settings -->
+        <div class="col-12 col-md-6">
+            <div class="config-section">
+                <h6><i class="bi bi-gear me-1"></i>Application Settings</h6>
+                <div class="mb-2">
+                    <label class="form-label small">Extraction Interval (minutes)</label>
+                    <input type="number" class="form-control form-control-sm" id="cfg_EXTRACTION_INTERVAL_MINUTES" min="1" max="60">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">Dashboard Host</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_DASHBOARD_HOST">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">Dashboard Port</label>
+                    <input type="number" class="form-control form-control-sm" id="cfg_DASHBOARD_PORT" min="1" max="65535">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="alert alert-warning mt-3 mb-0">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        <strong>Note:</strong> Changes to port or host settings require a server restart to take effect.
+    </div>
+</div><!-- End Config Tab -->
+
+</div><!-- End Tab Content -->
 {% endblock %}
 
 {% block script %}
@@ -671,5 +885,91 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Config Functions
+const configKeys = [
+    'DHIRAAGU_URL', 'DHIRAAGU_USERNAME', 'DHIRAAGU_PASSWORD',
+    'OOREDOO_URL', 'OOREDOO_USERNAME', 'OOREDOO_PASSWORD',
+    'ROL_URL', 'ROL_USERNAME', 'ROL_PASSWORD',
+    'MEDIANET_URL', 'MEDIANET_USERNAME', 'MEDIANET_PASSWORD',
+    'ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD',
+    'EXTRACTION_INTERVAL_MINUTES', 'DASHBOARD_HOST', 'DASHBOARD_PORT'
+];
+
+// Load config when switching to config tab
+document.getElementById('config-tab').addEventListener('shown.bs.tab', function() {
+    loadConfig();
+});
+
+async function loadConfig() {
+    try {
+        const response = await fetch('/api/config');
+        const data = await response.json();
+
+        if (data.config) {
+            configKeys.forEach(key => {
+                const el = document.getElementById('cfg_' + key);
+                if (el) {
+                    el.value = data.config[key] || '';
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading config:', error);
+        alert('Error loading configuration');
+    }
+}
+
+async function saveConfig() {
+    const btn = document.getElementById('saveConfigBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split spinning me-1"></i>Saving...';
+
+    try {
+        const config = {};
+        configKeys.forEach(key => {
+            const el = document.getElementById('cfg_' + key);
+            if (el) {
+                config[key] = el.value;
+            }
+        });
+
+        const response = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert('Configuration saved successfully!\n\nNote: Some changes may require a server restart.');
+        } else {
+            alert('Failed to save: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error saving config:', error);
+        alert('Error saving configuration: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save me-1"></i>Save Changes';
+    }
+}
+
+function togglePassword(inputId) {
+    const input = document.getElementById(inputId);
+    const btn = input.nextElementSibling;
+    const icon = btn.querySelector('i');
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.classList.remove('bi-eye');
+        icon.classList.add('bi-eye-slash');
+    } else {
+        input.type = 'password';
+        icon.classList.remove('bi-eye-slash');
+        icon.classList.add('bi-eye');
+    }
 }
 {% endblock %}

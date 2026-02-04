@@ -6,37 +6,76 @@ Ticket Extractor is a web scraping application that extracts tickets from multip
 
 ## Architecture
 
+The application follows MVC (Model-View-Controller) pattern with a service layer:
+
 ```
 Extractor/
 ├── main.py              # CLI entry point, runs extraction + dashboard
-├── dashboard.py         # FastAPI web server (port 8000)
-├── database.py          # SQLite database operations
+├── app.py               # MVC FastAPI app (alternative entry point)
+├── dashboard.py         # FastAPI web server (port 8000) - main controller
+├── database.py          # SQLite database operations (Repository)
 ├── config.py            # Configuration from .env
 ├── znuny_client.py      # Selenium-based Znuny integration
+│
+├── models/              # Data Models
+│   └── ticket.py        # Ticket dataclass
+│
+├── services/            # Service Layer - Business Logic
+│   ├── __init__.py      # Service exports
+│   ├── extraction_service.py  # Portal extraction logic
+│   ├── znuny_service.py       # Znuny sync logic
+│   ├── stats_service.py       # Statistics/analytics
+│   └── config_service.py      # Configuration management (.env)
+│
+├── controllers/         # Controller Layer - HTTP Handlers
+│   ├── __init__.py      # Router exports
+│   ├── pages.py         # HTML page routes
+│   ├── api.py           # JSON API routes
+│   └── admin.py         # Admin API routes
+│
 ├── extractors/          # Portal-specific scrapers
 │   ├── base.py          # BaseExtractor abstract class
 │   ├── dhiraagu.py      # Dhiraagu portal extractor
 │   ├── ooredoo.py       # Ooredoo portal extractor
 │   ├── rol.py           # ROL portal extractor
 │   └── medianet.py      # Medianet portal extractor
-├── models/
-│   └── ticket.py        # Ticket dataclass
-├── utils/
-│   ├── browser.py       # Selenium browser manager
-│   └── logger.py        # Logging utilities
-├── templates/           # Jinja2 HTML templates (Bootstrap 5)
+│
+├── templates/           # View Layer - Jinja2 HTML templates
 │   ├── base.html        # Base template with navbar, modal, CSS
 │   ├── dashboard.html   # Main dashboard (extends base.html)
 │   ├── tickets.html     # All tickets view (extends base.html)
 │   ├── staff_stats.html # Staff performance stats (extends base.html)
-│   ├── staff_detail.html# Individual staff performance detail (extends base.html)
-│   └── admin.html       # Admin panel (extends base.html)
-├── static/
+│   ├── staff_detail.html# Individual staff performance detail
+│   └── admin.html       # Admin panel with Status & Config tabs
+│
+├── static/              # Static assets
 │   ├── js/common.js     # Shared JavaScript functions
 │   └── favicon.svg      # Application favicon
+│
+├── utils/               # Utilities
+│   ├── browser.py       # Selenium browser manager
+│   └── logger.py        # Logging utilities
+│
 ├── tickets.db           # SQLite database
-└── .env                 # Environment variables (credentials)
+├── .env                 # Environment variables (credentials)
+├── Dockerfile           # Docker container configuration
+└── docker-compose.yml   # Docker Compose orchestration
 ```
+
+### Layer Responsibilities
+
+| Layer | Directory | Responsibility |
+|-------|-----------|----------------|
+| **Model** | `models/` | Data structures, validation |
+| **View** | `templates/` | HTML templates, UI rendering |
+| **Controller** | `controllers/`, `dashboard.py` | HTTP request handling, routing |
+| **Service** | `services/` | Business logic |
+| **Repository** | `database.py` | Data persistence, queries |
+
+### Entry Points
+- `dashboard.py` - Main entry point (recommended)
+- `app.py` - MVC-structured alternative (`python main.py --mvc`)
+- `main.py` - CLI with options for extraction modes
 
 ## Template Architecture
 
@@ -247,9 +286,9 @@ The system tracks multiple timestamps for each ticket:
 5. **completed_at** - When the ticket was marked complete (disappeared from portal)
 
 ### Time to Create Calculation
-**Time to Create** = `znuny_created_at - created_at`
+**Time to Create** = `created_at - znuny_created_at`
 
-This measures how long it took staff to create the ticket in Znuny after it appeared in the extractor. This is the key accountability metric.
+This measures the time difference between when a ticket entered the extractor and when it was created in Znuny. A positive value indicates staff created the Znuny ticket after the extractor picked it up.
 
 **Note:** The calculation uses `created_at` (entered to extractor) NOT `portal_created_at` (created on ISP portal) because staff can only act on tickets after they appear in the extractor.
 
@@ -261,9 +300,40 @@ python main.py
 
 # Dashboard only
 python dashboard.py
+
+# Using MVC app structure
+python main.py --mvc
 ```
 
 The app runs on http://localhost:8000 by default.
+
+## Docker Deployment
+
+### Quick Start
+
+```bash
+# Build and run
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+### Configuration
+
+Create a `.env` file with your credentials (see Configuration section above).
+
+### Docker Compose
+
+The `docker-compose.yml` provides:
+- Chrome with Selenium for web scraping
+- Persistent database volume
+- Environment variable injection from `.env`
+- Automatic restart on failure
+- Shared memory for Chrome stability
 
 ## Scheduler
 
@@ -391,4 +461,4 @@ Two CSV export endpoints are available:
 ### Definition: "On Time"
 A ticket is considered "On Time" if it was created in Znuny within **5 minutes** of appearing in the extractor.
 
-**Calculation:** `znuny_created_at - created_at <= 5 minutes`
+**Calculation:** `created_at - znuny_created_at <= 5 minutes`

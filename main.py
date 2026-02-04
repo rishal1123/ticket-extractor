@@ -1,15 +1,24 @@
+"""
+Ticket Extractor - Main Entry Point
+
+This module provides the CLI interface for the application.
+The actual application logic follows MVC pattern:
+- Controllers: Handle HTTP requests (controllers/)
+- Services: Business logic (services/)
+- Models: Data structures (models/)
+- Database: Data access layer (database.py)
+"""
+
 import argparse
 import signal
 import sys
-import threading
 import time
 
 import schedule
 
 from config import Config
-from database import Database
-from extractors import DhiraaguExtractor, OoredooExtractor, ROLExtractor, MedianetExtractor
-from znuny_client import ZnunyClient
+from database import Database, now_maldives
+from services import ExtractionService, ZnunyService
 from utils.logger import setup_logger, get_logger
 
 logger = get_logger("main")
@@ -24,127 +33,41 @@ def signal_handler(signum, frame):
     running = False
 
 
-def get_extractor_class(portal_name: str):
-    """Get the extractor class for a portal name."""
-    extractors = {
-        "dhiraagu": DhiraaguExtractor,
-        "ooredoo": OoredooExtractor,
-        "rol": ROLExtractor,
-        "medianet": MedianetExtractor
-    }
-    return extractors.get(portal_name.lower())
-
-
 def run_extraction(portal_name: str = None, headless: bool = False):
-    """Run extraction for one or all portals."""
+    """Run extraction for one or all portals using ExtractionService."""
     db = Database()
-    results = []
+    extraction_service = ExtractionService(db)
 
     if portal_name:
-        # Run single portal
-        config = Config.get_portal_by_name(portal_name)
-        if not config:
-            logger.error(f"Unknown portal: {portal_name}")
-            return results
-
-        extractor_class = get_extractor_class(portal_name)
-        if not extractor_class:
-            logger.error(f"No extractor found for portal: {portal_name}")
-            return results
-
-        if not config.url or not config.username:
-            logger.warning(f"Portal {portal_name} not configured, skipping")
-            return results
-
-        extractor = extractor_class(config, db, headless=headless)
-        result = extractor.run()
-        results.append(result)
+        result = extraction_service.extract_from_portal(portal_name, headless=headless)
+        return [result]
     else:
-        # Run all portals
-        for config in Config.get_all_portals():
-            if not config.url or not config.username:
-                logger.warning(f"Portal {config.name} not configured, skipping")
-                continue
-
-            extractor_class = get_extractor_class(config.name)
-            if not extractor_class:
-                logger.warning(f"No extractor for {config.name}, skipping")
-                continue
-
-            logger.info(f"Starting extraction for {config.name}")
-            extractor = extractor_class(config, db, headless=headless)
-            result = extractor.run()
-            results.append(result)
-
-            # Small delay between portals
-            if running:
-                time.sleep(5)
-
-    return results
+        results = extraction_service.extract_from_all_portals(headless=headless)
+        return list(results.get("portals", {}).values())
 
 
 def sync_znuny_for_new_tickets(db: Database):
-    """Sync Znuny status and details for tickets not yet checked."""
+    """Sync Znuny status and details for tickets not yet checked using ZnunyService."""
     logger.info("Starting Znuny sync for unchecked tickets")
-    znuny_client = ZnunyClient()
-
-    tickets = db.get_all_tickets()
-    tickets_to_check = [t for t in tickets if not t.in_znuny]
-
-    updated = 0
-    for ticket in tickets_to_check:
-        try:
-            # Use account for ROL, ticket_id for others
-            search_term = ticket.account if ticket.portal == "rol" and ticket.account else ticket.ticket_id
-            exists, znuny_ticket_id = znuny_client.check_ticket_sync(
-                search_term,
-                ticket.customer_name
-            )
-            if exists:
-                db.update_znuny_status(ticket.id, True, znuny_ticket_id)
-                updated += 1
-
-                # Fetch details
-                details = znuny_client.get_ticket_details(znuny_ticket_id)
-                if details:
-                    db.update_znuny_details(
-                        ticket.id,
-                        znuny_created_at=details.created_at,
-                        znuny_created_by=details.created_by,
-                        znuny_address=details.address
-                    )
-                    for article in details.articles:
-                        db.upsert_znuny_article(
-                            ticket_id=ticket.id,
-                            znuny_ticket_id=znuny_ticket_id,
-                            article_number=article.article_number,
-                            sender=article.sender,
-                            via=article.via,
-                            subject=article.subject,
-                            created_at=article.created_at,
-                            created_at_str=article.created_at_str,
-                            created_by=article.created_by,
-                            body=article.body
-                        )
-        except Exception as e:
-            logger.warning(f"Error checking ticket {ticket.ticket_id}: {e}")
-            continue
-
-    logger.info(f"Znuny sync complete: {updated} tickets found in Znuny")
-    return updated
+    znuny_service = ZnunyService(db)
+    result = znuny_service.sync_unchecked_tickets()
+    logger.info(f"Znuny sync complete: {result}")
+    return result.get("found", 0)
 
 
 def scheduled_extraction():
     """Function called by scheduler."""
     logger.info("Starting scheduled extraction")
     db = Database()
-    results = run_extraction(headless=True)  # Run in headless mode (background)
+
+    # Run extraction
+    results = run_extraction(headless=True)
 
     # Summary
     total_found = sum(r.get("tickets_found", 0) for r in results)
     total_new = sum(r.get("tickets_new", 0) for r in results)
     total_updated = sum(r.get("tickets_updated", 0) for r in results)
-    failed = [r["portal"] for r in results if r["status"] == "failed"]
+    failed = [r["portal"] for r in results if r.get("status") == "failed"]
 
     logger.info(f"Extraction complete: {total_found} found, {total_new} new, {total_updated} updated")
     if failed:
@@ -175,12 +98,6 @@ def run_scheduler():
         time.sleep(1)
 
     logger.info("Scheduler stopped")
-
-
-def run_dashboard_thread():
-    """Run dashboard in a separate thread."""
-    from dashboard import run_dashboard
-    run_dashboard()
 
 
 def main():
@@ -217,6 +134,11 @@ def main():
         action="store_true",
         help="Run browser in visible mode (disable headless)"
     )
+    parser.add_argument(
+        "--mvc",
+        action="store_true",
+        help="Use MVC-based app.py instead of dashboard.py"
+    )
 
     args = parser.parse_args()
 
@@ -232,13 +154,17 @@ def main():
         if args.dashboard_only:
             # Run only dashboard
             logger.info("Starting dashboard only mode")
-            from dashboard import run_dashboard
-            run_dashboard()
+            if args.mvc:
+                from app import run_app
+                run_app()
+            else:
+                from dashboard import run_dashboard
+                run_dashboard()
 
         elif args.once:
             # Run once and exit
             logger.info("Running single extraction")
-            headless = not args.visible  # Default headless unless --visible specified
+            headless = not args.visible
             results = run_extraction(portal_name=args.portal, headless=headless)
 
             # Print summary
@@ -246,9 +172,9 @@ def main():
             print("EXTRACTION SUMMARY")
             print("=" * 60)
             for r in results:
-                status_icon = "OK" if r["status"] == "success" else "FAILED"
-                print(f"{r['portal']:12} [{status_icon}] Found: {r['tickets_found']:3}, "
-                      f"New: {r['tickets_new']:3}, Updated: {r['tickets_updated']:3}, "
+                status_icon = "OK" if r.get("status") == "success" else "FAILED"
+                print(f"{r['portal']:12} [{status_icon}] Found: {r.get('tickets_found', 0):3}, "
+                      f"New: {r.get('tickets_new', 0):3}, Updated: {r.get('tickets_updated', 0):3}, "
                       f"Completed: {r.get('tickets_completed', 0):3}")
                 if r.get("error"):
                     print(f"             Error: {r['error']}")
@@ -257,11 +183,13 @@ def main():
         else:
             # Run scheduler with dashboard
             if not args.no_dashboard:
-                # Start dashboard - it has its own scheduler built-in via lifespan
-                # So we don't need to run our own scheduler when dashboard is enabled
-                logger.info(f"Starting dashboard with built-in scheduler at http://{Config.DASHBOARD_HOST}:{Config.DASHBOARD_PORT}")
-                from dashboard import run_dashboard
-                run_dashboard()  # This blocks and runs the dashboard with its scheduler
+                logger.info(f"Starting dashboard at http://{Config.DASHBOARD_HOST}:{Config.DASHBOARD_PORT}")
+                if args.mvc:
+                    from app import run_app
+                    run_app()
+                else:
+                    from dashboard import run_dashboard
+                    run_dashboard()
             else:
                 # Run scheduler in main thread (no dashboard)
                 run_scheduler()
