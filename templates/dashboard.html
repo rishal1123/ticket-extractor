@@ -1,879 +1,577 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ticket Extractor Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
-    <style>
-        :root {
-            --primary-color: #2c3e50;
-            --secondary-color: #3498db;
-            --success-color: #27ae60;
-            --warning-color: #f39c12;
-            --danger-color: #e74c3c;
-        }
-        body {
-            background-color: #f5f6fa;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .navbar {
-            background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
-            padding: 0.75rem 1rem;
-        }
-        .stat-card {
-            border: none;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .stat-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-        }
-        .stat-card .card-body {
-            padding: 1.25rem;
-        }
-        .stat-value {
-            font-size: 1.75rem;
-            font-weight: 700;
-        }
-        .table-container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            padding: 1.25rem;
-        }
-        .table thead th {
-            background-color: #f8f9fa;
-            border-bottom: 2px solid #dee2e6;
-            font-weight: 600;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #6c757d;
-            white-space: nowrap;
-        }
-        .table tbody td {
-            vertical-align: middle;
-            font-size: 0.9rem;
-        }
-        .badge-portal {
-            font-size: 0.7rem;
-            padding: 0.35em 0.65em;
-            font-weight: 600;
-        }
-        .badge-dhiraagu { background-color: #e74c3c; }
-        .badge-ooredoo { background-color: #9b59b6; }
-        .badge-rol { background-color: #3498db; }
-        .badge-medianet { background-color: #1abc9c; }
-        .znuny-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.25rem;
-        }
-        .znuny-yes { color: var(--success-color); }
-        .znuny-no { color: var(--danger-color); }
-        .ticket-row {
-            cursor: pointer;
-            transition: background-color 0.15s;
-        }
-        .ticket-row:hover {
-            background-color: #f0f4f8 !important;
-        }
-        .modal-header {
-            background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
-            color: white;
-            padding: 1rem 1.5rem;
-        }
-        .modal-body {
-            padding: 1.5rem;
-        }
-        .info-card {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 0.75rem 1rem;
-            height: 100%;
-        }
-        .info-card .label {
-            font-size: 0.75rem;
-            color: #6c757d;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 0.25rem;
-        }
-        .info-card .value {
-            font-weight: 600;
-            color: #2c3e50;
-        }
-        .section-title {
-            font-size: 0.9rem;
-            font-weight: 600;
-            color: var(--primary-color);
-            margin-bottom: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        .notes-container {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        .article-item {
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            margin-bottom: 0.5rem;
-            overflow: hidden;
-        }
-        .article-header {
-            background: #f8f9fa;
-            padding: 0.5rem 0.75rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.85rem;
-        }
-        .article-header:hover {
-            background: #e9ecef;
-        }
-        .article-body {
-            padding: 0.75rem;
-            background: white;
-            border-top: 1px solid #e9ecef;
-            font-size: 0.85rem;
-        }
-        .extraction-info {
-            border-top: 1px solid #eee;
-            padding-top: 8px;
-            margin-top: 5px;
-        }
-        .extraction-status {
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 0.65rem;
-            font-weight: 600;
-        }
-        .extraction-status.success { background: #d4edda; color: #155724; }
-        .extraction-status.failed { background: #f8d7da; color: #721c24; }
-        .refresh-btn {
-            position: fixed;
-            bottom: 1.5rem;
-            right: 1.5rem;
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            font-size: 1.25rem;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            z-index: 1000;
-        }
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(255, 255, 255, 0.85);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-        }
-        .loading-overlay.show {
-            display: flex;
-        }
-        .time-badge {
-            font-size: 0.75rem;
-            padding: 0.25em 0.5em;
-        }
-        .portal-name {
-            font-size: 1rem;
-        }
-    </style>
-</head>
-<body>
-    <!-- Loading Overlay -->
-    <div class="loading-overlay" id="loadingOverlay">
-        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
-            <span class="visually-hidden">Loading...</span>
+{% extends "base.html" %}
+
+{% block title %}Ticket Extractor Dashboard{% endblock %}
+{% block nav_icon %}ticket-detailed{% endblock %}
+{% block nav_title %}Ticket Extractor{% endblock %}
+{% block nav_title_short %}Dashboard{% endblock %}
+
+{% block nav_extra %}
+<span class="text-white-50 small me-2" id="lastUpdate">--</span>
+{% endblock %}
+
+{% block nav_buttons %}
+<button class="btn btn-outline-light btn-sm" onclick="checkAllZnuny()">
+    <i class="bi bi-arrow-repeat me-1"></i>Check Znuny
+</button>
+{% endblock %}
+
+{% block extra_css %}
+.portal-name {
+    font-size: 1rem;
+}
+.extraction-info {
+    border-top: 1px solid #eee;
+    padding-top: 8px;
+    margin-top: 5px;
+}
+.extraction-status {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 600;
+}
+.extraction-status.success { background: #d4edda; color: #155724; }
+.extraction-status.failed { background: #f8d7da; color: #721c24; }
+.refresh-btn {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    font-size: 1.25rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+}
+@media (max-width: 576px) {
+    .refresh-btn {
+        width: 44px;
+        height: 44px;
+        bottom: 0.75rem;
+        right: 0.75rem;
+        font-size: 1rem;
+    }
+}
+.delayed-date-filter.active {
+    background-color: #0d6efd !important;
+    border-color: #0d6efd !important;
+    color: white !important;
+}
+.delayed-time-filter.active {
+    background-color: #dc3545 !important;
+    border-color: #dc3545 !important;
+    color: white !important;
+}
+{% endblock %}
+
+{% block content %}
+<!-- Stats Cards -->
+<div class="row mb-4 g-3" id="statsRow">
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="border-left: 4px solid #e74c3c;">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-danger" id="dhiraaguCount">0</div>
+                <div class="portal-name text-danger fw-semibold mb-1">Dhiraagu</div>
+                <div class="extraction-info" id="dhiraaguExtraction">
+                    <small class="text-muted">--</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="border-left: 4px solid #9b59b6;">
+            <div class="card-body text-center py-3">
+                <div class="stat-value" style="color: #9b59b6;" id="ooredooCount">0</div>
+                <div class="portal-name fw-semibold mb-1" style="color: #9b59b6;">Ooredoo</div>
+                <div class="extraction-info" id="ooredooExtraction">
+                    <small class="text-muted">--</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="border-left: 4px solid #3498db;">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-primary" id="rolCount">0</div>
+                <div class="portal-name text-primary fw-semibold mb-1">ROL</div>
+                <div class="extraction-info" id="rolExtraction">
+                    <small class="text-muted">--</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="border-left: 4px solid #1abc9c;">
+            <div class="card-body text-center py-3">
+                <div class="stat-value" style="color: #1abc9c;" id="medianetCount">0</div>
+                <div class="portal-name fw-semibold mb-1" style="color: #1abc9c;">Medianet</div>
+                <div class="extraction-info" id="medianetExtraction">
+                    <small class="text-muted">--</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="border-left: 4px solid #2c3e50;">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-dark" id="totalTickets">0</div>
+                <div class="text-muted small">Total Active</div>
+            </div>
         </div>
     </div>
-
-    <!-- Navbar -->
-    <nav class="navbar navbar-dark mb-4">
-        <div class="container-fluid">
-            <span class="navbar-brand mb-0 h1">
-                <i class="bi bi-ticket-detailed me-2"></i>
-                Ticket Extractor
-            </span>
-            <div class="d-flex align-items-center gap-2">
-                <span class="text-white-50 small me-2" id="lastUpdate">--</span>
-                <a href="/tickets" class="btn btn-outline-light btn-sm">
-                    <i class="bi bi-list-ul me-1"></i>All Tickets
-                </a>
-                <a href="/staff" class="btn btn-outline-light btn-sm">
-                    <i class="bi bi-people me-1"></i>Staff Stats
-                </a>
-                <button class="btn btn-outline-light btn-sm" onclick="checkAllZnuny()">
-                    <i class="bi bi-arrow-repeat me-1"></i>Check Znuny
-                </button>
-            </div>
-        </div>
-    </nav>
-
-    <div class="container-fluid px-4">
-        <!-- Stats Cards -->
-        <div class="row mb-4 g-3" id="statsRow">
-            <!-- Portal Cards -->
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #e74c3c;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-danger" id="dhiraaguCount">0</div>
-                        <div class="portal-name text-danger fw-semibold mb-1">Dhiraagu</div>
-                        <div class="extraction-info" id="dhiraaguExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #9b59b6;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value" style="color: #9b59b6;" id="ooredooCount">0</div>
-                        <div class="portal-name fw-semibold mb-1" style="color: #9b59b6;">Ooredoo</div>
-                        <div class="extraction-info" id="ooredooExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #3498db;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-primary" id="rolCount">0</div>
-                        <div class="portal-name text-primary fw-semibold mb-1">ROL</div>
-                        <div class="extraction-info" id="rolExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #1abc9c;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value" style="color: #1abc9c;" id="medianetCount">0</div>
-                        <div class="portal-name fw-semibold mb-1" style="color: #1abc9c;">Medianet</div>
-                        <div class="extraction-info" id="medianetExtraction">
-                            <small class="text-muted">--</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #2c3e50;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-dark" id="totalTickets">0</div>
-                        <div class="text-muted small">Total Active</div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6 col-md-4 col-lg-2">
-                <div class="stat-card card h-100" style="border-left: 4px solid #e74c3c;">
-                    <div class="card-body text-center py-3">
-                        <div class="stat-value text-danger" id="notInZnuny">0</div>
-                        <div class="text-muted small">Not in Znuny</div>
-                    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="border-left: 4px solid #17a2b8;">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-info" id="notInZnuny">0</div>
+                <div class="text-info fw-semibold mb-1">Not in Znuny</div>
+                <div class="extraction-info" id="znunySyncInfo">
+                    <small class="text-muted">--</small>
                 </div>
             </div>
         </div>
+    </div>
+</div>
 
-        <!-- Tickets Table -->
-        <div class="table-container">
-            <div class="table-responsive">
-                <table class="table table-hover mb-0">
-                    <thead>
-                        <tr>
-                            <th>Portal</th>
-                            <th>Ticket ID</th>
-                            <th>Customer</th>
-                            <th>Address</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Portal Created</th>
-                            <th>Znuny</th>
-                            <th>Time to Create</th>
-                            <th>Created By</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ticketsTable">
-                        <!-- Filled by JavaScript -->
-                    </tbody>
-                </table>
+
+<!-- Tickets Table -->
+<div class="table-container">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Portal</th>
+                    <th>Ticket ID</th>
+                    <th>Customer</th>
+                    <th>Address</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Extracted</th>
+                    <th>Znuny</th>
+                    <th>Time to Create</th>
+                    <th>Created By</th>
+                </tr>
+            </thead>
+            <tbody id="ticketsTable">
+                <!-- Filled by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <div class="text-muted small" id="paginationInfo">Showing 0 tickets</div>
+        <nav>
+            <ul class="pagination pagination-sm mb-0" id="pagination"></ul>
+        </nav>
+    </div>
+</div>
+
+<!-- Delayed Tickets Analysis Section -->
+<div class="table-container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0">
+            <i class="bi bi-clock-history text-warning me-2"></i>
+            Delayed Tickets Analysis
+            <small class="text-muted fs-6">(active & completed)</small>
+        </h5>
+    </div>
+
+    <!-- Delayed Analysis Filters -->
+    <div class="filter-section mb-3" style="background: #fff8e8;">
+        <div class="row g-2">
+            <div class="col-12 col-md-auto d-flex align-items-center">
+                <strong class="text-muted small"><i class="bi bi-calendar me-1"></i>Date:</strong>
+                <div class="btn-group btn-group-sm ms-2" role="group">
+                    <button type="button" class="btn btn-outline-primary delayed-date-filter active" data-filter="today" onclick="setDelayedDateFilter('today')">Today</button>
+                    <button type="button" class="btn btn-outline-primary delayed-date-filter" data-filter="yesterday" onclick="setDelayedDateFilter('yesterday')">Yesterday</button>
+                    <button type="button" class="btn btn-outline-primary delayed-date-filter" data-filter="week" onclick="setDelayedDateFilter('week')">7 Days</button>
+                </div>
             </div>
-            <div class="d-flex justify-content-between align-items-center mt-3">
-                <div class="text-muted small" id="paginationInfo">Showing 0 tickets</div>
-                <nav>
-                    <ul class="pagination pagination-sm mb-0" id="pagination"></ul>
-                </nav>
+            <div class="col-12 col-md-auto d-flex align-items-center">
+                <strong class="text-muted small"><i class="bi bi-stopwatch me-1"></i>Delay:</strong>
+                <div class="btn-group btn-group-sm ms-2" role="group">
+                    <button type="button" class="btn btn-outline-danger delayed-time-filter active" data-filter="5" onclick="setDelayedTimeFilter(5)">&gt;5m</button>
+                    <button type="button" class="btn btn-outline-danger delayed-time-filter" data-filter="10" onclick="setDelayedTimeFilter(10)">&gt;10m</button>
+                    <button type="button" class="btn btn-outline-danger delayed-time-filter" data-filter="30" onclick="setDelayedTimeFilter(30)">&gt;30m</button>
+                    <button type="button" class="btn btn-outline-danger delayed-time-filter" data-filter="60" onclick="setDelayedTimeFilter(60)">&gt;1h</button>
+                </div>
+            </div>
+            <div class="col-auto ms-auto d-flex align-items-center">
+                <span class="badge bg-danger" id="delayedFilterCount">--</span>
             </div>
         </div>
     </div>
 
-    <!-- Ticket Detail Modal -->
-    <div class="modal fade" id="ticketModal" tabindex="-1">
-        <div class="modal-dialog modal-xl">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">
-                        <i class="bi bi-ticket-detailed me-2"></i>
-                        <span id="modalTicketId">Ticket Details</span>
-                    </h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+    <!-- Delayed Tickets Summary Cards -->
+    <div class="row g-2 mb-3" id="delayedSummaryCards">
+        <div class="col-6 col-md-3">
+            <div class="card bg-light border-0">
+                <div class="card-body text-center py-2">
+                    <div class="fs-5 fs-md-4 fw-bold text-danger" id="delayedTotal">0</div>
+                    <div class="small text-muted">Total</div>
                 </div>
-                <div class="modal-body" id="ticketModalBody">
-                    <!-- Filled by JavaScript -->
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card bg-light border-0">
+                <div class="card-body text-center py-2">
+                    <div class="fs-5 fs-md-4 fw-bold text-warning" id="delayedAvgTime">--</div>
+                    <div class="small text-muted">Avg Delay</div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-primary" id="syncZnunyBtn">
-                        <i class="bi bi-cloud-download me-1"></i>Sync Znuny Data
-                    </button>
-                    <button type="button" class="btn btn-primary" id="checkZnunyBtn">
-                        <i class="bi bi-search me-1"></i>Check Znuny
-                    </button>
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card bg-light border-0">
+                <div class="card-body text-center py-2">
+                    <div class="fs-5 fs-md-4 fw-bold text-info" id="delayedMaxTime">--</div>
+                    <div class="small text-muted">Max Delay</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card bg-light border-0">
+                <div class="card-body text-center py-2">
+                    <div class="fs-5 fs-md-4 fw-bold text-secondary" id="delayedByStaff">--</div>
+                    <div class="small text-muted">Staff</div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Refresh Button -->
-    <button class="btn btn-primary refresh-btn" onclick="refreshAll()" title="Refresh">
-        <i class="bi bi-arrow-clockwise"></i>
-    </button>
+    <!-- Delayed Tickets Table -->
+    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+        <table class="table table-hover table-sm mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Portal</th>
+                    <th>Ticket ID</th>
+                    <th>Customer</th>
+                    <th>Extracted</th>
+                    <th>Znuny Created</th>
+                    <th>Time to Create</th>
+                    <th>Created By</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="delayedTicketsTable">
+                <!-- Filled by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        let currentPage = 0;
-        const pageSize = 50;
-        let currentTicketId = null;
+{% block extra_html %}
+<!-- Refresh Button -->
+<button class="btn btn-primary refresh-btn" onclick="refreshAll()" title="Refresh">
+    <i class="bi bi-arrow-clockwise"></i>
+</button>
+{% endblock %}
 
-        // Maldives timezone (UTC+5)
-        const MVT_OFFSET = 5 * 60;
+{% block script %}
+let currentPage = 0;
+const pageSize = 50;
 
-        function toMaldivesTime(dateStr) {
-            if (!dateStr) return null;
-            const date = new Date(dateStr);
-            const utc = date.getTime() + (date.getTimezoneOffset() * 60000);
-            return new Date(utc + (MVT_OFFSET * 60000));
-        }
+// Delayed analysis section state
+let delayedDateFilter = 'today';
+let delayedTimeFilter = 5;
+let allTicketsCache = [];
 
-        function formatMaldivesDateTime(dateStr) {
-            if (!dateStr) return '-';
-            const mvtDate = toMaldivesTime(dateStr);
-            return mvtDate.toLocaleString('en-GB', {
-                day: '2-digit',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            });
-        }
+// Callbacks for ticket modal actions
+const ticketCallbacks = {
+    onUpdate: () => { loadStats(); loadTickets(); }
+};
 
-        function formatMaldivesDateTimeFull(dateStr) {
-            if (!dateStr) return '-';
-            const mvtDate = toMaldivesTime(dateStr);
-            return mvtDate.toLocaleString('en-GB', {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            }) + ' MVT';
-        }
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    loadStats();
+    loadTickets();
+    loadDelayedTickets();
+    loadZnunySyncStatus();
+    setInterval(refreshAll, 30000);
+});
 
-        function getNowMaldives() {
-            const now = new Date();
-            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-            return new Date(utc + (MVT_OFFSET * 60000));
-        }
+// Delayed Tickets Analysis Functions
+function setDelayedDateFilter(filter) {
+    delayedDateFilter = filter;
+    document.querySelectorAll('.delayed-date-filter').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    applyDelayedFilters();
+}
 
-        function formatTimeDiff(ms) {
-            if (!ms || ms < 0) return '-';
-            const minutes = Math.floor(ms / 60000);
-            const hours = Math.floor(minutes / 60);
-            const days = Math.floor(hours / 24);
+function setDelayedTimeFilter(minutes) {
+    delayedTimeFilter = minutes;
+    document.querySelectorAll('.delayed-time-filter').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.filter) === minutes);
+    });
+    applyDelayedFilters();
+}
 
-            if (days > 0) return `${days}d ${hours % 24}h`;
-            if (hours > 0) return `${hours}h ${minutes % 60}m`;
-            return `${minutes}m`;
-        }
+function applyDelayedFilters() {
+    if (allTicketsCache.length === 0) {
+        loadDelayedTickets();
+        return;
+    }
+    const filteredTickets = filterDelayedTickets(allTicketsCache);
+    renderDelayedTickets(filteredTickets);
+    updateDelayedSummary(filteredTickets);
+}
 
-        // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
-            loadStats();
-            loadTickets();
-            setInterval(refreshAll, 300000); // Auto-refresh every 5 min
-        });
+async function loadDelayedTickets() {
+    try {
+        const response = await fetch('/api/tickets?include_completed=true&limit=1000&offset=0');
+        const data = await response.json();
+        allTicketsCache = data.tickets;
 
-        function showLoading(show) {
-            document.getElementById('loadingOverlay').classList.toggle('show', show);
-        }
+        const filteredTickets = filterDelayedTickets(allTicketsCache);
+        renderDelayedTickets(filteredTickets);
+        updateDelayedSummary(filteredTickets);
+    } catch (error) {
+        console.error('Error loading delayed tickets:', error);
+    }
+}
 
-        async function loadStats() {
-            try {
-                const response = await fetch('/api/stats');
-                const stats = await response.json();
+function filterDelayedTickets(tickets) {
+    let filtered = tickets;
 
-                document.getElementById('totalTickets').textContent = stats.total || 0;
-                document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
+    const range = getDateRange(delayedDateFilter);
+    filtered = filtered.filter(ticket => {
+        if (!ticket.created_at) return false;
+        const ticketDate = new Date(ticket.created_at);
+        if (range.start && ticketDate < range.start) return false;
+        if (range.end && ticketDate >= range.end) return false;
+        return true;
+    });
 
-                const portals = stats.by_portal || {};
-                document.getElementById('dhiraaguCount').textContent = portals['dhiraagu'] || 0;
-                document.getElementById('ooredooCount').textContent = portals['ooredoo'] || 0;
-                document.getElementById('rolCount').textContent = portals['rol'] || 0;
-                document.getElementById('medianetCount').textContent = portals['medianet'] || 0;
+    filtered = filtered.filter(ticket => {
+        if (!ticket.created_at || !ticket.znuny_created_at) return false;
+        const extractorDate = new Date(ticket.created_at);
+        const znunyDate = new Date(ticket.znuny_created_at);
+        const diffMinutes = (znunyDate - extractorDate) / 60000;
+        return diffMinutes > delayedTimeFilter;
+    });
 
-                const lastExtraction = stats.last_extraction || {};
-                updateExtractionInfo('dhiraagu', lastExtraction['dhiraagu']);
-                updateExtractionInfo('ooredoo', lastExtraction['ooredoo']);
-                updateExtractionInfo('rol', lastExtraction['rol']);
-                updateExtractionInfo('medianet', lastExtraction['medianet']);
+    filtered.sort((a, b) => {
+        const delayA = new Date(a.znuny_created_at) - new Date(a.created_at);
+        const delayB = new Date(b.znuny_created_at) - new Date(b.created_at);
+        return delayB - delayA;
+    });
 
-                document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
+    return filtered;
+}
 
-            } catch (error) {
-                console.error('Error loading stats:', error);
-            }
-        }
+function renderDelayedTickets(tickets) {
+    const tbody = document.getElementById('delayedTicketsTable');
+    tbody.innerHTML = '';
 
-        async function loadTickets() {
-            showLoading(true);
-            try {
-                const params = new URLSearchParams();
-                params.append('limit', pageSize);
-                params.append('offset', currentPage * pageSize);
+    document.getElementById('delayedFilterCount').textContent = tickets.length + ' delayed tickets';
 
-                const response = await fetch('/api/tickets?' + params.toString());
-                const data = await response.json();
+    if (tickets.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-muted py-4">
+                    <i class="bi bi-check-circle text-success fs-3 d-block mb-2"></i>
+                    No delayed tickets in this period
+                </td>
+            </tr>
+        `;
+        return;
+    }
 
-                renderTickets(data.tickets);
-                renderPagination(data.total);
+    for (const ticket of tickets) {
+        const row = document.createElement('tr');
+        row.className = 'ticket-row';
+        row.onclick = () => showTicketDetail(ticket.id, ticketCallbacks);
 
-            } catch (error) {
-                console.error('Error loading tickets:', error);
-            } finally {
-                showLoading(false);
-            }
-        }
+        const extractorDate = new Date(ticket.created_at);
+        const znunyDate = new Date(ticket.znuny_created_at);
+        const delayMs = znunyDate - extractorDate;
+        const delayMins = Math.floor(delayMs / 60000);
 
-        function renderTickets(tickets) {
-            const tbody = document.getElementById('ticketsTable');
-            tbody.innerHTML = '';
+        let delayClass = 'bg-warning';
+        if (delayMins > 30) delayClass = 'bg-danger';
+        else if (delayMins > 10) delayClass = 'bg-orange';
 
-            if (tickets.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="10" class="text-center text-muted py-5">
-                            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-                            No active tickets
-                        </td>
-                    </tr>
-                `;
-                return;
-            }
+        const isCompleted = ticket.completed_at !== null;
+        const statusBadge = isCompleted
+            ? '<span class="badge bg-secondary">Completed</span>'
+            : '<span class="badge bg-success">Active</span>';
 
-            for (const ticket of tickets) {
-                const row = document.createElement('tr');
-                row.className = 'ticket-row';
-                row.onclick = () => showTicketDetail(ticket.id);
+        row.innerHTML = `
+            <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
+            <td><strong>${ticket.ticket_id}</strong></td>
+            <td class="text-truncate" style="max-width: 120px;" title="${ticket.customer_name || ''}">${ticket.customer_name || '-'}</td>
+            <td><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
+            <td><small>${formatMaldivesDateTime(ticket.znuny_created_at)}</small></td>
+            <td><span class="badge ${delayClass} time-badge">${formatTimeDiff(delayMs)}</span></td>
+            <td><small>${ticket.znuny_created_by || '-'}</small></td>
+            <td>${statusBadge}</td>
+        `;
+        tbody.appendChild(row);
+    }
+}
 
-                const znunyIcon = ticket.in_znuny
-                    ? '<i class="bi bi-check-circle-fill znuny-yes"></i>'
-                    : '<i class="bi bi-x-circle-fill znuny-no"></i>';
+function updateDelayedSummary(tickets) {
+    document.getElementById('delayedTotal').textContent = tickets.length;
 
-                let timeToCreate = '-';
-                if (ticket.portal_created_at && ticket.znuny_created_at) {
-                    const portalDate = new Date(ticket.portal_created_at);
-                    const znunyDate = new Date(ticket.znuny_created_at);
-                    const diffMs = znunyDate - portalDate;
-                    timeToCreate = `<span class="badge bg-info time-badge">${formatTimeDiff(diffMs)}</span>`;
-                }
+    if (tickets.length === 0) {
+        document.getElementById('delayedAvgTime').textContent = '--';
+        document.getElementById('delayedMaxTime').textContent = '--';
+        document.getElementById('delayedByStaff').textContent = '--';
+        return;
+    }
 
-                row.innerHTML = `
-                    <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
-                    <td><strong>${ticket.ticket_id}</strong></td>
-                    <td class="text-truncate" style="max-width: 150px;" title="${ticket.customer_name || ''}">${ticket.customer_name || '-'}</td>
-                    <td class="text-truncate" style="max-width: 180px;" title="${ticket.address || ''}">${ticket.address || '-'}</td>
-                    <td>${ticket.ticket_type || '-'}</td>
-                    <td>${ticket.status || '-'}</td>
-                    <td><small>${formatMaldivesDateTime(ticket.portal_created_at)}</small></td>
-                    <td class="znuny-status">${znunyIcon}</td>
-                    <td>${timeToCreate}</td>
-                    <td><small>${ticket.znuny_created_by || '-'}</small></td>
-                `;
-                tbody.appendChild(row);
-            }
-        }
+    const delays = tickets.map(t => new Date(t.znuny_created_at) - new Date(t.created_at));
+    const avgDelayMs = delays.reduce((a, b) => a + b, 0) / delays.length;
+    document.getElementById('delayedAvgTime').textContent = formatTimeDiff(avgDelayMs);
 
-        function renderPagination(total) {
-            const totalPages = Math.ceil(total / pageSize);
-            const info = document.getElementById('paginationInfo');
-            const start = currentPage * pageSize + 1;
-            const end = Math.min((currentPage + 1) * pageSize, total);
-            info.textContent = total > 0 ? `Showing ${start}-${end} of ${total}` : 'No tickets';
+    const maxDelayMs = Math.max(...delays);
+    document.getElementById('delayedMaxTime').textContent = formatTimeDiff(maxDelayMs);
 
-            const pagination = document.getElementById('pagination');
-            pagination.innerHTML = '';
+    const staffSet = new Set(tickets.map(t => t.znuny_created_by).filter(Boolean));
+    document.getElementById('delayedByStaff').textContent = staffSet.size;
+}
 
-            if (totalPages <= 1) return;
+async function loadStats() {
+    try {
+        const response = await fetch('/api/stats');
+        const stats = await response.json();
 
-            pagination.innerHTML += `
-                <li class="page-item ${currentPage === 0 ? 'disabled' : ''}">
-                    <a class="page-link" href="#" onclick="goToPage(${currentPage - 1})">&laquo;</a>
-                </li>
-            `;
+        document.getElementById('totalTickets').textContent = stats.total || 0;
+        document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
 
-            for (let i = 0; i < totalPages && i < 5; i++) {
-                pagination.innerHTML += `
-                    <li class="page-item ${i === currentPage ? 'active' : ''}">
-                        <a class="page-link" href="#" onclick="goToPage(${i})">${i + 1}</a>
-                    </li>
-                `;
-            }
+        const portals = stats.by_portal || {};
+        document.getElementById('dhiraaguCount').textContent = portals['dhiraagu'] || 0;
+        document.getElementById('ooredooCount').textContent = portals['ooredoo'] || 0;
+        document.getElementById('rolCount').textContent = portals['rol'] || 0;
+        document.getElementById('medianetCount').textContent = portals['medianet'] || 0;
 
-            pagination.innerHTML += `
-                <li class="page-item ${currentPage >= totalPages - 1 ? 'disabled' : ''}">
-                    <a class="page-link" href="#" onclick="goToPage(${currentPage + 1})">&raquo;</a>
-                </li>
-            `;
-        }
+        const lastExtraction = stats.last_extraction || {};
+        updateExtractionInfo('dhiraagu', lastExtraction['dhiraagu']);
+        updateExtractionInfo('ooredoo', lastExtraction['ooredoo']);
+        updateExtractionInfo('rol', lastExtraction['rol']);
+        updateExtractionInfo('medianet', lastExtraction['medianet']);
 
-        function goToPage(page) {
-            currentPage = page;
-            loadTickets();
-        }
+        document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
 
-        async function showTicketDetail(ticketId) {
-            showLoading(true);
-            currentTicketId = ticketId;
+    } catch (error) {
+        console.error('Error loading stats:', error);
+    }
+}
 
-            try {
-                const [ticketResponse, znunyResponse] = await Promise.all([
-                    fetch(`/api/tickets/${ticketId}`),
-                    fetch(`/api/tickets/${ticketId}/znuny-articles`)
-                ]);
+async function loadZnunySyncStatus() {
+    try {
+        const response = await fetch('/api/znuny-sync-status');
+        const status = await response.json();
 
-                const ticketData = await ticketResponse.json();
-                const znunyData = await znunyResponse.json();
+        const notInZnuny = status.not_in_znuny || 0;
+        document.getElementById('notInZnuny').textContent = notInZnuny;
 
-                const ticket = ticketData.ticket;
-                const znunyArticles = znunyData.articles || [];
-
-                document.getElementById('modalTicketId').textContent = `${ticket.portal.toUpperCase()} - ${ticket.ticket_id}`;
-
-                // Calculate times
-                let timeToCreate = '-';
-                let timeToComplete = '-';
-                if (ticket.portal_created_at && ticket.znuny_created_at) {
-                    const diffMs = new Date(ticket.znuny_created_at) - new Date(ticket.portal_created_at);
-                    timeToCreate = formatTimeDiff(diffMs);
-                }
-                if (ticket.znuny_created_at && ticket.completed_at) {
-                    const diffMs = new Date(ticket.completed_at) - new Date(ticket.znuny_created_at);
-                    timeToComplete = formatTimeDiff(diffMs);
-                }
-
-                // Build Znuny section
-                let znunySection = '';
-                if (ticket.in_znuny) {
-                    znunySection = `
-                        <div class="col-12 mt-3">
-                            <div class="section-title"><i class="bi bi-box-arrow-in-right"></i> Znuny Details</div>
-                            <div class="row g-2 mb-3">
-                                <div class="col-md-3">
-                                    <div class="info-card">
-                                        <div class="label">Znuny Ticket #</div>
-                                        <div class="value">${ticket.znuny_ticket_id || '-'}</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="info-card">
-                                        <div class="label">Created By</div>
-                                        <div class="value">${ticket.znuny_created_by || '-'}</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="info-card">
-                                        <div class="label">Time to Create</div>
-                                        <div class="value">${timeToCreate !== '-' ? `<span class="badge bg-info">${timeToCreate}</span>` : '-'}</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="info-card">
-                                        <div class="label">Time to Complete</div>
-                                        <div class="value">${timeToComplete !== '-' ? `<span class="badge bg-success">${timeToComplete}</span>` : '-'}</div>
-                                    </div>
-                                </div>
-                            </div>
-                            ${ticket.znuny_address ? `
-                            <div class="alert alert-warning py-2 mb-3">
-                                <i class="bi bi-geo-alt me-1"></i>
-                                <strong>Znuny Address:</strong> ${escapeHtml(ticket.znuny_address)}
-                            </div>
-                            ` : ''}
-                            ${znunyArticles.length > 0 ? `
-                            <div class="section-title"><i class="bi bi-journal-text"></i> Znuny Articles (${znunyArticles.length})</div>
-                            <div class="notes-container">
-                                <div class="accordion" id="articlesAccordion">
-                                    ${znunyArticles.map((a, idx) => `
-                                        <div class="accordion-item">
-                                            <h2 class="accordion-header">
-                                                <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#article${idx}">
-                                                    <span class="badge bg-secondary me-2">#${a.article_number}</span>
-                                                    <span class="badge bg-${a.via === 'Internal' ? 'info' : a.via === 'Phone' ? 'warning' : 'secondary'} me-2">${a.via}</span>
-                                                    <strong class="me-2">${escapeHtml(a.created_by || a.sender)}</strong>
-                                                    <small class="text-muted ms-auto">${a.created_at_str || '-'}</small>
-                                                </button>
-                                            </h2>
-                                            <div id="article${idx}" class="accordion-collapse collapse" data-bs-parent="#articlesAccordion">
-                                                <div class="accordion-body py-2">
-                                                    <p class="mb-1 small"><strong>Subject:</strong> ${escapeHtml(a.subject)}</p>
-                                                    ${a.body ? `<pre class="bg-light p-2 rounded mb-0 small" style="white-space: pre-wrap;">${escapeHtml(a.body)}</pre>` : '<p class="text-muted small mb-0"><em>No content - click Sync Znuny Data</em></p>'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-                            ` : '<p class="text-muted small">No articles synced. Click "Sync Znuny Data" to fetch.</p>'}
-                        </div>
-                    `;
-                }
-
-                const body = document.getElementById('ticketModalBody');
-                body.innerHTML = `
-                    <div class="row g-3">
-                        <!-- Ticket Info -->
-                        <div class="col-md-6">
-                            <div class="section-title"><i class="bi bi-info-circle"></i> Ticket Information</div>
-                            <div class="row g-2">
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Portal</div>
-                                        <div class="value"><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Ticket ID</div>
-                                        <div class="value">${ticket.ticket_id}</div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Account</div>
-                                        <div class="value">${ticket.account || '-'}</div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Type</div>
-                                        <div class="value">${ticket.ticket_type || '-'}</div>
-                                    </div>
-                                </div>
-                                <div class="col-12">
-                                    <div class="info-card">
-                                        <div class="label">Customer</div>
-                                        <div class="value">${ticket.customer_name || '-'}</div>
-                                    </div>
-                                </div>
-                                <div class="col-12">
-                                    <div class="info-card">
-                                        <div class="label">Address</div>
-                                        <div class="value">${ticket.address || '-'}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- Status & Timestamps -->
-                        <div class="col-md-6">
-                            <div class="section-title"><i class="bi bi-clock-history"></i> Status & Timestamps</div>
-                            <div class="row g-2">
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Status</div>
-                                        <div class="value">${ticket.status || '-'}</div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">In Znuny</div>
-                                        <div class="value">
-                                            <span class="znuny-status ${ticket.in_znuny ? 'znuny-yes' : 'znuny-no'}">
-                                                ${ticket.in_znuny ? '<i class="bi bi-check-circle-fill"></i> Yes' : '<i class="bi bi-x-circle-fill"></i> No'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Portal Created</div>
-                                        <div class="value small">${formatMaldivesDateTimeFull(ticket.portal_created_at)}</div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Znuny Created</div>
-                                        <div class="value small">${formatMaldivesDateTimeFull(ticket.znuny_created_at)}</div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Last Updated</div>
-                                        <div class="value small">${formatMaldivesDateTimeFull(ticket.updated_at)}</div>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <div class="info-card">
-                                        <div class="label">Completed</div>
-                                        <div class="value small">${ticket.completed_at ? formatMaldivesDateTimeFull(ticket.completed_at) : '<span class="text-success">Active</span>'}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        ${znunySection}
-                        <!-- Portal Notes -->
-                        <div class="col-12 mt-3">
-                            <div class="section-title"><i class="bi bi-chat-left-text"></i> Portal Notes</div>
-                            <div class="notes-container">
-                                ${ticket.notes ? `<pre class="bg-light p-3 rounded small mb-0" style="white-space: pre-wrap;">${escapeHtml(ticket.notes)}</pre>` : '<p class="text-muted small">No notes</p>'}
-                            </div>
-                        </div>
-                    </div>
-                `;
-
-                document.getElementById('checkZnunyBtn').onclick = () => checkZnuny(ticketId);
-                document.getElementById('syncZnunyBtn').onclick = () => syncZnunyData(ticketId);
-                new bootstrap.Modal(document.getElementById('ticketModal')).show();
-
-            } catch (error) {
-                console.error('Error loading ticket detail:', error);
-            } finally {
-                showLoading(false);
-            }
-        }
-
-        async function checkZnuny(ticketId) {
-            showLoading(true);
-            try {
-                const response = await fetch(`/api/tickets/${ticketId}/check-znuny`, { method: 'POST' });
-                const data = await response.json();
-
-                alert(data.in_znuny
-                    ? `Ticket found in Znuny! (ID: ${data.znuny_ticket_id})`
-                    : 'Ticket not found in Znuny'
-                );
-
-                loadStats();
-                loadTickets();
-                if (currentTicketId === ticketId) showTicketDetail(ticketId);
-
-            } catch (error) {
-                console.error('Error checking Znuny:', error);
-                alert('Error checking Znuny status');
-            } finally {
-                showLoading(false);
-            }
-        }
-
-        async function syncZnunyData(ticketId) {
-            showLoading(true);
-            try {
-                const response = await fetch(`/api/tickets/${ticketId}/sync-znuny`, { method: 'POST' });
-                const data = await response.json();
-
-                if (data.success) {
-                    alert('Znuny data synced successfully!');
-                    showTicketDetail(ticketId);
-                } else {
-                    alert(data.message || 'Failed to sync Znuny data');
-                }
-
-            } catch (error) {
-                console.error('Error syncing Znuny:', error);
-                alert('Error syncing Znuny data');
-            } finally {
-                showLoading(false);
-            }
-        }
-
-        async function checkAllZnuny() {
-            if (!confirm('Check Znuny status for all tickets not marked? This may take a while.')) return;
-
-            showLoading(true);
-            try {
-                const response = await fetch('/api/tickets/check-all-znuny', { method: 'POST' });
-                const data = await response.json();
-
-                alert(`Checked ${data.checked} tickets. ${data.updated} found in Znuny.`);
-                loadStats();
-                loadTickets();
-
-            } catch (error) {
-                console.error('Error checking all Znuny:', error);
-                alert('Error checking Znuny status');
-            } finally {
-                showLoading(false);
-            }
-        }
-
-        function refreshAll() {
-            loadStats();
-            loadTickets();
-        }
-
-        function updateExtractionInfo(portal, info) {
-            const el = document.getElementById(portal + 'Extraction');
-            if (!el) return;
-
-            if (!info) {
-                el.innerHTML = '<small class="text-muted">No extraction</small>';
-                return;
-            }
-
-            const statusClass = info.status === 'success' ? 'success' : 'failed';
-            const statusText = info.status === 'success' ? 'OK' : 'Fail';
-            const timeStr = info.extracted_at ? formatRelativeTime(info.extracted_at) : '--';
+        // Update sync info display
+        const el = document.getElementById('znunySyncInfo');
+        if (el) {
+            const statusClass = notInZnuny === 0 ? 'success' : (notInZnuny > 5 ? 'failed' : 'success');
+            const statusText = notInZnuny === 0 ? 'Synced' : 'Pending';
+            const pendingText = status.pending_sync > 0 ? `${status.pending_sync} pending` : 'Details synced';
 
             el.innerHTML = `
                 <small class="extraction-status ${statusClass}">${statusText}</small>
-                <small class="text-muted d-block" title="${info.extracted_at || ''}">${timeStr}</small>
+                <small class="text-muted d-block">${pendingText}</small>
             `;
         }
+    } catch (error) {
+        console.error('Error loading Znuny sync status:', error);
+    }
+}
 
-        function formatRelativeTime(dateStr) {
-            if (!dateStr) return '--';
-            const date = toMaldivesTime(dateStr);
-            const now = getNowMaldives();
-            const diffMs = now - date;
-            const diffMins = Math.floor(diffMs / 60000);
-            const diffHours = Math.floor(diffMs / 3600000);
 
-            if (diffMins < 1) return 'Just now';
-            if (diffMins < 60) return diffMins + 'm ago';
-            if (diffHours < 24) return diffHours + 'h ago';
-            return formatMaldivesDateTime(dateStr);
-        }
+async function loadTickets() {
+    showLoading(true);
+    try {
+        const response = await fetch(`/api/tickets?limit=${pageSize}&offset=${currentPage * pageSize}`);
+        const data = await response.json();
 
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    </script>
-</body>
-</html>
+        renderTickets(data.tickets);
+        renderPagination(data.total, currentPage, pageSize, 'goToPage');
+
+    } catch (error) {
+        console.error('Error loading tickets:', error);
+    } finally {
+        showLoading(false);
+    }
+}
+
+function renderTickets(tickets) {
+    const tbody = document.getElementById('ticketsTable');
+    tbody.innerHTML = '';
+
+    if (tickets.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="10" class="text-center text-muted py-5">
+                    <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                    No active tickets
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    for (const ticket of tickets) {
+        const row = renderTicketRow(ticket, () => showTicketDetail(ticket.id, ticketCallbacks));
+        tbody.appendChild(row);
+    }
+}
+
+function goToPage(page) {
+    currentPage = page;
+    loadTickets();
+}
+
+async function checkAllZnuny() {
+    if (!confirm('Check Znuny status for all tickets not marked? This may take a while.')) return;
+
+    showLoading(true);
+    try {
+        const response = await fetch('/api/tickets/check-all-znuny', { method: 'POST' });
+        const data = await response.json();
+
+        alert(`Checked ${data.checked} tickets. ${data.updated} found in Znuny.`);
+        loadStats();
+        loadTickets();
+        loadZnunySyncStatus();
+
+    } catch (error) {
+        console.error('Error checking all Znuny:', error);
+        alert('Error checking Znuny status');
+    } finally {
+        showLoading(false);
+    }
+}
+
+function refreshAll() {
+    loadStats();
+    loadTickets();
+    loadDelayedTickets();
+    loadZnunySyncStatus();
+}
+
+function updateExtractionInfo(portal, info) {
+    const el = document.getElementById(portal + 'Extraction');
+    if (!el) return;
+
+    if (!info) {
+        el.innerHTML = '<small class="text-muted">No extraction</small>';
+        return;
+    }
+
+    const statusClass = info.status === 'success' ? 'success' : 'failed';
+    const statusText = info.status === 'success' ? 'OK' : 'Fail';
+    const timeStr = info.extracted_at ? formatRelativeTime(info.extracted_at) : '--';
+
+    el.innerHTML = `
+        <small class="extraction-status ${statusClass}">${statusText}</small>
+        <small class="text-muted d-block" title="${info.extracted_at || ''}">${timeStr}</small>
+    `;
+}
+{% endblock %}

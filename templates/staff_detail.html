@@ -1,0 +1,403 @@
+{% extends "base.html" %}
+
+{% block title %}{{ staff_name }} - Staff Details{% endblock %}
+{% block nav_icon %}person{% endblock %}
+{% block nav_title %}Staff: {{ staff_name }}{% endblock %}
+{% block nav_title_short %}{{ staff_name }}{% endblock %}
+
+{% block nav_buttons %}
+<a href="/staff" class="btn btn-outline-light btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back
+</a>
+{% endblock %}
+
+{% block extra_css %}
+.perf-card {
+    border-radius: 12px;
+    padding: 1rem;
+    text-align: center;
+}
+.perf-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+}
+.trend-good { color: #27ae60; }
+.trend-warning { color: #f39c12; }
+.trend-bad { color: #e74c3c; }
+.performance-bar {
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.ticket-time-good { background-color: #d4edda; color: #155724; }
+.ticket-time-warning { background-color: #fff3cd; color: #856404; }
+.ticket-time-bad { background-color: #f8d7da; color: #721c24; }
+@media (max-width: 768px) {
+    .perf-value {
+        font-size: 1.25rem;
+    }
+}
+{% endblock %}
+
+{% block content %}
+<!-- Performance Summary -->
+<div class="row mb-3 g-2">
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body perf-card">
+                <div class="perf-value text-primary" id="totalTickets">--</div>
+                <div class="small text-muted">Tickets Created</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body perf-card">
+                <div class="perf-value" id="onTimePercent">--</div>
+                <div class="small text-muted">On Time (&lt;5min)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body perf-card">
+                <div class="perf-value text-info" id="avgTime">--</div>
+                <div class="small text-muted">Avg Time</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body perf-card">
+                <div class="perf-value text-secondary" id="totalArticles">--</div>
+                <div class="small text-muted">Articles Written</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Time Breakdown -->
+<div class="table-container mb-3">
+    <h6 class="mb-3"><i class="bi bi-pie-chart me-2"></i>Response Time Breakdown</h6>
+    <div class="row g-3 align-items-center">
+        <div class="col-md-6">
+            <div class="performance-bar d-flex">
+                <div class="bg-success" id="bar5min" style="width: 0%"></div>
+                <div class="bg-warning" id="bar10min" style="width: 0%"></div>
+                <div class="bg-danger" id="barOver10" style="width: 0%"></div>
+            </div>
+            <div class="d-flex justify-content-between mt-2 small">
+                <span><span class="badge bg-success">Within 5min</span> <span id="count5min">0</span></span>
+                <span><span class="badge bg-warning">5-10min</span> <span id="count10min">0</span></span>
+                <span><span class="badge bg-danger">Over 10min</span> <span id="countOver10">0</span></span>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="row g-2 text-center">
+                <div class="col-4">
+                    <div class="bg-success bg-opacity-10 rounded p-2">
+                        <div class="fw-bold text-success" id="pct5min">0%</div>
+                        <div class="small text-muted">&lt;5 min</div>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="bg-warning bg-opacity-10 rounded p-2">
+                        <div class="fw-bold text-warning" id="pct10min">0%</div>
+                        <div class="small text-muted">5-10 min</div>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="bg-danger bg-opacity-10 rounded p-2">
+                        <div class="fw-bold text-danger" id="pctOver10">0%</div>
+                        <div class="small text-muted">&gt;10 min</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Date Filter -->
+<div class="filter-section mb-3">
+    <div class="row g-2 align-items-center">
+        <div class="col-auto">
+            <strong class="small"><i class="bi bi-calendar3 me-1"></i>Period:</strong>
+        </div>
+        <div class="col-auto">
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-primary quick-filter active" onclick="setDateFilter('today')">Today</button>
+                <button type="button" class="btn btn-outline-primary quick-filter" onclick="setDateFilter('week')">Week</button>
+                <button type="button" class="btn btn-outline-primary quick-filter" onclick="setDateFilter('month')">Month</button>
+                <button type="button" class="btn btn-outline-primary quick-filter" onclick="setDateFilter('all')">All</button>
+            </div>
+        </div>
+        <div class="col-auto ms-auto">
+            <button class="btn btn-outline-secondary btn-sm" onclick="exportCSV()">
+                <i class="bi bi-download me-1"></i>Export CSV
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Performance Trend -->
+<div class="table-container mb-3">
+    <h6 class="mb-3"><i class="bi bi-graph-up me-2"></i>Daily Performance (Last 14 Days)</h6>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th class="text-center">Tickets</th>
+                    <th class="text-center">On Time</th>
+                    <th class="text-center">On Time %</th>
+                    <th class="text-center">Avg Time</th>
+                </tr>
+            </thead>
+            <tbody id="trendTable">
+                <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Tickets List -->
+<div class="table-container">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Tickets Created</h6>
+        <span class="badge bg-secondary" id="ticketCount">--</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Portal</th>
+                    <th>Ticket ID</th>
+                    <th>Customer</th>
+                    <th class="d-none d-md-table-cell">Address</th>
+                    <th>Created</th>
+                    <th>Time to Create</th>
+                </tr>
+            </thead>
+            <tbody id="ticketsTable">
+                <tr><td colspan="6" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <div class="text-muted small" id="paginationInfo">--</div>
+        <nav>
+            <ul class="pagination pagination-sm mb-0" id="pagination"></ul>
+        </nav>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+const staffName = "{{ staff_name }}";
+let currentDateFilter = 'today';
+let currentPage = 0;
+const pageSize = 50;
+
+const ticketCallbacks = {
+    onUpdate: () => loadStaffData()
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    setDateFilter('today', false);
+    loadStaffData();
+    loadTrend();
+});
+
+function setDateFilter(filter, autoLoad = true) {
+    currentDateFilter = filter;
+    currentPage = 0;
+
+    document.querySelectorAll('.quick-filter').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`[onclick="setDateFilter('${filter}')"]`)?.classList.add('active');
+
+    if (autoLoad) loadStaffData();
+}
+
+function getDateRange() {
+    const today = new Date();
+    let dateFrom = null, dateTo = null;
+
+    switch (currentDateFilter) {
+        case 'today':
+            dateFrom = dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'week':
+            const weekStart = new Date(today);
+            weekStart.setDate(today.getDate() - 7);
+            dateFrom = weekStart.toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'month':
+            const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+            dateFrom = monthStart.toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'all':
+            break;
+    }
+    return { dateFrom, dateTo };
+}
+
+async function loadStaffData() {
+    showLoading(true);
+    try {
+        const { dateFrom, dateTo } = getDateRange();
+        let url = `/api/staff-stats-detailed`;
+        const params = new URLSearchParams();
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+        if (params.toString()) url += '?' + params.toString();
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        const staffData = data.staff.find(s => s.name === staffName);
+        if (staffData) {
+            updateSummary(staffData);
+        }
+
+        // Load tickets
+        await loadTickets();
+    } catch (error) {
+        console.error('Error loading staff data:', error);
+    } finally {
+        showLoading(false);
+    }
+}
+
+function updateSummary(data) {
+    document.getElementById('totalTickets').textContent = data.tickets_created || 0;
+    document.getElementById('totalArticles').textContent = data.articles_count || 0;
+
+    const onTimePct = data.on_time_pct || 0;
+    const onTimeEl = document.getElementById('onTimePercent');
+    onTimeEl.textContent = onTimePct + '%';
+    onTimeEl.className = 'perf-value ' + (onTimePct >= 80 ? 'trend-good' : onTimePct >= 50 ? 'trend-warning' : 'trend-bad');
+
+    const avgMin = data.avg_minutes || 0;
+    document.getElementById('avgTime').textContent = avgMin < 60 ? avgMin + 'm' : Math.floor(avgMin/60) + 'h ' + Math.round(avgMin%60) + 'm';
+
+    // Breakdown
+    const total = data.tickets_created || 1;
+    const w5 = data.within_5min || 0;
+    const w10 = data.within_10min || 0;
+    const over = data.over_10min || 0;
+
+    document.getElementById('count5min').textContent = w5;
+    document.getElementById('count10min').textContent = w10;
+    document.getElementById('countOver10').textContent = over;
+
+    const pct5 = Math.round(w5 / total * 100);
+    const pct10 = Math.round(w10 / total * 100);
+    const pctOver = Math.round(over / total * 100);
+
+    document.getElementById('pct5min').textContent = pct5 + '%';
+    document.getElementById('pct10min').textContent = pct10 + '%';
+    document.getElementById('pctOver10').textContent = pctOver + '%';
+
+    document.getElementById('bar5min').style.width = pct5 + '%';
+    document.getElementById('bar10min').style.width = pct10 + '%';
+    document.getElementById('barOver10').style.width = pctOver + '%';
+}
+
+async function loadTrend() {
+    try {
+        const response = await fetch(`/api/staff/${encodeURIComponent(staffName)}/performance?days=14`);
+        const data = await response.json();
+
+        const tbody = document.getElementById('trendTable');
+        if (!data.trend || data.trend.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No data available</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.trend.map(d => {
+            const pctClass = d.on_time_pct >= 80 ? 'trend-good' : d.on_time_pct >= 50 ? 'trend-warning' : 'trend-bad';
+            const avgClass = d.avg_minutes <= 5 ? 'trend-good' : d.avg_minutes <= 10 ? 'trend-warning' : 'trend-bad';
+            return `
+                <tr>
+                    <td>${d.date}</td>
+                    <td class="text-center"><span class="badge bg-primary">${d.tickets_created}</span></td>
+                    <td class="text-center"><span class="badge bg-success">${d.within_5min}</span></td>
+                    <td class="text-center"><span class="fw-bold ${pctClass}">${d.on_time_pct}%</span></td>
+                    <td class="text-center"><span class="${avgClass}">${d.avg_minutes}m</span></td>
+                </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Error loading trend:', error);
+    }
+}
+
+async function loadTickets() {
+    try {
+        const { dateFrom, dateTo } = getDateRange();
+        let url = `/api/staff/${encodeURIComponent(staffName)}/tickets?limit=${pageSize}&offset=${currentPage * pageSize}`;
+        if (dateFrom) url += `&date_from=${dateFrom}`;
+        if (dateTo) url += `&date_to=${dateTo}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        document.getElementById('ticketCount').textContent = data.total + ' tickets';
+        renderTickets(data.tickets);
+        renderPagination(data.total, currentPage, pageSize, 'goToPage');
+
+        const start = currentPage * pageSize + 1;
+        const end = Math.min((currentPage + 1) * pageSize, data.total);
+        document.getElementById('paginationInfo').textContent = `Showing ${start}-${end} of ${data.total}`;
+    } catch (error) {
+        console.error('Error loading tickets:', error);
+    }
+}
+
+function renderTickets(tickets) {
+    const tbody = document.getElementById('ticketsTable');
+    if (!tickets || tickets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No tickets found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = tickets.map(t => {
+        let timeClass = 'ticket-time-good';
+        let timeText = '-';
+
+        if (t.created_at && t.znuny_created_at) {
+            const diff = (new Date(t.znuny_created_at) - new Date(t.created_at)) / 60000;
+            if (diff <= 5) timeClass = 'ticket-time-good';
+            else if (diff <= 10) timeClass = 'ticket-time-warning';
+            else timeClass = 'ticket-time-bad';
+            timeText = formatTimeDiff(diff * 60000);
+        }
+
+        return `
+            <tr class="ticket-row" onclick="showTicketDetail(${t.id}, ticketCallbacks)" style="cursor: pointer;">
+                <td><span class="badge badge-portal badge-${t.portal}">${t.portal}</span></td>
+                <td><strong>${t.ticket_id}</strong></td>
+                <td class="text-truncate" style="max-width: 120px;">${t.customer_name || '-'}</td>
+                <td class="text-truncate d-none d-md-table-cell" style="max-width: 150px;">${t.address || '-'}</td>
+                <td class="small">${formatMaldivesDateTime(t.znuny_created_at)}</td>
+                <td><span class="badge ${timeClass}">${timeText}</span></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function goToPage(page) {
+    currentPage = page;
+    loadTickets();
+}
+
+function exportCSV() {
+    const { dateFrom, dateTo } = getDateRange();
+    let url = `/api/tickets-csv?staff=${encodeURIComponent(staffName)}`;
+    if (dateFrom) url += `&date_from=${dateFrom}`;
+    if (dateTo) url += `&date_to=${dateTo}`;
+    window.location.href = url;
+}
+{% endblock %}

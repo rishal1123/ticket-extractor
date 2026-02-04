@@ -56,9 +56,18 @@ class BaseExtractor(ABC):
         """Ensure we are logged in, re-login if session expired."""
         if self.is_logged_in():
             self.logger.info("Session still active, skipping login")
+            # Log session reuse
+            self.db.log_login_event(self.config.name, "session_reused")
             return True
         self.logger.info("Session expired or not logged in, logging in...")
-        return self.login()
+        # Log login attempt
+        self.db.log_login_event(self.config.name, "login_attempt")
+        success = self.login()
+        if success:
+            self.db.log_login_event(self.config.name, "login_success")
+        else:
+            self.db.log_login_event(self.config.name, "login_failed", success=False)
+        return success
 
     def _get_or_create_browser(self) -> BrowserManager:
         """Get existing browser or create new one for session persistence."""

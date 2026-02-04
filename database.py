@@ -157,6 +157,64 @@ class Database:
                 )
             """)
 
+            # Login stats table for tracking portal session activity
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS login_stats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    portal TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    session_id TEXT,
+                    success BOOLEAN DEFAULT 1,
+                    error_message TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Staff performance daily log table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS staff_performance_daily (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    staff_name TEXT NOT NULL,
+                    date DATE NOT NULL,
+                    tickets_created INTEGER DEFAULT 0,
+                    tickets_within_5min INTEGER DEFAULT 0,
+                    tickets_within_10min INTEGER DEFAULT 0,
+                    tickets_over_10min INTEGER DEFAULT 0,
+                    avg_time_to_create_minutes REAL,
+                    total_articles INTEGER DEFAULT 0,
+                    tickets_updated INTEGER DEFAULT 0,
+                    calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(staff_name, date)
+                )
+            """)
+
+            # System logs table for application-wide logging
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    level TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Performance indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal ON tickets(portal)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_completed ON tickets(completed_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_in_znuny ON tickets(in_znuny)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal_created ON tickets(portal_created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_created_by ON tickets(znuny_created_by)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_portal ON extraction_logs(portal)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_extracted_at ON extraction_logs(extracted_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_stats_portal ON login_stats(portal)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_stats_created_at ON login_stats(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_staff_performance_daily ON staff_performance_daily(staff_name, date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_source ON system_logs(source)")
+
             logger.info("Database initialized successfully")
 
     def upsert_ticket(self, ticket: Ticket) -> tuple[int, bool, bool]:
@@ -211,20 +269,22 @@ class Database:
                 # Track note changes
                 if ticket.notes and ticket.notes != existing_notes:
                     cursor.execute(
-                        "INSERT INTO ticket_notes_history (ticket_id, note) VALUES (?, ?)",
-                        (existing_id, ticket.notes)
+                        "INSERT INTO ticket_notes_history (ticket_id, note, recorded_at) VALUES (?, ?, ?)",
+                        (existing_id, ticket.notes, now_maldives())
                     )
                     logger.debug(f"Note updated for ticket {ticket.ticket_id}")
 
                 is_updated = cursor.rowcount > 0
                 return existing_id, False, is_updated
             else:
-                # Insert new ticket
+                # Insert new ticket with explicit Maldives timestamps
+                current_time = now_maldives()
                 cursor.execute("""
                     INSERT INTO tickets (
                         portal, ticket_id, address, account, customer_name, ticket_type,
-                        portal_created_at, service_type, status, kpi, notes, completed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        portal_created_at, service_type, status, kpi, notes, completed_at,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     ticket.portal,
                     ticket.ticket_id,
@@ -237,7 +297,9 @@ class Database:
                     ticket.status,
                     ticket.kpi,
                     ticket.notes,
-                    ticket.completed_at  # Set completed_at if provided (for closed tickets)
+                    ticket.completed_at,  # Set completed_at if provided (for closed tickets)
+                    current_time,
+                    current_time
                 ))
 
                 new_id = cursor.lastrowid
@@ -245,8 +307,8 @@ class Database:
                 # Record initial note if exists
                 if ticket.notes:
                     cursor.execute(
-                        "INSERT INTO ticket_notes_history (ticket_id, note) VALUES (?, ?)",
-                        (new_id, ticket.notes)
+                        "INSERT INTO ticket_notes_history (ticket_id, note, recorded_at) VALUES (?, ?, ?)",
+                        (new_id, ticket.notes, current_time)
                     )
 
                 logger.info(f"New ticket added: {ticket.portal}/{ticket.ticket_id}")
@@ -550,6 +612,326 @@ class Database:
                 "last_extraction": last_extraction
             }
 
+    def log_login_event(self, portal: str, event_type: str, session_id: str = None,
+                         success: bool = True, error_message: str = None):
+        """Log a login-related event (login_attempt, login_success, login_failed, session_reused)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO login_stats (portal, event_type, session_id, success, error_message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (portal, event_type, session_id, success, error_message, now_maldives()))
+            logger.info(f"Logged {event_type} for {portal}")
+
+    def get_login_stats(self, limit: int = 100) -> list[dict]:
+        """Get recent login events."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM login_stats ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_login_summary(self) -> dict:
+        """Get login statistics summary per portal."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Total logins per portal
+            cursor.execute("""
+                SELECT portal,
+                       SUM(CASE WHEN event_type = 'login_success' THEN 1 ELSE 0 END) as total_logins,
+                       SUM(CASE WHEN event_type = 'login_failed' THEN 1 ELSE 0 END) as failed_logins,
+                       SUM(CASE WHEN event_type = 'session_reused' THEN 1 ELSE 0 END) as sessions_reused
+                FROM login_stats
+                GROUP BY portal
+            """)
+            by_portal = {}
+            for row in cursor.fetchall():
+                by_portal[row["portal"]] = {
+                    "total_logins": row["total_logins"],
+                    "failed_logins": row["failed_logins"],
+                    "sessions_reused": row["sessions_reused"]
+                }
+
+            # Last login/session event per portal
+            cursor.execute("""
+                SELECT l1.*
+                FROM login_stats l1
+                INNER JOIN (
+                    SELECT portal, MAX(created_at) as max_time
+                    FROM login_stats
+                    GROUP BY portal
+                ) l2 ON l1.portal = l2.portal AND l1.created_at = l2.max_time
+            """)
+            last_events = {}
+            for row in cursor.fetchall():
+                last_events[row["portal"]] = {
+                    "event_type": row["event_type"],
+                    "created_at": row["created_at"],
+                    "success": bool(row["success"])
+                }
+
+            # Today's stats
+            today = now_maldives().strftime("%Y-%m-%d")
+            cursor.execute("""
+                SELECT
+                    SUM(CASE WHEN event_type = 'login_success' THEN 1 ELSE 0 END) as logins_today,
+                    SUM(CASE WHEN event_type = 'session_reused' THEN 1 ELSE 0 END) as sessions_reused_today
+                FROM login_stats
+                WHERE DATE(created_at) = ?
+            """, (today,))
+            today_row = cursor.fetchone()
+
+            return {
+                "by_portal": by_portal,
+                "last_events": last_events,
+                "today": {
+                    "logins": today_row["logins_today"] or 0,
+                    "sessions_reused": today_row["sessions_reused_today"] or 0
+                }
+            }
+
+    def get_staff_detailed_stats(self, date_from: str = None, date_to: str = None) -> dict:
+        """Get detailed staff statistics including on-time percentages."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Build date filter
+            date_filter = ""
+            params = []
+            if date_from:
+                date_filter += " AND DATE(znuny_created_at) >= ?"
+                params.append(date_from)
+            if date_to:
+                date_filter += " AND DATE(znuny_created_at) <= ?"
+                params.append(date_to)
+
+            # Get tickets with time-to-create calculation
+            cursor.execute(f"""
+                SELECT
+                    znuny_created_by as staff,
+                    COUNT(*) as total_tickets,
+                    SUM(CASE WHEN
+                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 <= 5
+                        THEN 1 ELSE 0 END) as within_5min,
+                    SUM(CASE WHEN
+                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 > 5
+                        AND (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 <= 10
+                        THEN 1 ELSE 0 END) as within_10min,
+                    SUM(CASE WHEN
+                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 > 10
+                        THEN 1 ELSE 0 END) as over_10min,
+                    AVG((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as avg_minutes
+                FROM tickets
+                WHERE znuny_created_by IS NOT NULL
+                    AND znuny_created_by != ''
+                    AND znuny_created_at IS NOT NULL
+                    AND created_at IS NOT NULL
+                    {date_filter}
+                GROUP BY znuny_created_by
+            """, params)
+
+            staff_tickets = {}
+            for row in cursor.fetchall():
+                staff_tickets[row["staff"]] = {
+                    "tickets_created": row["total_tickets"],
+                    "within_5min": row["within_5min"] or 0,
+                    "within_10min": row["within_10min"] or 0,
+                    "over_10min": row["over_10min"] or 0,
+                    "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0,
+                    "on_time_pct": round((row["within_5min"] or 0) / row["total_tickets"] * 100, 1) if row["total_tickets"] > 0 else 0
+                }
+
+            # Get articles count
+            article_params = []
+            article_date_filter = ""
+            if date_from:
+                article_date_filter += " AND DATE(created_at) >= ?"
+                article_params.append(date_from)
+            if date_to:
+                article_date_filter += " AND DATE(created_at) <= ?"
+                article_params.append(date_to)
+
+            cursor.execute(f"""
+                SELECT created_by as staff, COUNT(*) as articles_count,
+                       COUNT(DISTINCT znuny_ticket_id) as tickets_updated
+                FROM znuny_articles
+                WHERE created_by IS NOT NULL AND created_by != ''
+                {article_date_filter}
+                GROUP BY created_by
+            """, article_params)
+
+            for row in cursor.fetchall():
+                staff = row["staff"]
+                if staff not in staff_tickets:
+                    staff_tickets[staff] = {
+                        "tickets_created": 0,
+                        "within_5min": 0,
+                        "within_10min": 0,
+                        "over_10min": 0,
+                        "avg_minutes": 0,
+                        "on_time_pct": 0
+                    }
+                staff_tickets[staff]["articles_count"] = row["articles_count"]
+                staff_tickets[staff]["tickets_updated"] = row["tickets_updated"]
+
+            # Build final list sorted by tickets created
+            staff_list = []
+            for name, stats in staff_tickets.items():
+                staff_list.append({
+                    "name": name,
+                    "tickets_created": stats.get("tickets_created", 0),
+                    "within_5min": stats.get("within_5min", 0),
+                    "within_10min": stats.get("within_10min", 0),
+                    "over_10min": stats.get("over_10min", 0),
+                    "avg_minutes": stats.get("avg_minutes", 0),
+                    "on_time_pct": stats.get("on_time_pct", 0),
+                    "articles_count": stats.get("articles_count", 0),
+                    "tickets_updated": stats.get("tickets_updated", 0)
+                })
+
+            staff_list.sort(key=lambda x: (-x["tickets_created"], -x["on_time_pct"]))
+
+            return {
+                "staff": staff_list,
+                "total_tickets": sum(s["tickets_created"] for s in staff_list),
+                "total_articles": sum(s["articles_count"] for s in staff_list),
+                "date_from": date_from,
+                "date_to": date_to
+            }
+
+    def get_staff_tickets(self, staff_name: str, date_from: str = None, date_to: str = None,
+                          limit: int = 100, offset: int = 0) -> dict:
+        """Get all tickets created by a specific staff member."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Build query
+            query = """
+                SELECT * FROM tickets
+                WHERE znuny_created_by = ?
+            """
+            params = [staff_name]
+
+            if date_from:
+                query += " AND DATE(znuny_created_at) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(znuny_created_at) <= ?"
+                params.append(date_to)
+
+            # Get total count
+            count_query = query.replace("SELECT *", "SELECT COUNT(*)")
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+
+            # Get tickets with pagination
+            query += " ORDER BY znuny_created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cursor.execute(query, params)
+
+            tickets = [self._row_to_ticket(row) for row in cursor.fetchall()]
+
+            return {
+                "staff_name": staff_name,
+                "total": total,
+                "tickets": tickets
+            }
+
+    def get_staff_performance_trend(self, staff_name: str, days: int = 30) -> list:
+        """Get daily performance trend for a staff member."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT
+                    DATE(znuny_created_at) as date,
+                    COUNT(*) as tickets_created,
+                    SUM(CASE WHEN
+                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 <= 5
+                        THEN 1 ELSE 0 END) as within_5min,
+                    AVG((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as avg_minutes
+                FROM tickets
+                WHERE znuny_created_by = ?
+                    AND znuny_created_at IS NOT NULL
+                    AND created_at IS NOT NULL
+                    AND DATE(znuny_created_at) >= DATE('now', ? || ' days')
+                GROUP BY DATE(znuny_created_at)
+                ORDER BY date DESC
+            """, (staff_name, -days))
+
+            return [{
+                "date": row["date"],
+                "tickets_created": row["tickets_created"],
+                "within_5min": row["within_5min"] or 0,
+                "on_time_pct": round((row["within_5min"] or 0) / row["tickets_created"] * 100, 1) if row["tickets_created"] > 0 else 0,
+                "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0
+            } for row in cursor.fetchall()]
+
+    def get_delayed_tickets_by_staff(self, min_delay_minutes: int = 5,
+                                      date_from: str = None, date_to: str = None) -> list:
+        """Get all delayed tickets grouped by staff."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT
+                    znuny_created_by as staff,
+                    COUNT(*) as delayed_count,
+                    AVG((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as avg_delay,
+                    MAX((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as max_delay
+                FROM tickets
+                WHERE znuny_created_by IS NOT NULL
+                    AND znuny_created_by != ''
+                    AND znuny_created_at IS NOT NULL
+                    AND created_at IS NOT NULL
+                    AND (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 > ?
+            """
+            params = [min_delay_minutes]
+
+            if date_from:
+                query += " AND DATE(znuny_created_at) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(znuny_created_at) <= ?"
+                params.append(date_to)
+
+            query += " GROUP BY znuny_created_by ORDER BY delayed_count DESC"
+            cursor.execute(query, params)
+
+            return [{
+                "staff": row["staff"],
+                "delayed_count": row["delayed_count"],
+                "avg_delay_minutes": round(row["avg_delay"], 1) if row["avg_delay"] else 0,
+                "max_delay_minutes": round(row["max_delay"], 1) if row["max_delay"] else 0
+            } for row in cursor.fetchall()]
+
+    def get_all_staff_names(self) -> list:
+        """Get list of all unique staff names."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT znuny_created_by as staff FROM tickets
+                WHERE znuny_created_by IS NOT NULL AND znuny_created_by != ''
+                UNION
+                SELECT DISTINCT created_by as staff FROM znuny_articles
+                WHERE created_by IS NOT NULL AND created_by != ''
+                ORDER BY staff
+            """)
+            return [row["staff"] for row in cursor.fetchall()]
+
+    def export_staff_stats_csv(self, date_from: str = None, date_to: str = None) -> str:
+        """Export staff statistics as CSV string."""
+        stats = self.get_staff_detailed_stats(date_from, date_to)
+
+        lines = ["Staff Name,Tickets Created,Within 5min,Within 10min,Over 10min,On Time %,Avg Minutes,Articles,Tickets Updated"]
+        for s in stats["staff"]:
+            lines.append(f"{s['name']},{s['tickets_created']},{s['within_5min']},{s['within_10min']},{s['over_10min']},{s['on_time_pct']},{s['avg_minutes']},{s['articles_count']},{s['tickets_updated']}")
+
+        return "\n".join(lines)
+
     def _row_to_ticket(self, row) -> Ticket:
         keys = row.keys()
         return Ticket(
@@ -574,3 +956,121 @@ class Database:
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
             completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
         )
+
+    # ==================== System Logs ====================
+
+    def log_system(self, level: str, source: str, message: str, details: str = None):
+        """
+        Log a system event.
+        level: 'info', 'warning', 'error', 'debug'
+        source: module/component name (e.g., 'extractor.medianet', 'znuny', 'scheduler')
+        message: short description of the event
+        details: optional additional details (JSON or text)
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO system_logs (level, source, message, details, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (level.lower(), source, message, details, now_maldives().isoformat()))
+
+    def get_system_logs(
+        self,
+        level: str = None,
+        source: str = None,
+        search: str = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> dict:
+        """Get system logs with optional filtering."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = "SELECT * FROM system_logs WHERE 1=1"
+            params = []
+
+            if level:
+                query += " AND level = ?"
+                params.append(level.lower())
+
+            if source:
+                query += " AND source LIKE ?"
+                params.append(f"%{source}%")
+
+            if search:
+                query += " AND (message LIKE ? OR details LIKE ?)"
+                params.extend([f"%{search}%", f"%{search}%"])
+
+            # Get total count
+            count_query = query.replace("SELECT *", "SELECT COUNT(*)")
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+
+            # Get logs with pagination
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cursor.execute(query, params)
+
+            logs = [{
+                "id": row["id"],
+                "level": row["level"],
+                "source": row["source"],
+                "message": row["message"],
+                "details": row["details"],
+                "created_at": row["created_at"]
+            } for row in cursor.fetchall()]
+
+            return {"logs": logs, "total": total}
+
+    def get_log_stats(self) -> dict:
+        """Get system log statistics."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Count by level
+            cursor.execute("""
+                SELECT level, COUNT(*) as count FROM system_logs
+                GROUP BY level
+            """)
+            by_level = {row["level"]: row["count"] for row in cursor.fetchall()}
+
+            # Count by source (top 10)
+            cursor.execute("""
+                SELECT source, COUNT(*) as count FROM system_logs
+                GROUP BY source ORDER BY count DESC LIMIT 10
+            """)
+            by_source = [{
+                "source": row["source"],
+                "count": row["count"]
+            } for row in cursor.fetchall()]
+
+            # Today's counts
+            cursor.execute("""
+                SELECT level, COUNT(*) as count FROM system_logs
+                WHERE DATE(created_at) = DATE('now')
+                GROUP BY level
+            """)
+            today = {row["level"]: row["count"] for row in cursor.fetchall()}
+
+            # Total count
+            cursor.execute("SELECT COUNT(*) as total FROM system_logs")
+            total = cursor.fetchone()["total"]
+
+            return {
+                "by_level": by_level,
+                "by_source": by_source,
+                "today": today,
+                "total": total
+            }
+
+    def clear_old_logs(self, days: int = 30) -> int:
+        """Clear system logs older than specified days. Returns count deleted."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM system_logs
+                WHERE created_at < datetime('now', ? || ' days')
+            """, (f"-{days}",))
+            deleted = cursor.rowcount
+            logger.info(f"Cleared {deleted} system logs older than {days} days")
+            return deleted

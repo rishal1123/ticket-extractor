@@ -9,6 +9,7 @@ import schedule
 from config import Config
 from database import Database
 from extractors import DhiraaguExtractor, OoredooExtractor, ROLExtractor, MedianetExtractor
+from znuny_client import ZnunyClient
 from utils.logger import setup_logger, get_logger
 
 logger = get_logger("main")
@@ -82,9 +83,61 @@ def run_extraction(portal_name: str = None, headless: bool = False):
     return results
 
 
+def sync_znuny_for_new_tickets(db: Database):
+    """Sync Znuny status and details for tickets not yet checked."""
+    logger.info("Starting Znuny sync for unchecked tickets")
+    znuny_client = ZnunyClient()
+
+    tickets = db.get_all_tickets()
+    tickets_to_check = [t for t in tickets if not t.in_znuny]
+
+    updated = 0
+    for ticket in tickets_to_check:
+        try:
+            # Use account for ROL, ticket_id for others
+            search_term = ticket.account if ticket.portal == "rol" and ticket.account else ticket.ticket_id
+            exists, znuny_ticket_id = znuny_client.check_ticket_sync(
+                search_term,
+                ticket.customer_name
+            )
+            if exists:
+                db.update_znuny_status(ticket.id, True, znuny_ticket_id)
+                updated += 1
+
+                # Fetch details
+                details = znuny_client.get_ticket_details(znuny_ticket_id)
+                if details:
+                    db.update_znuny_details(
+                        ticket.id,
+                        znuny_created_at=details.created_at,
+                        znuny_created_by=details.created_by,
+                        znuny_address=details.address
+                    )
+                    for article in details.articles:
+                        db.upsert_znuny_article(
+                            ticket_id=ticket.id,
+                            znuny_ticket_id=znuny_ticket_id,
+                            article_number=article.article_number,
+                            sender=article.sender,
+                            via=article.via,
+                            subject=article.subject,
+                            created_at=article.created_at,
+                            created_at_str=article.created_at_str,
+                            created_by=article.created_by,
+                            body=article.body
+                        )
+        except Exception as e:
+            logger.warning(f"Error checking ticket {ticket.ticket_id}: {e}")
+            continue
+
+    logger.info(f"Znuny sync complete: {updated} tickets found in Znuny")
+    return updated
+
+
 def scheduled_extraction():
     """Function called by scheduler."""
     logger.info("Starting scheduled extraction")
+    db = Database()
     results = run_extraction(headless=True)  # Run in headless mode (background)
 
     # Summary
@@ -96,6 +149,12 @@ def scheduled_extraction():
     logger.info(f"Extraction complete: {total_found} found, {total_new} new, {total_updated} updated")
     if failed:
         logger.warning(f"Failed portals: {', '.join(failed)}")
+
+    # Sync Znuny for newly found tickets
+    try:
+        sync_znuny_for_new_tickets(db)
+    except Exception as e:
+        logger.error(f"Znuny sync failed: {e}")
 
 
 def run_scheduler():
@@ -198,13 +257,14 @@ def main():
         else:
             # Run scheduler with dashboard
             if not args.no_dashboard:
-                # Start dashboard in a thread
-                dashboard_thread = threading.Thread(target=run_dashboard_thread, daemon=True)
-                dashboard_thread.start()
-                logger.info(f"Dashboard started at http://{Config.DASHBOARD_HOST}:{Config.DASHBOARD_PORT}")
-
-            # Run scheduler in main thread
-            run_scheduler()
+                # Start dashboard - it has its own scheduler built-in via lifespan
+                # So we don't need to run our own scheduler when dashboard is enabled
+                logger.info(f"Starting dashboard with built-in scheduler at http://{Config.DASHBOARD_HOST}:{Config.DASHBOARD_PORT}")
+                from dashboard import run_dashboard
+                run_dashboard()  # This blocks and runs the dashboard with its scheduler
+            else:
+                # Run scheduler in main thread (no dashboard)
+                run_scheduler()
 
     except Exception as e:
         logger.error(f"Fatal error: {e}")

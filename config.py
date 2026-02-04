@@ -48,7 +48,7 @@ class Config:
     ZNUNY_PASSWORD = os.getenv("ZNUNY_PASSWORD", "")
 
     # Scheduler settings
-    EXTRACTION_INTERVAL_MINUTES = int(os.getenv("EXTRACTION_INTERVAL_MINUTES", "60"))
+    EXTRACTION_INTERVAL_MINUTES = int(os.getenv("EXTRACTION_INTERVAL_MINUTES", "5"))
 
     # Dashboard settings
     DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")

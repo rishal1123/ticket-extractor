@@ -63,6 +63,60 @@ class MedianetExtractor(BaseExtractor):
 
     # ============================================================
 
+    def is_logged_in(self) -> bool:
+        """Check if currently logged in to Medianet portal."""
+        try:
+            # Check if browser is available
+            if not self.browser or not self.browser.driver:
+                self.logger.info("is_logged_in: No browser available")
+                return False
+
+            # Check current URL first before navigating
+            try:
+                current_url = self.browser.driver.current_url
+                self.logger.info(f"is_logged_in: Current URL before check: {current_url}")
+            except Exception as e:
+                self.logger.info(f"is_logged_in: Browser not responsive: {e}")
+                return False
+
+            # Navigate to service requests page and check if we can access it
+            self.logger.info(f"is_logged_in: Navigating to {self.SERVICE_REQUESTS_URL}")
+            self.navigate_to(self.SERVICE_REQUESTS_URL)
+            time.sleep(4)  # Increased wait time for page load
+
+            # Check current URL after navigation
+            current_url = self.browser.driver.current_url
+            self.logger.info(f"is_logged_in: URL after navigation: {current_url}")
+
+            # If redirected to login page, we're not logged in
+            if "/account/login" in current_url:
+                self.logger.info("is_logged_in: Redirected to login page - session expired")
+                return False
+
+            # Check if board columns are visible (indicates successful load)
+            columns = self.browser.driver.find_elements(By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR)
+            self.logger.info(f"is_logged_in: Found {len(columns)} board columns")
+
+            if len(columns) > 0:
+                self.logger.info("Session valid - board loaded successfully")
+                return True
+
+            # Maybe need more time for columns to load
+            self.logger.info("is_logged_in: No columns found, waiting more...")
+            time.sleep(3)
+            columns = self.browser.driver.find_elements(By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR)
+            self.logger.info(f"is_logged_in: After additional wait, found {len(columns)} columns")
+
+            if len(columns) > 0:
+                self.logger.info("Session valid - board loaded after extended wait")
+                return True
+
+            self.logger.info("is_logged_in: No board columns found - session may be invalid")
+            return False
+        except Exception as e:
+            self.logger.warning(f"is_logged_in check failed with error: {e}")
+            return False
+
     def login(self) -> bool:
         """Login to Medianet portal using two-step authentication."""
         self.logger.info(f"Logging into Medianet portal: {self.config.url}")
@@ -71,9 +125,14 @@ class MedianetExtractor(BaseExtractor):
             self.navigate_to(self.config.url)
             time.sleep(3)
 
+            current_url = self.browser.driver.current_url
+            self.logger.info(f"login: Current URL after navigation: {current_url}")
+
             # Check if redirected to login page
-            if "/account/login" not in self.browser.driver.current_url:
-                self.logger.info("Already logged in or different page")
+            if "/account/login" not in current_url:
+                self.logger.info("login: Session already active (not on login page) - reusing session")
+                # This means is_logged_in() returned False but session is actually valid
+                # This can happen if is_logged_in() had an issue checking the board
                 return True
 
             # Step 1: Enter email

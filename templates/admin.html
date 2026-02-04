@@ -1,0 +1,675 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - Ticket Extractor{% endblock %}
+{% block nav_icon %}gear{% endblock %}
+{% block nav_title %}Admin Panel{% endblock %}
+{% block nav_title_short %}Admin{% endblock %}
+
+{% block nav_buttons %}
+<button class="btn btn-warning btn-sm" onclick="triggerExtraction()" id="triggerBtn">
+    <i class="bi bi-play-fill me-1"></i><span class="d-none d-sm-inline">Run Now</span>
+</button>
+{% endblock %}
+
+{% block extra_css %}
+.portal-card {
+    border-left: 4px solid;
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: white;
+    margin-bottom: 0.5rem;
+}
+.portal-dhiraagu { border-color: #e74c3c; }
+.portal-ooredoo { border-color: #9b59b6; }
+.portal-rol { border-color: #3498db; }
+.portal-medianet { border-color: #1abc9c; }
+.event-badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.4rem;
+}
+.event-login_success { background-color: #27ae60; }
+.event-login_failed { background-color: #e74c3c; }
+.event-login_attempt { background-color: #f39c12; }
+.event-session_reused { background-color: #3498db; }
+.status-success { color: #27ae60; }
+.status-failed { color: #e74c3c; }
+.scheduler-status {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 1rem;
+}
+.log-row {
+    transition: background-color 0.2s;
+}
+.log-row:hover {
+    background-color: #f8f9fa;
+}
+.level-info { background-color: #17a2b8; }
+.level-warning { background-color: #ffc107; color: #212529; }
+.level-error { background-color: #dc3545; }
+.level-debug { background-color: #6c757d; }
+.system-log-row td {
+    font-size: 0.8rem;
+    vertical-align: middle;
+}
+.log-details {
+    max-width: 300px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+@media (max-width: 768px) {
+    .scheduler-status {
+        padding: 0.75rem;
+    }
+    .scheduler-status h5 {
+        font-size: 1rem;
+    }
+    .scheduler-status .fs-5 {
+        font-size: 1rem !important;
+    }
+    .portal-card {
+        padding: 0.5rem;
+    }
+    .portal-card h6 {
+        font-size: 0.85rem;
+    }
+}
+{% endblock %}
+
+{% block content %}
+<!-- Scheduler Status -->
+<div class="scheduler-status mb-3">
+    <div class="row g-2 align-items-center">
+        <div class="col-12 col-md-2">
+            <h5 class="mb-0"><i class="bi bi-clock-history me-1"></i>Scheduler</h5>
+        </div>
+        <div class="col-4 col-md-2">
+            <div class="small opacity-75">Status</div>
+            <div id="schedulerStatus">
+                <span class="badge bg-secondary">--</span>
+            </div>
+        </div>
+        <div class="col-4 col-md-2">
+            <div class="small opacity-75">Interval</div>
+            <div class="fw-bold" id="schedulerInterval">--</div>
+        </div>
+        <div class="col-4 col-md-3">
+            <div class="small opacity-75">Next Run</div>
+            <div class="small" id="schedulerNextRun">--</div>
+        </div>
+        <div class="col-12 col-md-3 text-end d-none d-md-block">
+            <button class="btn btn-light btn-sm" onclick="refreshAll()">
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-3 g-2">
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-success bg-opacity-10 text-success me-2" style="width: 40px; height: 40px; font-size: 1rem;">
+                    <i class="bi bi-box-arrow-in-right"></i>
+                </div>
+                <div>
+                    <div class="stat-value" style="font-size: 1.25rem;" id="todayLogins">0</div>
+                    <div class="text-muted small">Logins Today</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-primary bg-opacity-10 text-primary me-2" style="width: 40px; height: 40px; font-size: 1rem;">
+                    <i class="bi bi-arrow-repeat"></i>
+                </div>
+                <div>
+                    <div class="stat-value" style="font-size: 1.25rem;" id="todayReused">0</div>
+                    <div class="text-muted small">Sessions Reused</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-info bg-opacity-10 text-info me-2" style="width: 40px; height: 40px; font-size: 1rem;">
+                    <i class="bi bi-percent"></i>
+                </div>
+                <div>
+                    <div class="stat-value" style="font-size: 1.25rem;" id="sessionReuseRate">--%</div>
+                    <div class="text-muted small">Reuse Rate</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-warning bg-opacity-10 text-warning me-2" style="width: 40px; height: 40px; font-size: 1rem;">
+                    <i class="bi bi-hdd-stack"></i>
+                </div>
+                <div>
+                    <div class="stat-value" style="font-size: 1.25rem;" id="totalExtractions">0</div>
+                    <div class="text-muted small">Extractions</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Portal Status Cards -->
+<div class="table-container mb-3">
+    <h6 class="mb-2"><i class="bi bi-server me-1"></i>Portal Status</h6>
+    <div class="row g-2" id="portalStatusCards">
+        <!-- Dynamic content -->
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- Login Events Log -->
+    <div class="col-12 col-md-6">
+        <div class="table-container h-100">
+            <h6 class="mb-2"><i class="bi bi-key me-1"></i>Login Events</h6>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>Time</th>
+                            <th>Portal</th>
+                            <th>Event</th>
+                        </tr>
+                    </thead>
+                    <tbody id="loginEventsTable">
+                        <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Extraction Logs -->
+    <div class="col-12 col-md-6">
+        <div class="table-container h-100">
+            <h6 class="mb-2"><i class="bi bi-journal-text me-1"></i>Extraction Logs</h6>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>Time</th>
+                            <th>Portal</th>
+                            <th>Status</th>
+                            <th class="d-none d-sm-table-cell">Found</th>
+                            <th class="d-none d-sm-table-cell">New</th>
+                        </tr>
+                    </thead>
+                    <tbody id="extractionLogsTable">
+                        <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Login Stats per Portal -->
+<div class="table-container mt-3">
+    <h6 class="mb-2"><i class="bi bi-bar-chart me-1"></i>Login Statistics by Portal</h6>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Portal</th>
+                    <th class="text-center">Logins</th>
+                    <th class="text-center d-none d-sm-table-cell">Failed</th>
+                    <th class="text-center">Reused</th>
+                    <th class="d-none d-md-table-cell">Rate</th>
+                </tr>
+            </thead>
+            <tbody id="loginStatsTable">
+                <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- System Logs Section -->
+<div class="table-container mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0"><i class="bi bi-terminal me-1"></i>System Logs</h6>
+        <div class="d-flex gap-2 align-items-center">
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary log-level-btn active" data-level="" onclick="setLogLevel('')">All</button>
+                <button type="button" class="btn btn-outline-info log-level-btn" data-level="info" onclick="setLogLevel('info')">Info</button>
+                <button type="button" class="btn btn-outline-warning log-level-btn" data-level="warning" onclick="setLogLevel('warning')">Warn</button>
+                <button type="button" class="btn btn-outline-danger log-level-btn" data-level="error" onclick="setLogLevel('error')">Error</button>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" onclick="loadSystemLogs()">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        </div>
+    </div>
+    <!-- Log Stats Summary -->
+    <div class="row g-2 mb-2">
+        <div class="col-3 col-md-2">
+            <div class="text-center bg-light rounded py-1">
+                <div class="small fw-bold" id="logTotalCount">0</div>
+                <div class="small text-muted">Total</div>
+            </div>
+        </div>
+        <div class="col-3 col-md-2">
+            <div class="text-center bg-info bg-opacity-10 rounded py-1">
+                <div class="small fw-bold text-info" id="logInfoCount">0</div>
+                <div class="small text-muted">Info</div>
+            </div>
+        </div>
+        <div class="col-3 col-md-2">
+            <div class="text-center bg-warning bg-opacity-10 rounded py-1">
+                <div class="small fw-bold text-warning" id="logWarningCount">0</div>
+                <div class="small text-muted">Warning</div>
+            </div>
+        </div>
+        <div class="col-3 col-md-2">
+            <div class="text-center bg-danger bg-opacity-10 rounded py-1">
+                <div class="small fw-bold text-danger" id="logErrorCount">0</div>
+                <div class="small text-muted">Error</div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <input type="text" class="form-control form-control-sm" id="logSearchInput" placeholder="Search logs..." onkeyup="if(event.key==='Enter')loadSystemLogs()">
+        </div>
+    </div>
+    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light sticky-top">
+                <tr>
+                    <th style="width: 130px;">Time</th>
+                    <th style="width: 60px;">Level</th>
+                    <th style="width: 120px;">Source</th>
+                    <th>Message</th>
+                    <th class="d-none d-md-table-cell">Details</th>
+                </tr>
+            </thead>
+            <tbody id="systemLogsTable">
+                <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-2">
+        <div class="text-muted small" id="logPaginationInfo">--</div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-danger btn-sm" onclick="clearOldLogs()">
+                <i class="bi bi-trash me-1"></i>Clear Old
+            </button>
+            <nav>
+                <ul class="pagination pagination-sm mb-0" id="logPagination"></ul>
+            </nav>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+let refreshInterval;
+let currentLogLevel = '';
+let currentLogPage = 0;
+const logPageSize = 50;
+
+document.addEventListener('DOMContentLoaded', function() {
+    refreshAll();
+    refreshInterval = setInterval(refreshAll, 30000);
+});
+
+async function refreshAll() {
+    await Promise.all([
+        loadSchedulerStatus(),
+        loadLoginSummary(),
+        loadLoginEvents(),
+        loadExtractionLogs(),
+        loadSystemLogs(),
+        loadLogStats()
+    ]);
+}
+
+async function loadSchedulerStatus() {
+    try {
+        const response = await fetch('/api/admin/scheduler-status');
+        const data = await response.json();
+
+        const statusEl = document.getElementById('schedulerStatus');
+        if (data.running) {
+            statusEl.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Running</span>';
+        } else {
+            statusEl.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Stopped</span>';
+        }
+
+        document.getElementById('schedulerInterval').textContent = data.interval_minutes + ' min';
+        document.getElementById('schedulerNextRun').textContent = data.next_run ? formatTime(data.next_run) : 'Not scheduled';
+    } catch (error) {
+        console.error('Error loading scheduler status:', error);
+    }
+}
+
+async function triggerExtraction() {
+    const btn = document.getElementById('triggerBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split spinning me-1"></i><span class="d-none d-sm-inline">Running...</span>';
+
+    try {
+        const response = await fetch('/api/admin/trigger-extraction', { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            alert('Extraction triggered! Check logs for progress.');
+        } else {
+            alert('Failed: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error triggering extraction:', error);
+        alert('Error: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i><span class="d-none d-sm-inline">Run Now</span>';
+        setTimeout(refreshAll, 2000);
+    }
+}
+
+async function loadLoginSummary() {
+    try {
+        const response = await fetch('/api/admin/login-summary');
+        const data = await response.json();
+
+        document.getElementById('todayLogins').textContent = data.today?.logins || 0;
+        document.getElementById('todayReused').textContent = data.today?.sessions_reused || 0;
+
+        const totalEvents = (data.today?.logins || 0) + (data.today?.sessions_reused || 0);
+        const reuseRate = totalEvents > 0 ? Math.round((data.today?.sessions_reused || 0) / totalEvents * 100) : 0;
+        document.getElementById('sessionReuseRate').textContent = reuseRate + '%';
+
+        renderPortalStatusCards(data);
+        renderLoginStatsTable(data);
+    } catch (error) {
+        console.error('Error loading login summary:', error);
+    }
+}
+
+function renderPortalStatusCards(data) {
+    const portals = ['dhiraagu', 'ooredoo', 'rol', 'medianet'];
+    const container = document.getElementById('portalStatusCards');
+
+    container.innerHTML = portals.map(portal => {
+        const stats = data.by_portal?.[portal] || {};
+        const lastEvent = data.last_events?.[portal];
+        const lastEventTime = lastEvent?.created_at ? formatTime(lastEvent.created_at) : '--';
+
+        return `
+            <div class="col-6 col-md-3">
+                <div class="portal-card portal-${portal}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="mb-0 text-capitalize">${portal}</h6>
+                            <div class="small text-muted">
+                                L: ${stats.total_logins || 0} | R: ${stats.sessions_reused || 0}
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge ${lastEvent?.event_type === 'session_reused' ? 'bg-primary' : lastEvent?.success ? 'bg-success' : 'bg-danger'}" style="font-size: 0.6rem;">
+                                ${(lastEvent?.event_type || '--').replace('_', ' ')}
+                            </span>
+                            <div class="small text-muted">${lastEventTime}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderLoginStatsTable(data) {
+    const portals = ['dhiraagu', 'ooredoo', 'rol', 'medianet'];
+    const tbody = document.getElementById('loginStatsTable');
+
+    tbody.innerHTML = portals.map(portal => {
+        const stats = data.by_portal?.[portal] || {};
+        const totalAttempts = (stats.total_logins || 0) + (stats.sessions_reused || 0);
+        const reuseRate = totalAttempts > 0 ? Math.round((stats.sessions_reused || 0) / totalAttempts * 100) : 0;
+
+        return `
+            <tr>
+                <td><strong class="text-capitalize small">${portal}</strong></td>
+                <td class="text-center"><span class="badge bg-success">${stats.total_logins || 0}</span></td>
+                <td class="text-center d-none d-sm-table-cell"><span class="badge bg-danger">${stats.failed_logins || 0}</span></td>
+                <td class="text-center"><span class="badge bg-primary">${stats.sessions_reused || 0}</span></td>
+                <td class="d-none d-md-table-cell">
+                    <div class="progress" style="height: 16px; min-width: 60px;">
+                        <div class="progress-bar bg-primary" style="width: ${reuseRate}%; font-size: 0.65rem;">${reuseRate}%</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function loadLoginEvents() {
+    try {
+        const response = await fetch('/api/admin/login-stats?limit=50');
+        const data = await response.json();
+
+        const tbody = document.getElementById('loginEventsTable');
+        if (!data.logs || data.logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">No events</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.logs.map(log => `
+            <tr class="log-row">
+                <td class="small">${formatTime(log.created_at)}</td>
+                <td class="small text-capitalize">${log.portal}</td>
+                <td><span class="badge event-badge event-${log.event_type}">${log.event_type.replace('_', ' ')}</span></td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading login events:', error);
+    }
+}
+
+async function loadExtractionLogs() {
+    try {
+        const response = await fetch('/api/extraction-logs?limit=50');
+        const data = await response.json();
+
+        document.getElementById('totalExtractions').textContent = data.logs?.length || 0;
+
+        const tbody = document.getElementById('extractionLogsTable');
+        if (!data.logs || data.logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No logs</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.logs.map(log => `
+            <tr class="log-row">
+                <td class="small">${formatTime(log.extracted_at)}</td>
+                <td class="small text-capitalize">${log.portal}</td>
+                <td>
+                    <span class="badge ${log.status === 'success' ? 'bg-success' : 'bg-danger'}" style="font-size: 0.65rem;">
+                        ${log.status}
+                    </span>
+                </td>
+                <td class="text-center d-none d-sm-table-cell">${log.tickets_found || 0}</td>
+                <td class="text-center d-none d-sm-table-cell">${log.tickets_new || 0}</td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading extraction logs:', error);
+    }
+}
+
+function formatTime(isoString) {
+    if (!isoString) return '--';
+    try {
+        const date = new Date(isoString);
+        return date.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+    } catch {
+        return isoString;
+    }
+}
+
+// System Logs Functions
+function setLogLevel(level) {
+    currentLogLevel = level;
+    currentLogPage = 0;
+    document.querySelectorAll('.log-level-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.level === level);
+    });
+    loadSystemLogs();
+}
+
+async function loadLogStats() {
+    try {
+        const response = await fetch('/api/admin/log-stats');
+        const stats = await response.json();
+
+        document.getElementById('logTotalCount').textContent = stats.total || 0;
+        document.getElementById('logInfoCount').textContent = stats.by_level?.info || 0;
+        document.getElementById('logWarningCount').textContent = stats.by_level?.warning || 0;
+        document.getElementById('logErrorCount').textContent = stats.by_level?.error || 0;
+    } catch (error) {
+        console.error('Error loading log stats:', error);
+    }
+}
+
+async function loadSystemLogs() {
+    try {
+        const params = new URLSearchParams();
+        if (currentLogLevel) params.append('level', currentLogLevel);
+        const search = document.getElementById('logSearchInput')?.value;
+        if (search) params.append('search', search);
+        params.append('limit', logPageSize);
+        params.append('offset', currentLogPage * logPageSize);
+
+        const response = await fetch('/api/admin/system-logs?' + params.toString());
+        const data = await response.json();
+
+        renderSystemLogs(data.logs || []);
+        renderLogPagination(data.total || 0);
+
+        const start = currentLogPage * logPageSize + 1;
+        const end = Math.min((currentLogPage + 1) * logPageSize, data.total || 0);
+        document.getElementById('logPaginationInfo').textContent =
+            data.total > 0 ? `Showing ${start}-${end} of ${data.total}` : 'No logs found';
+    } catch (error) {
+        console.error('Error loading system logs:', error);
+    }
+}
+
+function renderSystemLogs(logs) {
+    const tbody = document.getElementById('systemLogsTable');
+
+    if (!logs || logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No system logs found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = logs.map(log => {
+        const levelClass = `level-${log.level}`;
+        const details = log.details ? log.details.substring(0, 100) + (log.details.length > 100 ? '...' : '') : '-';
+
+        return `
+            <tr class="system-log-row">
+                <td class="small">${formatTime(log.created_at)}</td>
+                <td><span class="badge ${levelClass}" style="font-size: 0.65rem;">${log.level}</span></td>
+                <td class="small text-muted">${log.source}</td>
+                <td class="small">${escapeHtml(log.message)}</td>
+                <td class="small text-muted log-details d-none d-md-table-cell" title="${escapeHtml(log.details || '')}">${escapeHtml(details)}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderLogPagination(total) {
+    const pagination = document.getElementById('logPagination');
+    const totalPages = Math.ceil(total / logPageSize);
+
+    if (totalPages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+
+    let html = `
+        <li class="page-item ${currentLogPage === 0 ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="goToLogPage(${currentLogPage - 1}); return false;">&laquo;</a>
+        </li>
+    `;
+
+    const startPage = Math.max(0, currentLogPage - 2);
+    const endPage = Math.min(totalPages - 1, currentLogPage + 2);
+
+    for (let i = startPage; i <= endPage; i++) {
+        html += `
+            <li class="page-item ${i === currentLogPage ? 'active' : ''}">
+                <a class="page-link" href="#" onclick="goToLogPage(${i}); return false;">${i + 1}</a>
+            </li>
+        `;
+    }
+
+    html += `
+        <li class="page-item ${currentLogPage >= totalPages - 1 ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="goToLogPage(${currentLogPage + 1}); return false;">&raquo;</a>
+        </li>
+    `;
+
+    pagination.innerHTML = html;
+}
+
+function goToLogPage(page) {
+    currentLogPage = page;
+    loadSystemLogs();
+}
+
+async function clearOldLogs() {
+    const days = prompt('Clear logs older than how many days?', '30');
+    if (!days) return;
+
+    const daysNum = parseInt(days);
+    if (isNaN(daysNum) || daysNum < 1) {
+        alert('Please enter a valid number of days');
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to delete logs older than ${daysNum} days?`)) return;
+
+    try {
+        const response = await fetch(`/api/admin/clear-old-logs?days=${daysNum}`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`Deleted ${data.deleted} old logs`);
+            loadSystemLogs();
+            loadLogStats();
+        } else {
+            alert('Failed to clear logs');
+        }
+    } catch (error) {
+        console.error('Error clearing logs:', error);
+        alert('Error: ' + error.message);
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+{% endblock %}

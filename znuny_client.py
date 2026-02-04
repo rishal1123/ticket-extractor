@@ -6,9 +6,12 @@ Fetches ticket details including creator, creation time, and article history.
 
 import time
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from dataclasses import dataclass, field
+
+# Maldives timezone (UTC+5)
+MALDIVES_TZ = timezone(timedelta(hours=5))
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -72,17 +75,47 @@ class ZnunyClient:
     TICKET_LINK_SELECTOR = "a[href*='AgentTicketZoom']"
     TICKET_TITLE_SELECTOR = ".MasterActionLink"
 
+    # Class-level browser instance for session persistence
+    _shared_driver = None
+    _shared_logged_in = False
+
     def __init__(self):
         self.username = Config.ZNUNY_USERNAME
         self.password = Config.ZNUNY_PASSWORD
-        self.driver = None
-        self._logged_in = False
         self._open_tickets_cache = None  # Cache for open tickets
 
+    @property
+    def driver(self):
+        """Get shared driver instance."""
+        return ZnunyClient._shared_driver
+
+    @driver.setter
+    def driver(self, value):
+        """Set shared driver instance."""
+        ZnunyClient._shared_driver = value
+
+    @property
+    def _logged_in(self):
+        """Get shared login state."""
+        return ZnunyClient._shared_logged_in
+
+    @_logged_in.setter
+    def _logged_in(self, value):
+        """Set shared login state."""
+        ZnunyClient._shared_logged_in = value
+
     def _setup_browser(self):
-        """Setup Chrome browser with options."""
+        """Setup Chrome browser with options, reusing existing session if available."""
         if self.driver:
-            return
+            # Check if browser is still alive
+            try:
+                self.driver.current_url
+                logger.info("Reusing existing Znuny browser session")
+                return
+            except:
+                logger.info("Znuny browser session died, creating new one")
+                self.driver = None
+                self._logged_in = False
 
         options = Options()
         options.add_argument("--headless")
@@ -96,29 +129,33 @@ class ZnunyClient:
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=options)
         self.driver.implicitly_wait(10)
-        logger.info("Znuny browser started")
+        logger.info("Znuny browser started (new session)")
 
     def _login(self) -> bool:
-        """Login to Znuny."""
+        """Login to Znuny, reusing existing session if valid."""
+        self._setup_browser()
+
         if self._logged_in:
             # Check if still logged in
             try:
                 self.driver.get(self.DASHBOARD_URL)
                 time.sleep(2)
                 if "Dashboard" in self.driver.title:
+                    logger.info("Znuny session still active, skipping login")
                     return True
             except:
                 pass
             self._logged_in = False
+            logger.info("Znuny session expired, re-logging in...")
 
         try:
-            self._setup_browser()
             self.driver.get(self.LOGIN_URL)
             time.sleep(2)
 
-            # Check if already on dashboard
+            # Check if already on dashboard (session still valid from cookies)
             if "Dashboard" in self.driver.title:
                 self._logged_in = True
+                logger.info("Znuny session valid from cookies")
                 return True
 
             # Enter credentials
@@ -138,7 +175,7 @@ class ZnunyClient:
             # Verify login
             if "Dashboard" in self.driver.title:
                 self._logged_in = True
-                logger.info("Znuny login successful")
+                logger.info("Znuny login successful (new session)")
                 return True
             else:
                 logger.error("Znuny login failed")
@@ -476,19 +513,40 @@ class ZnunyClient:
 
         return False, None
 
-    def close(self):
-        """Close the browser."""
+    def close(self, force: bool = False):
+        """
+        Close the browser session.
+        By default, keeps session alive for reuse. Use force=True to actually close.
+        """
+        if not force:
+            # Don't close by default - keep session for reuse
+            logger.debug("Znuny close called but keeping session alive for reuse")
+            return
+
         if self.driver:
             try:
                 self.driver.quit()
             except:
                 pass
-            self.driver = None
-            self._logged_in = False
-            logger.info("Znuny browser closed")
+            ZnunyClient._shared_driver = None
+            ZnunyClient._shared_logged_in = False
+            logger.info("Znuny browser closed (forced)")
+
+    @classmethod
+    def force_close(cls):
+        """Force close the shared browser session."""
+        if cls._shared_driver:
+            try:
+                cls._shared_driver.quit()
+            except:
+                pass
+            cls._shared_driver = None
+            cls._shared_logged_in = False
+            logger.info("Znuny shared browser session closed")
 
     def __del__(self):
-        self.close()
+        # Don't close on garbage collection - keep session alive
+        pass
 
 
 # Synchronous wrapper for backward compatibility
@@ -507,7 +565,11 @@ class ZnunyClientSync:
         """Check if ticket exists in Znuny."""
         return self._get_client().check_ticket_sync(portal_ticket_id)
 
-    def close(self):
+    def close(self, force: bool = False):
+        """
+        Close the client. By default keeps session alive for reuse.
+        Use force=True to actually close the shared browser.
+        """
         if self._client:
-            self._client.close()
+            self._client.close(force=force)
             self._client = None
