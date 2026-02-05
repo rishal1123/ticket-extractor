@@ -244,7 +244,17 @@ def get_znuny_search_term(ticket) -> str:
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     """Main dashboard page."""
-    return templates.TemplateResponse("dashboard.html", {"request": request, "active_page": "dashboard"})
+    portal_urls = {
+        "dhiraagu": Config.DHIRAAGU.url,
+        "ooredoo": Config.OOREDOO.url,
+        "rol": Config.ROL.url,
+        "medianet": Config.MEDIANET.url
+    }
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "active_page": "dashboard",
+        "portal_urls": portal_urls
+    })
 
 
 @app.get("/tickets", response_class=HTMLResponse)
@@ -460,6 +470,12 @@ async def get_portals():
 async def admin_page(request: Request):
     """Admin page with login stats and extraction logs."""
     return templates.TemplateResponse("admin.html", {"request": request, "active_page": "admin"})
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Login page for admin authentication."""
+    return templates.TemplateResponse("login.html", {"request": request, "active_page": "login"})
 
 
 @app.get("/api/admin/login-stats")
@@ -1092,6 +1108,25 @@ async def update_site_visit(visit_id: int, request: Request):
             if cursor.rowcount == 0:
                 return JSONResponse(content={"success": False, "message": "Site visit not found"})
 
+            # Recalculate duration if scheduled_time was changed and visit is completed
+            if "scheduled_time" in data:
+                cursor.execute("""
+                    UPDATE site_visits
+                    SET time_taken_minutes = CASE
+                        WHEN ticket_completed_at IS NOT NULL AND visit_date IS NOT NULL AND scheduled_time IS NOT NULL THEN
+                            CAST(
+                                (julianday(SUBSTR(ticket_completed_at, 1, 19)) - julianday(visit_date || ' ' ||
+                                    CASE
+                                        WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
+                                        ELSE SUBSTR(scheduled_time, 1, 8)
+                                    END
+                                )) * 24 * 60 AS INTEGER
+                            )
+                        ELSE time_taken_minutes
+                    END
+                    WHERE id = ?
+                """, (visit_id,))
+
             logger.info(f"Updated site visit {visit_id}: {data}")
             return JSONResponse(content={"success": True, "message": "Site visit updated"})
     except Exception as e:
@@ -1105,14 +1140,15 @@ async def admin_login(request: Request):
     """Authenticate admin user."""
     try:
         data = await request.json()
-        password = data.get("password", "")
+        password = data.get("password", "").strip()
 
         stored_password = db.get_setting("admin_password", "admin123")
 
         if password == stored_password:
             return JSONResponse(content={"success": True, "message": "Login successful"})
         else:
-            return JSONResponse(content={"success": False, "message": "Invalid password"}, status_code=401)
+            # Return 200 with success=false to avoid browser/fetch issues with 401
+            return JSONResponse(content={"success": False, "message": "Invalid password"})
     except Exception as e:
         logger.error(f"Error in admin login: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1129,7 +1165,7 @@ async def change_admin_password(request: Request):
         stored_password = db.get_setting("admin_password", "admin123")
 
         if current_password != stored_password:
-            return JSONResponse(content={"success": False, "message": "Current password is incorrect"}, status_code=401)
+            return JSONResponse(content={"success": False, "message": "Current password is incorrect"})
 
         if len(new_password) < 4:
             return JSONResponse(content={"success": False, "message": "Password must be at least 4 characters"})

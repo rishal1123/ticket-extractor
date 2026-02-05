@@ -603,3 +603,83 @@ taskkill //F //IM python.exe
 ### Browser Cache Issues
 - Increment `APP_VERSION` in `config.py` after static file changes
 - Hard refresh browser: Ctrl+Shift+R
+
+## Site Visits / Field Visits Feature
+
+The application tracks site visits extracted from Znuny "OAN Site Visit Arranged" articles.
+
+### Site Visits Table (`site_visits`)
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| znuny_ticket_id | TEXT | Parent Znuny ticket number |
+| portal_ticket_id | TEXT | Linked ISP portal ticket ID |
+| visit_date | TEXT | Scheduled visit date (YYYY-MM-DD) |
+| scheduled_time | TEXT | Scheduled time slot |
+| assigned_to | TEXT | Staff assigned to visit |
+| service_provider | TEXT | ISP provider name |
+| site_type | TEXT | Type of site |
+| status | TEXT | pending / completed |
+| time_taken_minutes | REAL | Duration (for completed visits) |
+| znuny_url | TEXT | Direct URL to Znuny ticket |
+| created_at | DATETIME | When first extracted (MVT timezone) |
+| updated_at | DATETIME | Last update time |
+
+### Site Visits Page (`/field-visits`)
+- **Filters**: Date range (Today, Yesterday, Week, Month, All), Staff, Status
+- **Stats Cards**: Total visits, Completed, Pending, Avg Duration
+- **Staff Stats**: Per-staff breakdown with visit counts and durations
+- **Table Columns**: Date, Time, Assigned To, Provider, Site Type, Status, Extracted, Duration, Znuny link, Actions
+- **Edit Modal**: Update assigned staff, status, time taken
+
+### Site Visit Extraction
+Site visits are extracted from Znuny articles with subject containing "OAN Site Visit Arranged". The article body is parsed for:
+- Visit date and time
+- Assigned staff name
+- Service provider
+- Site type
+
+### API Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/field-visits` | GET | List site visits with filters |
+| `/api/field-visits/{id}` | PUT | Update site visit |
+| `/api/field-visits/assigned-staff` | GET | Get list of assigned staff |
+| `/api/field-visits/staff-stats` | GET | Get per-staff statistics |
+
+## Dashboard Portal Cards
+
+Portal stat cards on the dashboard are clickable to open their respective ISP portals:
+- Click Dhiraagu card → opens Dhiraagu AFAS portal
+- Click Ooredoo card → opens Ooredoo FMS portal
+- Click ROL card → opens ROL support portal
+- Click Medianet card → opens Medianet CRM portal
+
+Portal URLs are loaded from `config.py` and passed to the template context.
+
+## Znuny Sync Optimization
+
+The Znuny integration uses several optimization strategies:
+
+### TTL-Based Caching
+- **Cache TTL**: 5 minutes (configurable via `CACHE_TTL_SECONDS`)
+- Open tickets list is cached to avoid repeated dashboard fetches
+- Ticket details are cached per-ticket with TTL validation
+- Cache is automatically invalidated after TTL expires
+
+### Selective Article Processing
+- Only clicks articles that need body content:
+  - Site visit articles (subject contains "site visit")
+  - First Phone article (for address extraction)
+- Other articles use basic info from table (no clicking needed)
+- Reduces sync time by 50-65%
+
+### Smart Skip Logic
+- Skips tickets that are already fully synced
+- Prioritizes tickets with "site visit" in title
+- Skips tickets without pending site visits
+
+### Key Methods
+- `_is_cache_valid()` - Check if cache is within TTL
+- `clear_cache()` - Force clear all caches
+- `get_ticket_details(skip_body_fetch=True)` - Fast mode without article bodies

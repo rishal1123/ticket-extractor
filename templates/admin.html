@@ -113,30 +113,8 @@
 {% endblock %}
 
 {% block content %}
-<!-- Admin Login Overlay -->
-<div id="adminLoginOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(255,255,255,0.95); z-index: 1050; display: none !important;">
-    <div class="card shadow" style="max-width: 400px; width: 100%;">
-        <div class="card-header bg-primary text-white">
-            <h5 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Admin Login</h5>
-        </div>
-        <div class="card-body">
-            <form id="adminLoginForm" onsubmit="submitAdminLogin(event)">
-                <div class="mb-3">
-                    <label class="form-label">Password</label>
-                    <input type="password" class="form-control" id="adminPassword" required autofocus>
-                    <div class="form-text">Enter admin password to access settings</div>
-                </div>
-                <div id="loginError" class="alert alert-danger d-none mb-3"></div>
-                <button type="submit" class="btn btn-primary w-100" id="loginBtn">
-                    <i class="bi bi-box-arrow-in-right me-1"></i>Login
-                </button>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- Admin Content (hidden until login) -->
-<div id="adminContent" style="display: none;">
+<!-- Admin Content -->
+<div id="adminContent">
 
 <!-- Tab Navigation -->
 <ul class="nav nav-tabs mb-3" id="adminTabs" role="tablist">
@@ -668,63 +646,21 @@ function checkAdminLogin() {
     if (isLoggedIn) {
         showAdminContent();
     } else {
-        showLoginForm();
+        // Redirect to login page
+        window.location.href = '/login?return=/admin';
     }
 }
 
-function showLoginForm() {
-    document.getElementById('adminLoginOverlay').style.display = 'flex';
-    document.getElementById('adminContent').style.display = 'none';
-    document.getElementById('adminPassword').focus();
-}
-
 function showAdminContent() {
-    document.getElementById('adminLoginOverlay').style.display = 'none';
     document.getElementById('adminContent').style.display = 'block';
     refreshAll();
     refreshInterval = setInterval(refreshAll, 30000);
 }
 
-async function submitAdminLogin(e) {
-    e.preventDefault();
-    const password = document.getElementById('adminPassword').value;
-    const btn = document.getElementById('loginBtn');
-    const errorDiv = document.getElementById('loginError');
-
-    btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-hourglass-split spinning me-1"></i>Verifying...';
-    errorDiv.classList.add('d-none');
-
-    try {
-        const response = await fetch('/api/admin/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password })
-        });
-        const data = await response.json();
-
-        if (data.success) {
-            sessionStorage.setItem('adminLoggedIn', 'true');
-            showAdminContent();
-        } else {
-            errorDiv.textContent = data.message || 'Invalid password';
-            errorDiv.classList.remove('d-none');
-            document.getElementById('adminPassword').value = '';
-            document.getElementById('adminPassword').focus();
-        }
-    } catch (error) {
-        errorDiv.textContent = 'Error connecting to server';
-        errorDiv.classList.remove('d-none');
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-box-arrow-in-right me-1"></i>Login';
-    }
-}
-
 function adminLogout() {
     sessionStorage.removeItem('adminLoggedIn');
     clearInterval(refreshInterval);
-    showLoginForm();
+    window.location.href = '/login';
 }
 
 async function changeAdminPassword() {

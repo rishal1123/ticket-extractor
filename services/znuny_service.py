@@ -312,33 +312,60 @@ class ZnunyService:
         """Get site visits aggregated by date."""
         return self.db.get_site_visit_by_date(date_from, date_to)
 
-    def sync_all_site_visits(self) -> Dict:
+    def sync_all_site_visits(self, force_refresh: bool = False) -> Dict:
         """
-        Comprehensive site visit sync:
-        1. Get ALL open tickets from Znuny
-        2. Extract site visits from articles with "OAN Site Visit Arranged"
-        3. Link to ISP tickets if possible
-        4. Sync ISP ticket details from Znuny
+        OPTIMIZED comprehensive site visit sync:
+        1. Get open tickets from Znuny (uses TTL cache unless force_refresh)
+        2. Prioritize tickets that:
+           - Have "site visit" in title (need site visit extraction)
+           - Are linked to unsynced ISP tickets
+           - Have pending site visits needing completion check
+        3. Skip fully-synced tickets that don't need updates
+        4. Extract site visits from articles with "OAN Site Visit Arranged"
 
         Returns sync statistics.
         """
         results = {
             "znuny_tickets_found": 0,
+            "znuny_tickets_processed": 0,
+            "znuny_tickets_skipped": 0,
             "site_visits_extracted": 0,
             "site_visits_linked": 0,
+            "site_visits_completed": 0,
             "isp_tickets_synced": 0,
             "errors": 0
         }
 
-        logger.info("Starting comprehensive Znuny sync (all tickets)")
+        logger.info("Starting optimized Znuny sync")
 
         try:
-            # Step 1: Get ALL open tickets from Znuny
-            all_tickets = self.znuny_client.get_open_tickets(force_refresh=True)
+            # Step 1: Get open tickets from Znuny (uses TTL-based cache)
+            all_tickets = self.znuny_client.get_open_tickets(force_refresh=force_refresh)
             results["znuny_tickets_found"] = len(all_tickets)
             logger.info(f"Found {len(all_tickets)} open tickets in Znuny")
 
+            # Step 2: Get set of Znuny ticket IDs we've already fully synced
+            # (have site visits extracted and no pending visits needing completion)
+            synced_znuny_ids = self.db.get_synced_znuny_ticket_ids()
+
+            # Step 3: Prioritize tickets - process those needing work first
+            priority_tickets = []
+            low_priority_tickets = []
+
             for ticket_info in all_tickets:
+                znuny_id = ticket_info["ticket_number"]
+                title = ticket_info.get("title", "").lower()
+
+                # High priority: has "site visit" in title or not yet synced
+                if "site visit" in title or znuny_id not in synced_znuny_ids:
+                    priority_tickets.append(ticket_info)
+                else:
+                    low_priority_tickets.append(ticket_info)
+
+            # Process high priority tickets first, then low priority
+            ordered_tickets = priority_tickets + low_priority_tickets
+
+            for ticket_info in ordered_tickets:
                 try:
                     znuny_ticket_id = ticket_info["ticket_number"]
                     title = ticket_info.get("title", "")
@@ -360,10 +387,22 @@ class ZnunyService:
                                 )
                             results["isp_tickets_synced"] += 1
 
+                    # Check if we can skip detail fetching for this ticket
+                    # Skip if: no ISP ticket link needed AND already synced AND no pending visits
+                    has_pending_visits = self.db.has_pending_site_visits(znuny_ticket_id)
+
+                    if (znuny_ticket_id in synced_znuny_ids and
+                        not has_pending_visits and
+                        (not isp_ticket or isp_ticket.znuny_created_by)):
+                        results["znuny_tickets_skipped"] += 1
+                        continue
+
                     # Get detailed ticket info including articles
                     details = self.znuny_client.get_ticket_details(znuny_ticket_id)
                     if not details:
                         continue
+
+                    results["znuny_tickets_processed"] += 1
 
                     # If linked to ISP ticket, update its Znuny details
                     if isp_ticket:
@@ -417,7 +456,8 @@ class ZnunyService:
                             )
 
                     # Check for follow-up articles to complete site visits
-                    self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
+                    completed = self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
+                    results["site_visits_completed"] += completed
 
                 except Exception as e:
                     logger.error(f"Error processing Znuny ticket {ticket_info.get('ticket_number', '?')}: {e}")

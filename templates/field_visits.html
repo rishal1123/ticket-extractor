@@ -199,13 +199,14 @@
                         <th class="d-none d-md-table-cell">Provider</th>
                         <th class="d-none d-md-table-cell">Site Type</th>
                         <th>Status</th>
+                        <th class="text-center d-none d-lg-table-cell">Extracted</th>
                         <th class="text-center">Duration</th>
                         <th class="text-center">Znuny</th>
                         <th class="text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="visitsTableBody">
-                    <tr><td colspan="9" class="text-center text-muted py-4">Loading...</td></tr>
+                    <tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -402,7 +403,7 @@ async function loadVisits() {
 
         const tbody = document.getElementById('visitsTableBody');
         if (data.visits.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No visits found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No visits found</td></tr>';
             document.getElementById('pagination').innerHTML = '';
             return;
         }
@@ -422,6 +423,9 @@ async function loadVisits() {
                     </td>
                     <td class="d-none d-md-table-cell">${v.site_type || '--'}</td>
                     <td><span class="${statusClass}"><i class="bi bi-${v.status === 'completed' ? 'check-circle' : 'hourglass-split'} me-1"></i>${v.status}</span></td>
+                    <td class="text-center d-none d-lg-table-cell small text-muted">
+                        ${v.created_at ? formatExtractedTime(v.created_at) : '--'}
+                    </td>
                     <td class="text-center">
                         ${v.time_taken_minutes !== null
                             ? `<span class="time-badge ${timeClass}">${formatDuration(v.time_taken_minutes)}</span>`
@@ -460,6 +464,29 @@ function formatDuration(minutes) {
     const hours = Math.floor(minutes / 60);
     const mins = Math.round(minutes % 60);
     return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+function formatExtractedTime(isoString) {
+    if (!isoString) return '--';
+    try {
+        // Database stores times in MVT already, so parse without timezone conversion
+        // Format: "2026-02-05 19:55:00" -> "Feb 5, 19:55"
+        const parts = isoString.split(' ');
+        if (parts.length < 2) return '--';
+
+        const dateParts = parts[0].split('-');
+        const timeParts = parts[1].split(':');
+
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = months[parseInt(dateParts[1], 10) - 1];
+        const day = parseInt(dateParts[2], 10);
+        const hours = timeParts[0];
+        const minutes = timeParts[1];
+
+        return `${month} ${day}, ${hours}:${minutes}`;
+    } catch (e) {
+        return '--';
+    }
 }
 
 function renderPagination(total) {

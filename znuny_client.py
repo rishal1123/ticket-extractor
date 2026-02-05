@@ -26,6 +26,9 @@ from utils.logger import get_logger
 
 logger = get_logger("znuny")
 
+# Cache TTL in seconds (5 minutes)
+CACHE_TTL_SECONDS = 300
+
 
 @dataclass
 class ZnunyArticle:
@@ -156,6 +159,8 @@ class ZnunyClient:
         self.username = Config.ZNUNY_USERNAME
         self.password = Config.ZNUNY_PASSWORD
         self._open_tickets_cache = None  # Cache for open tickets
+        self._cache_timestamp = None  # When cache was last refreshed
+        self._ticket_details_cache = {}  # Cache for ticket details {ticket_number: (details, timestamp)}
 
     @property
     def driver(self):
@@ -258,15 +263,23 @@ class ZnunyClient:
             logger.error(f"Znuny login error: {e}")
             return False
 
+    def _is_cache_valid(self) -> bool:
+        """Check if cache is still valid based on TTL."""
+        if self._open_tickets_cache is None or self._cache_timestamp is None:
+            return False
+        age = time.time() - self._cache_timestamp
+        return age < CACHE_TTL_SECONDS
+
     def get_open_tickets(self, force_refresh: bool = False) -> list[dict]:
         """
         Get all open tickets from the dashboard widget.
         Returns list of tickets with ticket_number and title.
         Handles pagination to get all tickets.
-        Uses cache to avoid repeated fetches.
+        Uses TTL-based cache (5 min) to avoid repeated fetches.
         """
-        # Return cached results if available
-        if self._open_tickets_cache is not None and not force_refresh:
+        # Return cached results if valid (TTL-based)
+        if not force_refresh and self._is_cache_valid():
+            logger.debug(f"Using cached open tickets (age: {int(time.time() - self._cache_timestamp)}s)")
             return self._open_tickets_cache
 
         if not self._login():
@@ -321,6 +334,7 @@ class ZnunyClient:
 
             logger.info(f"Znuny dashboard: found {len(all_tickets)} open tickets")
             self._open_tickets_cache = all_tickets
+            self._cache_timestamp = time.time()
             return all_tickets
 
         except Exception as e:
@@ -328,8 +342,10 @@ class ZnunyClient:
             return []
 
     def clear_cache(self):
-        """Clear the open tickets cache."""
+        """Clear all caches."""
         self._open_tickets_cache = None
+        self._cache_timestamp = None
+        self._ticket_details_cache = {}
 
     def search_by_title(self, search_term: str) -> list[dict]:
         """
@@ -354,11 +370,25 @@ class ZnunyClient:
         logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
         return matching
 
-    def get_ticket_details(self, ticket_number: str) -> ZnunyTicketDetails | None:
+    def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False) -> ZnunyTicketDetails | None:
         """
         Fetch detailed information about a Znuny ticket.
         Returns ticket details including creation time, creator, and all articles.
+
+        OPTIMIZED: Only clicks articles that need body content (site visit articles with
+        "OAN Site Visit" in subject). Other articles use basic info from table.
+
+        Args:
+            ticket_number: The Znuny ticket number
+            skip_body_fetch: If True, skip fetching article bodies entirely (fastest mode)
         """
+        # Check details cache first
+        if ticket_number in self._ticket_details_cache:
+            details, cache_time = self._ticket_details_cache[ticket_number]
+            if time.time() - cache_time < CACHE_TTL_SECONDS:
+                logger.debug(f"Using cached details for ticket {ticket_number}")
+                return details
+
         if not self._login():
             return None
 
@@ -373,7 +403,7 @@ class ZnunyClient:
 
             # Navigate to ticket detail page
             self.driver.get(ticket_info["href"])
-            time.sleep(2)
+            time.sleep(1.5)  # Reduced from 2s
 
             # Capture the ticket URL
             znuny_url = self.driver.current_url
@@ -418,7 +448,7 @@ class ZnunyClient:
             articles = []
             article_rows = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple table tbody tr")
 
-            # First pass: collect basic article info
+            # Collect basic article info from table (no clicking needed)
             article_data = []
             for row in article_rows:
                 try:
@@ -428,70 +458,114 @@ class ZnunyClient:
                         if not article_num_text.isdigit():
                             continue
 
+                        subject = cells[5].text.strip()
                         article_data.append({
                             "num": int(article_num_text),
                             "sender": cells[3].text.strip(),
                             "via": cells[4].text.strip(),
-                            "subject": cells[5].text.strip(),
+                            "subject": subject,
                             "created_str": cells[6].text.strip(),
-                            "row": row
+                            "row": row,
+                            # Only need body for site visit articles or Phone articles (for address)
+                            "needs_body": "site visit" in subject.lower() or cells[4].text.strip() == "Phone"
                         })
                 except:
                     continue
 
-            # Second pass: click each article to get the "by [Staff]" info and body content
-            for data in article_data:
+            # Process articles - only click ones that need body content
+            articles_needing_body = [d for d in article_data if d["needs_body"] and not skip_body_fetch]
+            articles_skipped = [d for d in article_data if not d["needs_body"] or skip_body_fetch]
+
+            # First, add articles that don't need body (fast - no clicking)
+            for data in articles_skipped:
+                article_created = None
+                time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
+                if time_match:
+                    try:
+                        article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
+                    except ValueError:
+                        pass
+
+                # For Internal articles, use sender as created_by
+                article_created_by = data["sender"] if data["via"] == "Internal" else ""
+
+                articles.append(ZnunyArticle(
+                    article_number=data["num"],
+                    sender=data["sender"],
+                    via=data["via"],
+                    subject=data["subject"],
+                    created_at=article_created,
+                    created_at_str=data["created_str"],
+                    created_by=article_created_by,
+                    body=""  # No body needed for these
+                ))
+
+            # Then click only articles that need body content (site visits + first Phone)
+            phone_article_processed = False
+            for data in articles_needing_body:
+                # Only process first Phone article (for address extraction)
+                if data["via"] == "Phone" and phone_article_processed:
+                    # Add without body
+                    article_created = None
+                    time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
+                    if time_match:
+                        try:
+                            article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
+                        except ValueError:
+                            pass
+                    articles.append(ZnunyArticle(
+                        article_number=data["num"],
+                        sender=data["sender"],
+                        via=data["via"],
+                        subject=data["subject"],
+                        created_at=article_created,
+                        created_at_str=data["created_str"],
+                        created_by="",
+                        body=""
+                    ))
+                    continue
+
                 try:
                     # Click on the article row to open detail
                     data["row"].click()
-                    time.sleep(0.5)
+                    time.sleep(0.3)  # Reduced from 0.5s
 
                     # Look for the article header with "by [Staff Name]"
-                    created_by = ""
+                    article_created_by = ""
                     article_headers = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple h2")
                     for header in article_headers:
                         header_text = header.text
-                        # Look for "by [Name]" at the end of the header
                         by_match = re.search(r'\bby\s+([A-Za-z][A-Za-z\s]+)$', header_text, re.MULTILINE)
                         if by_match:
-                            created_by = by_match.group(1).strip()
+                            article_created_by = by_match.group(1).strip()
                             break
 
-                    # If no "by" found, use sender for Internal articles
-                    if not created_by and data["via"] == "Internal":
-                        created_by = data["sender"]
+                    if not article_created_by and data["via"] == "Internal":
+                        article_created_by = data["sender"]
 
                     # Get the article body content from iframe
                     body = ""
                     try:
-                        # Znuny renders article content in an iframe with ID like "Iframe{article_id}"
-                        # First, find the iframe in the article content area
                         iframes = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleMailContentHTMLWrapper iframe, .ArticleMailContent iframe, iframe[id^='Iframe']")
                         if iframes:
-                            # Switch to the iframe to get its content
                             self.driver.switch_to.frame(iframes[0])
                             try:
-                                # Get the body text from inside the iframe
                                 body_elem = self.driver.find_element(By.TAG_NAME, "body")
                                 body = body_elem.text.strip()
                             finally:
-                                # Always switch back to main content
                                 self.driver.switch_to.default_content()
 
-                        # Fallback: try direct selectors if iframe didn't work
                         if not body:
                             body_elements = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleBody, .MessageBody")
                             if body_elements:
                                 body = body_elements[0].text.strip()
                     except Exception as e:
                         logger.debug(f"Error extracting article body: {e}")
-                        # Make sure we're back to main content
                         try:
                             self.driver.switch_to.default_content()
                         except:
                             pass
 
-                    # Parse article created time
                     article_created = None
                     time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
                     if time_match:
@@ -507,9 +581,13 @@ class ZnunyClient:
                         subject=data["subject"],
                         created_at=article_created,
                         created_at_str=data["created_str"],
-                        created_by=created_by,
+                        created_by=article_created_by,
                         body=body
                     ))
+
+                    if data["via"] == "Phone":
+                        phone_article_processed = True
+
                 except Exception as e:
                     logger.debug(f"Error parsing article {data.get('num', '?')}: {e}")
                     continue
@@ -521,27 +599,24 @@ class ZnunyClient:
             address = ""
             for article in articles:
                 if article.via == "Phone" and article.body:
-                    # Look for address patterns in the body
-                    # Common patterns: "Address: ...", "Location: ...", or multi-line address
                     body_lines = article.body.split('\n')
-                    for i, line in enumerate(body_lines):
+                    for line in body_lines:
                         line_lower = line.lower().strip()
                         if line_lower.startswith('address:') or line_lower.startswith('location:'):
-                            # Get the address value after the label
                             addr = line.split(':', 1)[1].strip() if ':' in line else ''
                             if addr:
                                 address = addr
                                 break
-                        # Also check for standalone address-like content (contains street indicators)
                         elif any(indicator in line_lower for indicator in ['flat', 'floor', 'building', 'street', 'road', 'lane', 'magu', 'hingun']):
                             address = line.strip()
                             break
                     if address:
                         break
 
-            logger.info(f"Fetched details for ticket {ticket_number}: created by {created_by}, {len(articles)} articles, address={address[:30] if address else 'none'}")
+            clicks_made = len([d for d in articles_needing_body if not (d["via"] == "Phone" and phone_article_processed)])
+            logger.info(f"Fetched details for ticket {ticket_number}: created by {created_by}, {len(articles)} articles ({clicks_made} clicked), address={address[:30] if address else 'none'}")
 
-            return ZnunyTicketDetails(
+            details = ZnunyTicketDetails(
                 ticket_number=ticket_number,
                 created_at=created_at,
                 created_at_str=created_at_str,
@@ -552,6 +627,11 @@ class ZnunyClient:
                 znuny_url=znuny_url,
                 articles=articles
             )
+
+            # Cache the details
+            self._ticket_details_cache[ticket_number] = (details, time.time())
+
+            return details
 
         except Exception as e:
             logger.error(f"Error fetching ticket details for {ticket_number}: {e}")

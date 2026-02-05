@@ -1118,13 +1118,14 @@ class Database:
                           visit_date: str, article_created_at: datetime,
                           ticket_id: int = None, znuny_url: str = None) -> int:
         """Insert or update a site visit record."""
+        now = now_maldives()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO site_visits
                     (ticket_id, znuny_ticket_id, article_id, site_type, service_provider,
-                     scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(znuny_ticket_id, article_id) DO UPDATE SET
                     site_type = excluded.site_type,
                     service_provider = excluded.service_provider,
@@ -1135,7 +1136,7 @@ class Database:
                     znuny_url = excluded.znuny_url,
                     updated_at = excluded.updated_at
             """, (ticket_id, znuny_ticket_id, article_id, site_type, service_provider,
-                  scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, now_maldives()))
+                  scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, now, now))
             return cursor.lastrowid
 
     def update_site_visit_completion(self, znuny_ticket_id: str, completed_at: datetime):
@@ -1183,6 +1184,31 @@ class Database:
                 WHERE znuny_ticket_id = ? AND status = 'pending'
             """, (znuny_ticket_id,))
             return [dict(row) for row in cursor.fetchall()]
+
+    def has_pending_site_visits(self, znuny_ticket_id: str) -> bool:
+        """Check if a Znuny ticket has any pending site visits."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 1 FROM site_visits
+                WHERE znuny_ticket_id = ? AND status = 'pending'
+                LIMIT 1
+            """, (znuny_ticket_id,))
+            return cursor.fetchone() is not None
+
+    def get_synced_znuny_ticket_ids(self) -> set:
+        """
+        Get set of Znuny ticket IDs that have been fully synced.
+        A ticket is considered synced if it has at least one site visit extracted.
+        This is used to skip re-processing tickets during sync.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT znuny_ticket_id FROM site_visits
+                WHERE znuny_ticket_id IS NOT NULL
+            """)
+            return {row[0] for row in cursor.fetchall()}
 
     def get_site_visits_for_ticket(self, ticket_id: int) -> list:
         """Get all site visits for a ticket (by internal ticket_id)."""
@@ -1267,7 +1293,8 @@ class Database:
                     "portal": row["portal"],
                     "address": row["address"],
                     "customer_name": row["customer_name"],
-                    "portal_ticket_id": row["portal_ticket_id"]
+                    "portal_ticket_id": row["portal_ticket_id"],
+                    "created_at": row["created_at"]
                 })
 
             return {"total": total, "visits": visits}

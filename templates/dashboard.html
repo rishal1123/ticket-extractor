@@ -63,13 +63,21 @@
     border-color: #dc3545 !important;
     color: white !important;
 }
+.portal-card-link {
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.portal-card-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
 {% endblock %}
 
 {% block content %}
 <!-- Stats Cards -->
 <div class="row mb-4 g-3" id="statsRow">
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #e65100;">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #e65100;" onclick="openPortal('dhiraagu')" title="Open Dhiraagu Portal">
             <div class="card-body text-center py-3">
                 <div class="stat-value" style="color: #e65100;" id="dhiraaguCount">0</div>
                 <div class="portal-name fw-semibold mb-1" style="color: #e65100;">Dhiraagu</div>
@@ -80,7 +88,7 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #9b59b6;">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #9b59b6;" onclick="openPortal('ooredoo')" title="Open Ooredoo Portal">
             <div class="card-body text-center py-3">
                 <div class="stat-value" style="color: #9b59b6;" id="ooredooCount">0</div>
                 <div class="portal-name fw-semibold mb-1" style="color: #9b59b6;">Ooredoo</div>
@@ -91,7 +99,7 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #3498db;">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #3498db;" onclick="openPortal('rol')" title="Open ROL Portal">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-primary" id="rolCount">0</div>
                 <div class="portal-name text-primary fw-semibold mb-1">ROL</div>
@@ -102,7 +110,7 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #1abc9c;">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #1abc9c;" onclick="openPortal('medianet')" title="Open Medianet Portal">
             <div class="card-body text-center py-3">
                 <div class="stat-value" style="color: #1abc9c;" id="medianetCount">0</div>
                 <div class="portal-name fw-semibold mb-1" style="color: #1abc9c;">Medianet</div>
@@ -275,6 +283,21 @@ const pageSize = 50;
 let delayedDateFilter = 'today';
 let delayedTimeFilter = 5;
 let allTicketsCache = [];
+
+// Portal URLs from config
+const portalUrls = {
+    dhiraagu: "{{ portal_urls.dhiraagu }}",
+    ooredoo: "{{ portal_urls.ooredoo }}",
+    rol: "{{ portal_urls.rol }}",
+    medianet: "{{ portal_urls.medianet }}"
+};
+
+function openPortal(portal) {
+    const url = portalUrls[portal];
+    if (url) {
+        window.open(url, '_blank');
+    }
+}
 
 // Callbacks for ticket modal actions
 const ticketCallbacks = {
