@@ -12,7 +12,7 @@ import schedule
 
 from database import Database, now_maldives
 from znuny_client import ZnunyClient
-from config import Config
+from config import Config, APP_VERSION
 from utils.logger import get_logger
 from extractors import DhiraaguExtractor, OoredooExtractor, ROLExtractor, MedianetExtractor
 
@@ -252,6 +252,7 @@ app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), na
 
 # Templates
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+templates.env.globals["app_version"] = APP_VERSION
 
 # Database instance
 db = Database()

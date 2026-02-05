@@ -21,7 +21,25 @@ def now_maldives() -> datetime:
 class Database:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or Config.DATABASE_PATH
+        self._logging_error = False  # Guard against infinite recursion
         self._init_db()
+
+    def _log_db_error(self, operation: str, error: Exception, context: str = None):
+        """Log database error to both logger and system_logs table (if possible)."""
+        error_msg = f"{operation} failed: {type(error).__name__}: {error}"
+        if context:
+            error_msg += f" (context: {context})"
+        logger.error(error_msg)
+
+        # Try to log to system_logs table, but avoid infinite recursion
+        if not self._logging_error:
+            self._logging_error = True
+            try:
+                self.log_system("error", "database", error_msg, context)
+            except Exception:
+                pass  # Can't log to DB, already logged to file
+            finally:
+                self._logging_error = False
 
     @contextmanager
     def _get_connection(self):
@@ -32,12 +50,21 @@ class Database:
             conn.commit()
         except Exception as e:
             conn.rollback()
+            logger.error(f"Database error (rolled back): {type(e).__name__}: {e}")
             raise e
         finally:
             conn.close()
 
     def _init_db(self):
         logger.info(f"Initializing database at {self.db_path}")
+        try:
+            self._create_tables()
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {type(e).__name__}: {e}")
+            raise
+
+    def _create_tables(self):
+        """Create database tables and run migrations."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -234,6 +261,14 @@ class Database:
         Insert or update a ticket.
         Returns: (ticket_id, is_new, is_updated)
         """
+        try:
+            return self._upsert_ticket_impl(ticket)
+        except Exception as e:
+            self._log_db_error("upsert_ticket", e, f"portal={ticket.portal}, ticket_id={ticket.ticket_id}")
+            raise
+
+    def _upsert_ticket_impl(self, ticket: Ticket) -> tuple[int, bool, bool]:
+        """Internal implementation of upsert_ticket."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -542,13 +577,17 @@ class Database:
     def log_extraction(self, portal: str, status: str, tickets_found: int = 0,
                        tickets_new: int = 0, tickets_updated: int = 0,
                        tickets_completed: int = 0, error_message: str = None):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO extraction_logs (portal, status, tickets_found, tickets_new, tickets_updated, error_message, extracted_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (portal, status, tickets_found, tickets_new, tickets_updated, error_message, now_maldives()))
-            logger.info(f"Logged extraction for {portal}: {status} (found={tickets_found}, new={tickets_new}, updated={tickets_updated}, completed={tickets_completed})")
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO extraction_logs (portal, status, tickets_found, tickets_new, tickets_updated, error_message, extracted_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (portal, status, tickets_found, tickets_new, tickets_updated, error_message, now_maldives()))
+                logger.info(f"Logged extraction for {portal}: {status} (found={tickets_found}, new={tickets_new}, updated={tickets_updated}, completed={tickets_completed})")
+        except Exception as e:
+            # Log error but don't fail - extraction logging shouldn't break extraction
+            logger.error(f"Failed to log extraction for {portal}: {type(e).__name__}: {e}")
 
     def get_extraction_logs(self, limit: int = 100) -> list[dict]:
         with self._get_connection() as conn:
@@ -632,13 +671,17 @@ class Database:
     def log_login_event(self, portal: str, event_type: str, session_id: str = None,
                          success: bool = True, error_message: str = None):
         """Log a login-related event (login_attempt, login_success, login_failed, session_reused)."""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO login_stats (portal, event_type, session_id, success, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (portal, event_type, session_id, success, error_message, now_maldives()))
-            logger.info(f"Logged {event_type} for {portal}")
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO login_stats (portal, event_type, session_id, success, error_message, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (portal, event_type, session_id, success, error_message, now_maldives()))
+                logger.info(f"Logged {event_type} for {portal}")
+        except Exception as e:
+            # Log error but don't fail - login logging shouldn't break extraction
+            logger.error(f"Failed to log login event for {portal}: {type(e).__name__}: {e}")
 
     def get_login_stats(self, limit: int = 100) -> list[dict]:
         """Get recent login events."""

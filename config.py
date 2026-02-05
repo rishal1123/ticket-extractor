@@ -3,6 +3,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Application version - update this when deploying changes to bust cache
+APP_VERSION = "1.0.0"
+
 
 class PortalConfig:
     def __init__(self, name: str, url: str, username: str, password: str):

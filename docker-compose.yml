@@ -9,26 +9,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./tickets.db:/app/tickets.db
+      - ./.env:/app/.env:ro  # Mount .env file (read-only in container)
+    env_file:
+      - .env  # Load environment variables from .env file
     environment:
-      # Portal credentials
-      - DHIRAAGU_URL=${DHIRAAGU_URL}
-      - DHIRAAGU_USERNAME=${DHIRAAGU_USERNAME}
-      - DHIRAAGU_PASSWORD=${DHIRAAGU_PASSWORD}
-      - OOREDOO_URL=${OOREDOO_URL}
-      - OOREDOO_USERNAME=${OOREDOO_USERNAME}
-      - OOREDOO_PASSWORD=${OOREDOO_PASSWORD}
-      - ROL_URL=${ROL_URL}
-      - ROL_USERNAME=${ROL_USERNAME}
-      - ROL_PASSWORD=${ROL_PASSWORD}
-      - MEDIANET_URL=${MEDIANET_URL}
-      - MEDIANET_USERNAME=${MEDIANET_USERNAME}
-      - MEDIANET_PASSWORD=${MEDIANET_PASSWORD}
-      # Znuny configuration
-      - ZNUNY_URL=${ZNUNY_URL}
-      - ZNUNY_USERNAME=${ZNUNY_USERNAME}
-      - ZNUNY_PASSWORD=${ZNUNY_PASSWORD}
-      # Application settings
-      - EXTRACTION_INTERVAL_MINUTES=${EXTRACTION_INTERVAL_MINUTES:-5}
+      # Override settings for container
       - DASHBOARD_HOST=0.0.0.0
       - DASHBOARD_PORT=8000
     restart: unless-stopped

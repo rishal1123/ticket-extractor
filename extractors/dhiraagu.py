@@ -246,6 +246,9 @@ class DhiraaguExtractor(BaseExtractor):
     def _extract_from_detail_page(self, order_data: dict) -> Ticket | None:
         """Extract ticket data from the detail page."""
         try:
+            # Capture the current URL (detail page URL)
+            portal_url = self.browser.driver.current_url
+
             # Extract additional details from the form
             detail_data = self._extract_detail_page_data()
 
@@ -271,7 +274,8 @@ class DhiraaguExtractor(BaseExtractor):
                 service_type=order_data.get('service_type'),
                 status=order_data.get('status'),
                 kpi=order_data.get('kpi'),
-                notes=notes
+                notes=notes,
+                portal_url=portal_url
             )
 
         except Exception as e:

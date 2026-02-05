@@ -389,25 +389,35 @@ class ZnunyClient:
                     if not created_by and data["via"] == "Internal":
                         created_by = data["sender"]
 
-                    # Get the article body content
+                    # Get the article body content from iframe
                     body = ""
                     try:
-                        # Look for article body in the expanded content area
-                        # Znuny article body is typically in .ArticleBody or similar container
-                        body_elements = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleBody, .ArticleMailContent, .MessageBody")
-                        if body_elements:
-                            body = body_elements[0].text.strip()
-                        else:
-                            # Try finding the content in a more general way
-                            content_divs = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple .Content")
-                            for div in content_divs:
-                                div_text = div.text.strip()
-                                # Skip if it's the header or metadata
-                                if div_text and len(div_text) > 20 and "by" not in div_text[:50]:
-                                    body = div_text
-                                    break
-                    except:
-                        pass
+                        # Znuny renders article content in an iframe with ID like "Iframe{article_id}"
+                        # First, find the iframe in the article content area
+                        iframes = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleMailContentHTMLWrapper iframe, .ArticleMailContent iframe, iframe[id^='Iframe']")
+                        if iframes:
+                            # Switch to the iframe to get its content
+                            self.driver.switch_to.frame(iframes[0])
+                            try:
+                                # Get the body text from inside the iframe
+                                body_elem = self.driver.find_element(By.TAG_NAME, "body")
+                                body = body_elem.text.strip()
+                            finally:
+                                # Always switch back to main content
+                                self.driver.switch_to.default_content()
+
+                        # Fallback: try direct selectors if iframe didn't work
+                        if not body:
+                            body_elements = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleBody, .MessageBody")
+                            if body_elements:
+                                body = body_elements[0].text.strip()
+                    except Exception as e:
+                        logger.debug(f"Error extracting article body: {e}")
+                        # Make sure we're back to main content
+                        try:
+                            self.driver.switch_to.default_content()
+                        except:
+                            pass
 
                     # Parse article created time
                     article_created = None

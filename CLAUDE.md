@@ -14,7 +14,7 @@ Extractor/
 ├── app.py               # MVC FastAPI app (alternative entry point)
 ├── dashboard.py         # FastAPI web server (port 8000) - main controller
 ├── database.py          # SQLite database operations (Repository)
-├── config.py            # Configuration from .env
+├── config.py            # Configuration from .env + APP_VERSION
 ├── znuny_client.py      # Selenium-based Znuny integration
 │
 ├── models/              # Data Models
@@ -140,6 +140,8 @@ Key functions available to all pages:
 | znuny_created_at | DATETIME | When ticket was created in Znuny |
 | znuny_created_by | TEXT | Staff who created ticket in Znuny |
 | znuny_address | TEXT | Address from Znuny phone ticket |
+| znuny_url | TEXT | Direct URL to ticket in Znuny |
+| portal_url | TEXT | Direct URL to ticket in ISP portal |
 | created_at | DATETIME | When ticket was first extracted (entered to extractor) |
 | updated_at | DATETIME | Last update time |
 | completed_at | DATETIME | When ticket was marked complete |
@@ -188,6 +190,8 @@ class Ticket:
     znuny_created_at: Optional[datetime]   # When created in Znuny
     znuny_created_by: Optional[str]        # Staff who created in Znuny
     znuny_address: Optional[str]           # Address from Znuny
+    znuny_url: Optional[str]               # Direct URL to Znuny ticket
+    portal_url: Optional[str]              # Direct URL to ISP portal ticket
 ```
 
 ### 3. Extractors (extractors/)
@@ -202,7 +206,28 @@ All extractors inherit from `BaseExtractor` and implement:
 
 **Completion tracking:** When a ticket disappears from the portal, it's automatically marked as complete.
 
-### 4. Dashboard API (dashboard.py)
+### 4. Services Layer (services/)
+
+Business logic separated from HTTP handlers:
+
+| Service | File | Responsibility |
+|---------|------|----------------|
+| `ExtractionService` | extraction_service.py | Run portal extractions, manage scheduler |
+| `ZnunyService` | znuny_service.py | Znuny sync, ticket checking, article fetch |
+| `StatsService` | stats_service.py | Dashboard stats, staff metrics, reports |
+| `ConfigService` | config_service.py | Environment config management |
+
+### 5. Controllers Layer (controllers/)
+
+HTTP route handlers (MVC app only):
+
+| Controller | File | Routes |
+|------------|------|--------|
+| `pages_router` | pages.py | HTML pages (/, /tickets, /staff, /admin) |
+| `api_router` | api.py | JSON API endpoints (/api/*) |
+| `admin_router` | admin.py | Admin API (/api/admin/*) |
+
+### 6. API Endpoints
 
 **Pages:**
 - `/` - Main dashboard with stats
@@ -232,7 +257,7 @@ All extractors inherit from `BaseExtractor` and implement:
 | `/api/admin/scheduler-status` | GET | Get scheduler status |
 | `/api/admin/login-summary` | GET | Login statistics summary |
 
-### 5. Znuny Integration (znuny_client.py)
+### 7. Znuny Integration (znuny_client.py)
 
 Uses Selenium to interact with Znuny web interface:
 - Searches tickets by title containing portal ticket ID
@@ -244,7 +269,7 @@ Uses Selenium to interact with Znuny web interface:
 - `ZnunyArticle` - Article/note data structure
 - `ZnunyTicketDetails` - Full ticket details
 
-### 6. Configuration (.env)
+### 8. Configuration (.env)
 
 ```env
 # Portal credentials
@@ -307,11 +332,41 @@ python main.py --mvc
 
 The app runs on http://localhost:8000 by default.
 
+### Development: Restarting After Code Changes
+
+**IMPORTANT:** After modifying Python files, always restart the server to load new code:
+
+```bash
+# Windows - Kill existing Python processes and restart
+taskkill //F //IM python.exe
+python dashboard.py
+
+# Or find and kill process on port 8000
+netstat -ano | grep 8000  # Find PID
+taskkill //F //PID <pid>
+```
+
+**Common issues:**
+- Old server still running on port 8000 → new code not loaded
+- Port already in use error → kill the existing process first
+- Changes not reflected → clear `__pycache__` directories
+
+```bash
+# Clear Python cache (if needed)
+rmdir /s /q __pycache__
+rmdir /s /q models\__pycache__
+rmdir /s /q extractors\__pycache__
+```
+
 ## Docker Deployment
 
 ### Quick Start
 
 ```bash
+# Copy example env file and configure
+cp .env.example .env
+# Edit .env with your credentials
+
 # Build and run
 docker-compose up -d
 
@@ -324,16 +379,34 @@ docker-compose down
 
 ### Configuration
 
-Create a `.env` file with your credentials (see Configuration section above).
+Create a `.env` file from the example template:
+```bash
+cp .env.example .env
+```
 
-### Docker Compose
+Edit `.env` with your portal credentials. Changes to `.env` persist on the host and are loaded on container restart.
 
-The `docker-compose.yml` provides:
+### Persistent Volumes
+
+| Volume | Purpose |
+|--------|---------|
+| `./data:/app/data` | Application data directory |
+| `./tickets.db:/app/tickets.db` | SQLite database |
+| `./.env:/app/.env:ro` | Environment config (read-only in container) |
+
+### Docker Compose Features
+
 - Chrome with Selenium for web scraping
-- Persistent database volume
-- Environment variable injection from `.env`
+- Persistent database and data volumes
+- Environment loaded from `.env` file (persists across restarts)
 - Automatic restart on failure
-- Shared memory for Chrome stability
+- 2GB shared memory for Chrome stability
+
+### Updating Configuration
+
+To update credentials or settings:
+1. Edit `.env` on the host machine
+2. Restart the container: `docker-compose restart`
 
 ## Scheduler
 
@@ -462,3 +535,71 @@ Two CSV export endpoints are available:
 A ticket is considered "On Time" if it was created in Znuny within **5 minutes** of appearing in the extractor.
 
 **Calculation:** `created_at - znuny_created_at <= 5 minutes`
+
+## Portal & Znuny URLs
+
+Tickets include clickable links to their source portal and Znuny:
+
+| Portal | URL Pattern |
+|--------|-------------|
+| Dhiraagu | `https://afas.dhiraagu.com.mv/orders/hdc/{ticket_id}?activeRelationManager=notes` |
+| Ooredoo | `https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/{ticket_id}` |
+| ROL | `https://support.rol.net.mv/staff/index.php?/Tickets/Ticket/View/{ticket_id}/inbox/55/-1/-1` |
+| Medianet | Captured during extraction (UUID-based URLs) |
+| Znuny | Captured during sync (dynamic ticket IDs) |
+
+**Implementation:**
+- Dhiraagu, Ooredoo, ROL: URLs generated from patterns using `ticket_id`
+- Medianet: URLs captured from browser during extraction (stored in `portal_url`)
+- Znuny: URLs captured during sync process (stored in `znuny_url`)
+
+## Static File Versioning
+
+Static files (CSS, JS, favicon) use query string versioning for cache busting.
+
+**How it works:**
+- `APP_VERSION` is defined in `config.py` (e.g., `"1.0.0"`)
+- Templates use `?v={{ app_version }}` query strings on static file URLs
+- When you update static files, increment `APP_VERSION` to bust browser cache
+
+**Example:**
+```html
+<script src="/static/js/common.js?v=1.0.0"></script>
+```
+
+**When to update:**
+- After modifying `static/js/common.js`
+- After modifying `static/favicon.svg`
+- After any CSS changes in `base.html`
+
+## Troubleshooting
+
+### Server Won't Start / Port Already in Use
+```bash
+# Find process using port 8000
+netstat -ano | grep 8000
+
+# Kill by PID (Windows)
+taskkill //F //PID <pid>
+
+# Or kill all Python processes
+taskkill //F //IM python.exe
+```
+
+### Code Changes Not Taking Effect
+1. Ensure old server process is killed (see above)
+2. Clear Python bytecode cache:
+   ```bash
+   rmdir /s /q __pycache__
+   rmdir /s /q models\__pycache__
+   ```
+3. Restart the server
+
+### Database Errors
+- Check `system_logs` table in Admin panel for logged errors
+- Database errors are logged to console and `system_logs` table
+- If database is corrupted, delete `tickets.db` and restart (fresh DB created)
+
+### Browser Cache Issues
+- Increment `APP_VERSION` in `config.py` after static file changes
+- Hard refresh browser: Ctrl+Shift+R
