@@ -12,6 +12,7 @@ import schedule
 
 from database import Database, now_maldives
 from znuny_client import ZnunyClient
+from services.znuny_service import ZnunyService
 from config import Config, APP_VERSION
 from utils.logger import get_logger
 from extractors import DhiraaguExtractor, OoredooExtractor, ROLExtractor, MedianetExtractor
@@ -116,67 +117,35 @@ def run_portal_extraction():
     return results
 
 
-def sync_znuny_for_tickets():
-    """Sync Znuny status and details for tickets not yet checked."""
-    logger.info("Starting Znuny sync for unchecked tickets")
+def sync_znuny_comprehensive():
+    """Comprehensive Znuny sync: all tickets, site visits, and ISP ticket linking."""
+    logger.info("Starting comprehensive Znuny sync")
     sync_db = Database()
-    sync_znuny_client = ZnunyClient()
 
-    tickets = sync_db.get_all_tickets()
-    tickets_to_check = [t for t in tickets if not t.in_znuny]
+    sync_db.log_system("info", "znuny", "Comprehensive Znuny sync started")
 
-    sync_db.log_system("info", "znuny", f"Znuny sync started for {len(tickets_to_check)} unchecked tickets")
+    try:
+        znuny_service = ZnunyService(sync_db)
+        results = znuny_service.sync_all_site_visits()
 
-    updated = 0
-    errors = 0
-    for ticket in tickets_to_check:
-        try:
-            search_term = ticket.account if ticket.portal == "rol" and ticket.account else ticket.ticket_id
-            exists, znuny_ticket_id = sync_znuny_client.check_ticket_sync(search_term)
-            if exists:
-                sync_db.update_znuny_status(ticket.id, True, znuny_ticket_id)
-                updated += 1
-
-                # Fetch details
-                details = sync_znuny_client.get_ticket_details(znuny_ticket_id)
-                if details:
-                    sync_db.update_znuny_details(
-                        ticket.id,
-                        znuny_created_at=details.created_at,
-                        znuny_created_by=details.created_by,
-                        znuny_address=details.address,
-                        znuny_url=details.znuny_url
-                    )
-                    for article in details.articles:
-                        sync_db.upsert_znuny_article(
-                            ticket_id=ticket.id,
-                            znuny_ticket_id=znuny_ticket_id,
-                            article_number=article.article_number,
-                            sender=article.sender,
-                            via=article.via,
-                            subject=article.subject,
-                            created_at=article.created_at,
-                            created_at_str=article.created_at_str,
-                            created_by=article.created_by,
-                            body=article.body
-                        )
-        except Exception as e:
-            logger.warning(f"Error checking ticket {ticket.ticket_id}: {e}")
-            errors += 1
-            continue
-
-    logger.info(f"Znuny sync complete: {updated} tickets found in Znuny")
-    sync_db.log_system(
-        "info" if errors == 0 else "warning",
-        "znuny",
-        f"Znuny sync complete: {updated} found, {errors} errors",
-        f"Checked: {len(tickets_to_check)}, Updated: {updated}, Errors: {errors}"
-    )
-    return updated
+        logger.info(f"Znuny sync complete: {results}")
+        sync_db.log_system(
+            "info" if results["errors"] == 0 else "warning",
+            "znuny",
+            f"Znuny sync complete: {results['znuny_tickets_found']} tickets, {results['site_visits_extracted']} site visits",
+            f"Tickets: {results['znuny_tickets_found']}, ISP synced: {results['isp_tickets_synced']}, "
+            f"Site visits: {results['site_visits_extracted']}, Linked: {results['site_visits_linked']}, "
+            f"Errors: {results['errors']}"
+        )
+        return results
+    except Exception as e:
+        logger.error(f"Comprehensive Znuny sync failed: {e}")
+        sync_db.log_system("error", "znuny", f"Znuny sync failed: {e}")
+        raise
 
 
 def scheduled_job():
-    """Combined job that runs portal extraction and Znuny sync."""
+    """Combined job that runs portal extraction and comprehensive Znuny sync."""
     job_db = Database()
     try:
         run_portal_extraction()
@@ -185,7 +154,7 @@ def scheduled_job():
         job_db.log_system("error", "scheduler", f"Portal extraction crashed: {e}")
 
     try:
-        sync_znuny_for_tickets()
+        sync_znuny_comprehensive()
     except Exception as e:
         logger.error(f"Znuny sync failed: {e}")
         job_db.log_system("error", "scheduler", f"Znuny sync crashed: {e}")
@@ -788,6 +757,23 @@ async def get_ticket_znuny_articles(ticket_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/tickets/{ticket_id}/site-visits")
+async def get_ticket_site_visits(ticket_id: int):
+    """Get site visits for a ticket."""
+    try:
+        ticket = db.get_ticket_by_id(ticket_id)
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        visits = db.get_site_visits_for_ticket(ticket_id)
+        return JSONResponse(content={"visits": visits})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting site visits for ticket {ticket_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/staff-stats-detailed")
 async def get_staff_stats_detailed(
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
@@ -795,7 +781,9 @@ async def get_staff_stats_detailed(
 ):
     """Get detailed staff statistics including on-time percentages."""
     try:
-        stats = db.get_staff_detailed_stats(date_from=date_from, date_to=date_to)
+        thresholds = db.get_performance_thresholds()
+        stats = db.get_staff_detailed_stats(date_from=date_from, date_to=date_to, thresholds=thresholds)
+        stats["thresholds"] = thresholds
         return JSONResponse(content=stats)
     except Exception as e:
         logger.error(f"Error getting detailed staff stats: {e}")
@@ -837,8 +825,9 @@ async def get_staff_tickets(
 async def get_staff_performance(staff_name: str, days: int = Query(30, ge=1, le=365)):
     """Get performance trend for a staff member."""
     try:
-        trend = db.get_staff_performance_trend(staff_name, days)
-        return JSONResponse(content={"staff_name": staff_name, "trend": trend})
+        thresholds = db.get_performance_thresholds()
+        trend = db.get_staff_performance_trend(staff_name, days, thresholds)
+        return JSONResponse(content={"staff_name": staff_name, "trend": trend, "thresholds": thresholds})
     except Exception as e:
         logger.error(f"Error getting staff performance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -944,6 +933,215 @@ async def export_tickets_csv(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== Field Visits / Site Visits API ====================
+
+@app.get("/field-visits", response_class=HTMLResponse)
+async def field_visits_page(request: Request):
+    """Render the field visits page."""
+    return templates.TemplateResponse(
+        "field_visits.html",
+        {"request": request, "active_page": "field-visits"}
+    )
+
+
+@app.get("/api/field-visits")
+async def get_field_visits(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    assigned_to: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0)
+):
+    """Get site visits with optional filters."""
+    try:
+        result = db.get_site_visits(
+            date_from=date_from, date_to=date_to,
+            assigned_to=assigned_to, status=status,
+            limit=limit, offset=offset
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error getting field visits: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/field-visits/staff-stats")
+async def get_field_visits_staff_stats(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None)
+):
+    """Get site visit statistics by assigned staff."""
+    try:
+        stats = db.get_site_visit_staff_stats(date_from, date_to)
+        return {"staff": stats}
+    except Exception as e:
+        logger.error(f"Error getting field visits staff stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/field-visits/by-date")
+async def get_field_visits_by_date(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None)
+):
+    """Get site visits aggregated by date."""
+    try:
+        data = db.get_site_visit_by_date(date_from, date_to)
+        return {"dates": data}
+    except Exception as e:
+        logger.error(f"Error getting field visits by date: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/field-visits/assigned-staff")
+async def get_field_visits_assigned_staff():
+    """Get list of staff who have been assigned field visits."""
+    try:
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT assigned_to FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != ''
+                ORDER BY assigned_to
+            """)
+            return {"staff": [row["assigned_to"] for row in cursor.fetchall()]}
+    except Exception as e:
+        logger.error(f"Error getting assigned staff: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/field-visits/sync")
+async def sync_site_visits():
+    """
+    Sync all site visits from Znuny.
+    Searches for site visit tickets, extracts visits, and links to ISP tickets.
+    """
+    try:
+        from services import ZnunyService
+        znuny_service = ZnunyService(db)
+
+        def run_sync():
+            return znuny_service.sync_all_site_visits()
+
+        # Run in background thread
+        import threading
+        result_container = {}
+
+        def sync_thread():
+            try:
+                result_container["result"] = run_sync()
+            except Exception as e:
+                result_container["error"] = str(e)
+
+        thread = threading.Thread(target=sync_thread)
+        thread.start()
+        thread.join(timeout=120)  # Wait up to 2 minutes
+
+        if "error" in result_container:
+            raise HTTPException(status_code=500, detail=result_container["error"])
+
+        return JSONResponse(content={
+            "success": True,
+            **result_container.get("result", {})
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error syncing site visits: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/field-visits/{visit_id}")
+async def update_site_visit(visit_id: int, request: Request):
+    """Update a site visit (scheduled time, assigned_to, etc.)."""
+    try:
+        data = await request.json()
+        with db._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Build update query based on provided fields
+            updates = []
+            params = []
+
+            if "scheduled_time" in data:
+                updates.append("scheduled_time = ?")
+                params.append(data["scheduled_time"])
+
+            if "assigned_to" in data:
+                updates.append("assigned_to = ?")
+                params.append(data["assigned_to"])
+
+            if "status" in data:
+                updates.append("status = ?")
+                params.append(data["status"])
+
+            if not updates:
+                return JSONResponse(content={"success": False, "message": "No fields to update"})
+
+            updates.append("updated_at = ?")
+            params.append(now_maldives())
+            params.append(visit_id)
+
+            cursor.execute(f"""
+                UPDATE site_visits
+                SET {', '.join(updates)}
+                WHERE id = ?
+            """, params)
+
+            if cursor.rowcount == 0:
+                return JSONResponse(content={"success": False, "message": "Site visit not found"})
+
+            logger.info(f"Updated site visit {visit_id}: {data}")
+            return JSONResponse(content={"success": True, "message": "Site visit updated"})
+    except Exception as e:
+        logger.error(f"Error updating site visit: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Admin Authentication
+@app.post("/api/admin/login")
+async def admin_login(request: Request):
+    """Authenticate admin user."""
+    try:
+        data = await request.json()
+        password = data.get("password", "")
+
+        stored_password = db.get_setting("admin_password", "admin123")
+
+        if password == stored_password:
+            return JSONResponse(content={"success": True, "message": "Login successful"})
+        else:
+            return JSONResponse(content={"success": False, "message": "Invalid password"}, status_code=401)
+    except Exception as e:
+        logger.error(f"Error in admin login: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/change-password")
+async def change_admin_password(request: Request):
+    """Change admin password."""
+    try:
+        data = await request.json()
+        current_password = data.get("current_password", "")
+        new_password = data.get("new_password", "")
+
+        stored_password = db.get_setting("admin_password", "admin123")
+
+        if current_password != stored_password:
+            return JSONResponse(content={"success": False, "message": "Current password is incorrect"}, status_code=401)
+
+        if len(new_password) < 4:
+            return JSONResponse(content={"success": False, "message": "Password must be at least 4 characters"})
+
+        db.set_setting("admin_password", new_password, "Password for admin panel access")
+        logger.info("Admin password changed")
+        return JSONResponse(content={"success": True, "message": "Password changed successfully"})
+    except Exception as e:
+        logger.error(f"Error changing admin password: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Config API endpoints
 @app.get("/api/config")
 async def get_config():
@@ -1041,6 +1239,51 @@ async def update_config(request: Request):
         return JSONResponse(content={"success": True, "message": "Configuration saved"})
     except Exception as e:
         logger.error(f"Error updating config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Performance Thresholds API ====================
+
+@app.get("/api/settings/performance-thresholds")
+async def get_performance_thresholds():
+    """Get performance threshold settings."""
+    try:
+        db = Database()
+        thresholds = db.get_performance_thresholds()
+        return JSONResponse(content={"success": True, "thresholds": thresholds})
+    except Exception as e:
+        logger.error(f"Error getting performance thresholds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings/performance-thresholds")
+async def update_performance_thresholds(request: Request):
+    """Update performance threshold settings."""
+    try:
+        data = await request.json()
+        db = Database()
+        db.set_performance_thresholds(
+            good=int(data.get("good", 5)),
+            warning=int(data.get("warning", 10)),
+            bad=int(data.get("bad", 30)),
+            critical=int(data.get("critical", 60))
+        )
+        logger.info(f"Performance thresholds updated: {data}")
+        return JSONResponse(content={"success": True, "message": "Thresholds saved"})
+    except Exception as e:
+        logger.error(f"Error updating performance thresholds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/settings")
+async def get_all_settings():
+    """Get all app settings."""
+    try:
+        db = Database()
+        settings = db.get_all_settings()
+        return JSONResponse(content={"success": True, "settings": settings})
+    except Exception as e:
+        logger.error(f"Error getting settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

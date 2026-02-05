@@ -4,7 +4,7 @@ Znuny Service - Business logic for Znuny ticket synchronization.
 
 from typing import Dict, List, Optional
 from database import Database, now_maldives
-from znuny_client import ZnunyClient
+from znuny_client import ZnunyClient, parse_site_visit_article
 from utils.logger import get_logger
 
 logger = get_logger("znuny_service")
@@ -89,7 +89,8 @@ class ZnunyService:
                 znuny_url=details.znuny_url
             )
 
-            # Store articles
+            # Store articles and extract site visits
+            site_visits_found = 0
             for article in details.articles:
                 self.db.upsert_znuny_article(
                     ticket_id=ticket_id,
@@ -104,11 +105,36 @@ class ZnunyService:
                     body=article.body
                 )
 
+                # Check for site visit articles
+                site_visit = parse_site_visit_article(article, ticket.znuny_ticket_id)
+                if site_visit:
+                    self.db.upsert_site_visit(
+                        znuny_ticket_id=site_visit.znuny_ticket_id,
+                        article_id=site_visit.article_number,
+                        site_type=site_visit.site_type,
+                        service_provider=site_visit.service_provider,
+                        scheduled_time=site_visit.scheduled_time,
+                        assigned_to=site_visit.assigned_to,
+                        visit_date=site_visit.visit_date,
+                        article_created_at=site_visit.article_created_at,
+                        ticket_id=ticket_id,
+                        znuny_url=details.znuny_url
+                    )
+                    site_visits_found += 1
+                    logger.info(f"Found site visit in ticket {ticket.znuny_ticket_id}: {site_visit.assigned_to} at {site_visit.scheduled_time}")
+
+            # Check for follow-up articles that complete pending site visits
+            site_visits_completed = self._complete_site_visits_by_followup(
+                ticket.znuny_ticket_id, details.articles
+            )
+
             return {
                 "success": True,
                 "znuny_created_by": details.created_by,
                 "znuny_address": details.address,
                 "articles_count": len(details.articles),
+                "site_visits_found": site_visits_found,
+                "site_visits_completed": site_visits_completed,
                 "message": "Synced successfully"
             }
         except Exception as e:
@@ -163,6 +189,22 @@ class ZnunyService:
                                 created_by=article.created_by,
                                 body=article.body
                             )
+
+                            # Check for site visit articles
+                            site_visit = parse_site_visit_article(article, znuny_id)
+                            if site_visit:
+                                self.db.upsert_site_visit(
+                                    znuny_ticket_id=site_visit.znuny_ticket_id,
+                                    article_id=site_visit.article_number,
+                                    site_type=site_visit.site_type,
+                                    service_provider=site_visit.service_provider,
+                                    scheduled_time=site_visit.scheduled_time,
+                                    assigned_to=site_visit.assigned_to,
+                                    visit_date=site_visit.visit_date,
+                                    article_created_at=site_visit.article_created_at,
+                                    ticket_id=ticket.id,
+                                    znuny_url=details.znuny_url
+                                )
                 else:
                     results["not_found"] += 1
             except Exception as e:
@@ -219,6 +261,174 @@ class ZnunyService:
     def get_ticket_articles(self, ticket_id: int) -> List[Dict]:
         """Get Znuny articles for a ticket."""
         return self.db.get_znuny_articles(ticket_id=ticket_id)
+
+    def _complete_site_visits_by_followup(self, znuny_ticket_id: str, articles: list) -> int:
+        """
+        Check if any pending site visits should be completed based on follow-up articles.
+        A site visit is completed if there's an article with a higher article_number.
+
+        Returns the count of site visits completed.
+        """
+        completed_count = 0
+        pending_visits = self.db.get_pending_site_visits_for_ticket(znuny_ticket_id)
+
+        if not pending_visits:
+            return 0
+
+        # Sort articles by article_number ascending
+        sorted_articles = sorted(articles, key=lambda a: a.article_number)
+
+        for visit in pending_visits:
+            visit_article_id = visit["article_id"]
+
+            # Find the first article after the site visit article
+            for article in sorted_articles:
+                if article.article_number > visit_article_id and article.created_at:
+                    # Found a follow-up article - complete the site visit
+                    if self.db.complete_site_visit_by_followup(
+                        znuny_ticket_id, visit_article_id, article.created_at
+                    ):
+                        completed_count += 1
+                        logger.info(f"Site visit {visit_article_id} completed by follow-up article {article.article_number}")
+                    break
+
+        return completed_count
+
+    def get_site_visits(self, date_from: str = None, date_to: str = None,
+                        assigned_to: str = None, status: str = None,
+                        limit: int = 100, offset: int = 0) -> Dict:
+        """Get site visits with optional filters."""
+        return self.db.get_site_visits(
+            date_from=date_from, date_to=date_to,
+            assigned_to=assigned_to, status=status,
+            limit=limit, offset=offset
+        )
+
+    def get_site_visit_staff_stats(self, date_from: str = None, date_to: str = None) -> List:
+        """Get site visit statistics by assigned staff."""
+        return self.db.get_site_visit_staff_stats(date_from, date_to)
+
+    def get_site_visit_by_date(self, date_from: str = None, date_to: str = None) -> List:
+        """Get site visits aggregated by date."""
+        return self.db.get_site_visit_by_date(date_from, date_to)
+
+    def sync_all_site_visits(self) -> Dict:
+        """
+        Comprehensive site visit sync:
+        1. Get ALL open tickets from Znuny
+        2. Extract site visits from articles with "OAN Site Visit Arranged"
+        3. Link to ISP tickets if possible
+        4. Sync ISP ticket details from Znuny
+
+        Returns sync statistics.
+        """
+        results = {
+            "znuny_tickets_found": 0,
+            "site_visits_extracted": 0,
+            "site_visits_linked": 0,
+            "isp_tickets_synced": 0,
+            "errors": 0
+        }
+
+        logger.info("Starting comprehensive Znuny sync (all tickets)")
+
+        try:
+            # Step 1: Get ALL open tickets from Znuny
+            all_tickets = self.znuny_client.get_open_tickets(force_refresh=True)
+            results["znuny_tickets_found"] = len(all_tickets)
+            logger.info(f"Found {len(all_tickets)} open tickets in Znuny")
+
+            for ticket_info in all_tickets:
+                try:
+                    znuny_ticket_id = ticket_info["ticket_number"]
+                    title = ticket_info.get("title", "")
+
+                    # Try to extract ISP ticket ID from title
+                    isp_info = self.znuny_client.extract_isp_ticket_id_from_title(title)
+                    isp_ticket = None
+
+                    # If we found an ISP ticket reference, try to link it
+                    if isp_info["portal"] and isp_info["ticket_id"]:
+                        isp_ticket = self.db.get_ticket_by_portal_id(
+                            isp_info["portal"], isp_info["ticket_id"]
+                        )
+                        if isp_ticket:
+                            # Update ISP ticket with Znuny link if not already linked
+                            if not isp_ticket.znuny_ticket_id:
+                                self.db.update_znuny_status(
+                                    isp_ticket.id, True, znuny_ticket_id
+                                )
+                            results["isp_tickets_synced"] += 1
+
+                    # Get detailed ticket info including articles
+                    details = self.znuny_client.get_ticket_details(znuny_ticket_id)
+                    if not details:
+                        continue
+
+                    # If linked to ISP ticket, update its Znuny details
+                    if isp_ticket:
+                        self.db.update_znuny_details(
+                            isp_ticket.id,
+                            znuny_created_at=details.created_at,
+                            znuny_created_by=details.created_by,
+                            znuny_address=details.address,
+                            znuny_url=details.znuny_url
+                        )
+
+                    # Extract site visits from articles
+                    for article in details.articles:
+                        site_visit = parse_site_visit_article(article, znuny_ticket_id)
+                        if site_visit:
+                            self.db.upsert_site_visit(
+                                znuny_ticket_id=site_visit.znuny_ticket_id,
+                                article_id=site_visit.article_number,
+                                site_type=site_visit.site_type,
+                                service_provider=site_visit.service_provider,
+                                scheduled_time=site_visit.scheduled_time,
+                                assigned_to=site_visit.assigned_to,
+                                visit_date=site_visit.visit_date,
+                                article_created_at=site_visit.article_created_at,
+                                ticket_id=isp_ticket.id if isp_ticket else None,
+                                znuny_url=details.znuny_url
+                            )
+                            results["site_visits_extracted"] += 1
+
+                            if isp_ticket:
+                                results["site_visits_linked"] += 1
+
+                            logger.info(
+                                f"Extracted site visit from {znuny_ticket_id}: "
+                                f"{site_visit.assigned_to} at {site_visit.scheduled_time}"
+                            )
+
+                        # Also store articles if linked to ISP ticket
+                        if isp_ticket:
+                            self.db.upsert_znuny_article(
+                                ticket_id=isp_ticket.id,
+                                znuny_ticket_id=znuny_ticket_id,
+                                article_number=article.article_number,
+                                sender=article.sender,
+                                via=article.via,
+                                subject=article.subject,
+                                created_at=article.created_at,
+                                created_at_str=article.created_at_str,
+                                created_by=article.created_by,
+                                body=article.body
+                            )
+
+                    # Check for follow-up articles to complete site visits
+                    self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
+
+                except Exception as e:
+                    logger.error(f"Error processing Znuny ticket {ticket_info.get('ticket_number', '?')}: {e}")
+                    results["errors"] += 1
+
+        except Exception as e:
+            logger.error(f"Error in comprehensive site visit sync: {e}")
+            results["errors"] += 1
+
+        logger.info(f"Site visit sync complete: {results}")
+        return results
 
     def close(self):
         """Clean up resources."""

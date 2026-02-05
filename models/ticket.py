@@ -27,6 +27,7 @@ class Ticket:
     znuny_address: Optional[str] = None          # Address from Znuny phone ticket
     znuny_url: Optional[str] = None              # Direct URL to ticket in Znuny
     portal_url: Optional[str] = None             # Direct URL to ticket in ISP portal
+    time_to_create_minutes: Optional[float] = None  # Pre-calculated time to create (minutes)
 
     def to_dict(self) -> dict:
         return {
@@ -51,7 +52,8 @@ class Ticket:
             "znuny_created_by": self.znuny_created_by,
             "znuny_address": self.znuny_address,
             "znuny_url": self.znuny_url,
-            "portal_url": self.portal_url
+            "portal_url": self.portal_url,
+            "time_to_create_minutes": self.time_to_create_minutes
         }
 
     @classmethod

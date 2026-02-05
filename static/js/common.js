@@ -50,6 +50,14 @@ function formatTimeDiff(ms) {
     return `${minutes}m`;
 }
 
+function formatSiteVisitDuration(minutes) {
+    if (minutes === null || minutes === undefined) return '-';
+    if (minutes < 60) return `${Math.round(minutes)}m`;
+    const hours = Math.floor(minutes / 60);
+    const mins = Math.round(minutes % 60);
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
 function formatRelativeTime(dateStr) {
     if (!dateStr) return '--';
     const date = toMaldivesTime(dateStr);
@@ -101,15 +109,18 @@ async function showTicketDetail(ticketId, callbacks = {}) {
     window.currentTicketId = ticketId;
 
     try {
-        const [ticketResponse, znunyResponse] = await Promise.all([
+        const [ticketResponse, znunyResponse, siteVisitsResponse] = await Promise.all([
             fetch(`/api/tickets/${ticketId}`),
-            fetch(`/api/tickets/${ticketId}/znuny-articles`)
+            fetch(`/api/tickets/${ticketId}/znuny-articles`),
+            fetch(`/api/tickets/${ticketId}/site-visits`)
         ]);
 
         const ticketData = await ticketResponse.json();
         const znunyData = await znunyResponse.json();
+        const siteVisitsData = await siteVisitsResponse.json();
 
         const ticket = ticketData.ticket;
+        const siteVisits = siteVisitsData.visits || [];
         const znunyArticles = (znunyData.articles || []).sort((a, b) => {
             // Sort by created_at descending (newest first)
             const dateA = a.created_at ? new Date(a.created_at) : new Date(0);
@@ -198,6 +209,50 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                         </div>
                     </div>
                     ` : '<p class="text-muted small">No articles synced. Click "Sync Znuny Data" to fetch.</p>'}
+                </div>
+            `;
+        }
+
+        // Build Site Visits section
+        let siteVisitsSection = '';
+        if (siteVisits.length > 0) {
+            siteVisitsSection = `
+                <div class="col-12 mt-3">
+                    <div class="section-title"><i class="bi bi-geo-alt"></i> Site Visits (${siteVisits.length})</div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Time</th>
+                                    <th>Assigned To</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${siteVisits.map(v => `
+                                    <tr>
+                                        <td>${v.visit_date || '-'}</td>
+                                        <td><code>${v.scheduled_time || '-'}</code></td>
+                                        <td><strong>${v.assigned_to || '-'}</strong></td>
+                                        <td>${v.site_type || '-'}</td>
+                                        <td>
+                                            <span class="badge bg-${v.status === 'completed' ? 'success' : 'warning'}">
+                                                ${v.status}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            ${v.time_taken_minutes !== null
+                                                ? `<span class="badge bg-${v.time_taken_minutes <= 60 ? 'success' : v.time_taken_minutes <= 240 ? 'warning' : 'danger'}">${formatSiteVisitDuration(v.time_taken_minutes)}</span>`
+                                                : '-'}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             `;
         }
@@ -304,6 +359,7 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                     </div>
                 </div>
                 ${znunySection}
+                ${siteVisitsSection}
                 <!-- Portal Notes -->
                 <div class="col-12 mt-3">
                     <div class="section-title"><i class="bi bi-chat-left-text"></i> Portal Notes</div>

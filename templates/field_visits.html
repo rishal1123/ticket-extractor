@@ -1,0 +1,606 @@
+{% extends "base.html" %}
+
+{% block title %}Field Visits - Ticket Extractor{% endblock %}
+{% block nav_icon %}geo-alt{% endblock %}
+{% block nav_title %}Field Visits{% endblock %}
+{% block nav_title_short %}Visits{% endblock %}
+
+{% block nav_buttons %}{% endblock %}
+
+{% block extra_css %}
+.stat-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+.staff-row {
+    transition: background-color 0.2s;
+}
+.staff-row:hover {
+    background-color: #e3f2fd !important;
+}
+.visit-pending { color: #f39c12; }
+.visit-completed { color: #27ae60; }
+.time-badge {
+    font-family: monospace;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+.time-short { background-color: rgba(39, 174, 96, 0.15); color: #27ae60; }
+.time-medium { background-color: rgba(243, 156, 18, 0.15); color: #f39c12; }
+.time-long { background-color: rgba(231, 76, 60, 0.15); color: #e74c3c; }
+.quick-filter-btn {
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+.quick-filter-btn.active {
+    background-color: var(--secondary-color);
+    border-color: var(--secondary-color);
+    color: white;
+}
+.provider-badge {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+}
+.provider-ooredoo { background-color: #9b59b6; color: white; }
+.provider-dhiraagu { background-color: #e65100; color: white; }
+.provider-rol { background-color: #3498db; color: white; }
+.provider-medianet { background-color: #1abc9c; color: white; }
+@media (max-width: 768px) {
+    .stat-icon {
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+}
+{% endblock %}
+
+{% block content %}
+<!-- Summary Cards -->
+<div class="row mb-3 g-2">
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-primary bg-opacity-10 text-primary me-2 me-md-3">
+                    <i class="bi bi-geo-alt"></i>
+                </div>
+                <div>
+                    <div class="stat-value" id="totalVisits">0</div>
+                    <div class="text-muted small">Total Visits</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-warning bg-opacity-10 text-warning me-2 me-md-3">
+                    <i class="bi bi-hourglass-split"></i>
+                </div>
+                <div>
+                    <div class="stat-value" id="pendingVisits">0</div>
+                    <div class="text-muted small">Pending</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-success bg-opacity-10 text-success me-2 me-md-3">
+                    <i class="bi bi-check-circle"></i>
+                </div>
+                <div>
+                    <div class="stat-value" id="completedVisits">0</div>
+                    <div class="text-muted small">Completed</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-info bg-opacity-10 text-info me-2 me-md-3">
+                    <i class="bi bi-clock-history"></i>
+                </div>
+                <div>
+                    <div class="stat-value" id="avgTime">--</div>
+                    <div class="text-muted small">Avg Time</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="row align-items-center g-2">
+            <div class="col-auto">
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn active" data-filter="today" onclick="setDateFilter('today')">Today</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="yesterday" onclick="setDateFilter('yesterday')">Yesterday</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="week" onclick="setDateFilter('week')">Week</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="month" onclick="setDateFilter('month')">Month</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="all" onclick="setDateFilter('all')">All</button>
+                </div>
+            </div>
+            <div class="col-auto">
+                <select class="form-select form-select-sm" id="staffFilter" onchange="applyFilters()">
+                    <option value="">All Staff</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <select class="form-select form-select-sm" id="statusFilter" onchange="applyFilters()">
+                    <option value="">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="completed">Completed</option>
+                </select>
+            </div>
+            <div class="col-auto ms-auto">
+                <button class="btn btn-outline-primary btn-sm" onclick="syncSiteVisits()" id="syncBtn">
+                    <i class="bi bi-cloud-download me-1"></i><span class="d-none d-sm-inline">Sync</span>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="refreshData()">
+                    <i class="bi bi-arrow-clockwise me-1"></i><span class="d-none d-sm-inline">Refresh</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Staff Stats Table -->
+<div class="card mb-3">
+    <div class="card-header py-2">
+        <h6 class="mb-0"><i class="bi bi-people me-2"></i>Staff Performance</h6>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Staff</th>
+                        <th class="text-center">Total</th>
+                        <th class="text-center">Completed</th>
+                        <th class="text-center">Pending</th>
+                        <th class="text-center">Avg Time</th>
+                        <th class="text-center d-none d-md-table-cell">Min</th>
+                        <th class="text-center d-none d-md-table-cell">Max</th>
+                    </tr>
+                </thead>
+                <tbody id="staffTableBody">
+                    <tr><td colspan="7" class="text-center text-muted py-4">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Visits Table -->
+<div class="card">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Site Visits</h6>
+        <span class="badge bg-secondary" id="visitsCount">0</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Assigned To</th>
+                        <th class="d-none d-md-table-cell">Provider</th>
+                        <th class="d-none d-md-table-cell">Site Type</th>
+                        <th>Status</th>
+                        <th class="text-center">Duration</th>
+                        <th class="text-center">Znuny</th>
+                        <th class="text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="visitsTableBody">
+                    <tr><td colspan="9" class="text-center text-muted py-4">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="card-footer py-2" id="pagination">
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_html %}
+<!-- Edit Site Visit Modal -->
+<div class="modal fade" id="editVisitModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Site Visit</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editVisitForm">
+                    <input type="hidden" id="editVisitId">
+                    <div class="mb-3">
+                        <label class="form-label">Visit Date</label>
+                        <input type="text" class="form-control" id="editVisitDate" readonly disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Scheduled Time</label>
+                        <input type="time" class="form-control" id="editScheduledTime" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Assigned To</label>
+                        <select class="form-select" id="editAssignedTo">
+                            <!-- Options populated dynamically -->
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Status</label>
+                        <select class="form-select" id="editStatus">
+                            <option value="pending">Pending</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveVisitEdit()">
+                    <i class="bi bi-check-lg me-1"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+let currentDateFilter = 'today';
+let currentPage = 1;
+const pageSize = 50;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    loadAssignedStaff();
+    setDateFilter('today');
+});
+
+function setDateFilter(filter) {
+    currentDateFilter = filter;
+    currentPage = 1;
+
+    // Update button states
+    document.querySelectorAll('.quick-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+
+    applyFilters();
+}
+
+function getDateRange(filter) {
+    const today = new Date();
+    const formatDate = (d) => d.toISOString().split('T')[0];
+
+    switch(filter) {
+        case 'today':
+            return { from: formatDate(today), to: formatDate(today) };
+        case 'yesterday':
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            return { from: formatDate(yesterday), to: formatDate(yesterday) };
+        case 'week':
+            const weekAgo = new Date(today);
+            weekAgo.setDate(weekAgo.getDate() - 7);
+            return { from: formatDate(weekAgo), to: formatDate(today) };
+        case 'month':
+            const monthAgo = new Date(today);
+            monthAgo.setMonth(monthAgo.getMonth() - 1);
+            return { from: formatDate(monthAgo), to: formatDate(today) };
+        default:
+            return { from: null, to: null };
+    }
+}
+
+function applyFilters() {
+    loadStaffStats();
+    loadVisits();
+}
+
+async function loadAssignedStaff() {
+    try {
+        const response = await fetch('/api/field-visits/assigned-staff');
+        const data = await response.json();
+
+        const select = document.getElementById('staffFilter');
+        select.innerHTML = '<option value="">All Staff</option>';
+        data.staff.forEach(s => {
+            select.innerHTML += `<option value="${s}">${s}</option>`;
+        });
+    } catch (error) {
+        console.error('Error loading staff:', error);
+    }
+}
+
+async function loadStaffStats() {
+    try {
+        const dateRange = getDateRange(currentDateFilter);
+        let url = '/api/field-visits/staff-stats?';
+        if (dateRange.from) url += `date_from=${dateRange.from}&`;
+        if (dateRange.to) url += `date_to=${dateRange.to}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        // Update summary cards
+        let totalVisits = 0, pendingVisits = 0, completedVisits = 0;
+        let totalTime = 0, timeCount = 0;
+
+        data.staff.forEach(s => {
+            totalVisits += s.total_visits;
+            pendingVisits += s.pending;
+            completedVisits += s.completed;
+            if (s.avg_time_minutes) {
+                totalTime += s.avg_time_minutes * s.completed;
+                timeCount += s.completed;
+            }
+        });
+
+        document.getElementById('totalVisits').textContent = totalVisits;
+        document.getElementById('pendingVisits').textContent = pendingVisits;
+        document.getElementById('completedVisits').textContent = completedVisits;
+        document.getElementById('avgTime').textContent = timeCount > 0
+            ? formatDuration(totalTime / timeCount)
+            : '--';
+
+        // Render staff table
+        const tbody = document.getElementById('staffTableBody');
+        if (data.staff.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No site visits found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.staff.map(s => `
+            <tr class="staff-row">
+                <td><strong>${s.assigned_to}</strong></td>
+                <td class="text-center">${s.total_visits}</td>
+                <td class="text-center visit-completed">${s.completed}</td>
+                <td class="text-center visit-pending">${s.pending}</td>
+                <td class="text-center">${s.avg_time_minutes ? formatDuration(s.avg_time_minutes) : '--'}</td>
+                <td class="text-center d-none d-md-table-cell">${s.min_time_minutes ? formatDuration(s.min_time_minutes) : '--'}</td>
+                <td class="text-center d-none d-md-table-cell">${s.max_time_minutes ? formatDuration(s.max_time_minutes) : '--'}</td>
+            </tr>
+        `).join('');
+
+    } catch (error) {
+        console.error('Error loading staff stats:', error);
+    }
+}
+
+async function loadVisits() {
+    try {
+        const dateRange = getDateRange(currentDateFilter);
+        const staff = document.getElementById('staffFilter').value;
+        const status = document.getElementById('statusFilter').value;
+
+        let url = `/api/field-visits?limit=${pageSize}&offset=${(currentPage - 1) * pageSize}`;
+        if (dateRange.from) url += `&date_from=${dateRange.from}`;
+        if (dateRange.to) url += `&date_to=${dateRange.to}`;
+        if (staff) url += `&assigned_to=${encodeURIComponent(staff)}`;
+        if (status) url += `&status=${status}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        document.getElementById('visitsCount').textContent = data.total;
+
+        const tbody = document.getElementById('visitsTableBody');
+        if (data.visits.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No visits found</td></tr>';
+            document.getElementById('pagination').innerHTML = '';
+            return;
+        }
+
+        tbody.innerHTML = data.visits.map(v => {
+            const providerClass = v.service_provider ? `provider-${v.service_provider.toLowerCase()}` : '';
+            const statusClass = v.status === 'completed' ? 'visit-completed' : 'visit-pending';
+            const timeClass = getTimeClass(v.time_taken_minutes);
+
+            return `
+                <tr>
+                    <td>${v.visit_date || '--'}</td>
+                    <td><span class="time-badge">${v.scheduled_time || '--'}</span></td>
+                    <td><strong>${v.assigned_to || '--'}</strong></td>
+                    <td class="d-none d-md-table-cell">
+                        ${v.service_provider ? `<span class="provider-badge ${providerClass}">${v.service_provider}</span>` : '--'}
+                    </td>
+                    <td class="d-none d-md-table-cell">${v.site_type || '--'}</td>
+                    <td><span class="${statusClass}"><i class="bi bi-${v.status === 'completed' ? 'check-circle' : 'hourglass-split'} me-1"></i>${v.status}</span></td>
+                    <td class="text-center">
+                        ${v.time_taken_minutes !== null
+                            ? `<span class="time-badge ${timeClass}">${formatDuration(v.time_taken_minutes)}</span>`
+                            : '--'}
+                    </td>
+                    <td class="text-center">
+                        ${v.znuny_url
+                            ? `<a href="${v.znuny_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-1" title="Open in Znuny"><i class="bi bi-box-arrow-up-right"></i></a>`
+                            : '--'}
+                    </td>
+                    <td class="text-center">
+                        ${isAdmin() ? `<button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="openEditModal(${v.id}, '${v.visit_date || ''}', '${v.scheduled_time || ''}', '${v.assigned_to || ''}', '${v.status || 'pending'}')" title="Edit"><i class="bi bi-pencil"></i></button>` : ''}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        // Render pagination
+        renderPagination(data.total);
+
+    } catch (error) {
+        console.error('Error loading visits:', error);
+    }
+}
+
+function getTimeClass(minutes) {
+    if (minutes === null) return '';
+    if (minutes <= 60) return 'time-short';
+    if (minutes <= 240) return 'time-medium';
+    return 'time-long';
+}
+
+function formatDuration(minutes) {
+    if (minutes === null || minutes === undefined) return '--';
+    if (minutes < 60) return `${Math.round(minutes)}m`;
+    const hours = Math.floor(minutes / 60);
+    const mins = Math.round(minutes % 60);
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+function renderPagination(total) {
+    const totalPages = Math.ceil(total / pageSize);
+    if (totalPages <= 1) {
+        document.getElementById('pagination').innerHTML = '';
+        return;
+    }
+
+    let html = '<nav><ul class="pagination pagination-sm mb-0 justify-content-center">';
+
+    // Previous
+    html += `<li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+        <a class="page-link" href="#" onclick="goToPage(${currentPage - 1}); return false;">Prev</a>
+    </li>`;
+
+    // Pages
+    for (let i = 1; i <= Math.min(5, totalPages); i++) {
+        html += `<li class="page-item ${currentPage === i ? 'active' : ''}">
+            <a class="page-link" href="#" onclick="goToPage(${i}); return false;">${i}</a>
+        </li>`;
+    }
+
+    // Next
+    html += `<li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+        <a class="page-link" href="#" onclick="goToPage(${currentPage + 1}); return false;">Next</a>
+    </li>`;
+
+    html += '</ul></nav>';
+    document.getElementById('pagination').innerHTML = html;
+}
+
+function goToPage(page) {
+    currentPage = page;
+    loadVisits();
+}
+
+function refreshData() {
+    loadStaffStats();
+    loadVisits();
+}
+
+async function syncSiteVisits() {
+    const btn = document.getElementById('syncBtn');
+    const originalContent = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Syncing...';
+    btn.disabled = true;
+
+    try {
+        const response = await fetch('/api/field-visits/sync', { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`Sync complete!\n\n` +
+                  `Znuny tickets found: ${data.znuny_tickets_found}\n` +
+                  `Site visits extracted: ${data.site_visits_extracted}\n` +
+                  `Linked to ISP tickets: ${data.site_visits_linked}\n` +
+                  `ISP tickets synced: ${data.isp_tickets_synced}`);
+            refreshData();
+            loadAssignedStaff();
+        } else {
+            alert('Sync failed: ' + (data.detail || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error syncing:', error);
+        alert('Error syncing site visits');
+    } finally {
+        btn.innerHTML = originalContent;
+        btn.disabled = false;
+    }
+}
+
+// Admin check
+function isAdmin() {
+    return sessionStorage.getItem('adminLoggedIn') === 'true';
+}
+
+// Edit modal functions
+let editModal = null;
+
+function openEditModal(visitId, visitDate, scheduledTime, assignedTo, status) {
+    if (!isAdmin()) {
+        alert('Admin login required to edit site visits.\nPlease login from the Admin tab first.');
+        return;
+    }
+
+    // Initialize modal if not already
+    if (!editModal) {
+        editModal = new bootstrap.Modal(document.getElementById('editVisitModal'));
+    }
+
+    // Populate form fields
+    document.getElementById('editVisitId').value = visitId;
+    document.getElementById('editVisitDate').value = visitDate;
+    document.getElementById('editScheduledTime').value = scheduledTime;
+    document.getElementById('editStatus').value = status;
+
+    // Populate assigned to dropdown
+    const assignedSelect = document.getElementById('editAssignedTo');
+    const staffOptions = document.getElementById('staffFilter').innerHTML;
+    assignedSelect.innerHTML = staffOptions;
+    assignedSelect.value = assignedTo;
+
+    editModal.show();
+}
+
+async function saveVisitEdit() {
+    if (!isAdmin()) {
+        alert('Admin login required.');
+        return;
+    }
+
+    const visitId = document.getElementById('editVisitId').value;
+    const scheduledTime = document.getElementById('editScheduledTime').value;
+    const assignedTo = document.getElementById('editAssignedTo').value;
+    const status = document.getElementById('editStatus').value;
+
+    try {
+        const response = await fetch(`/api/field-visits/${visitId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                scheduled_time: scheduledTime,
+                assigned_to: assignedTo || null,
+                status: status
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            editModal.hide();
+            refreshData();
+        } else {
+            alert('Failed to save changes: ' + (data.detail || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error saving visit:', error);
+        alert('Error saving changes');
+    }
+}
+{% endblock %}

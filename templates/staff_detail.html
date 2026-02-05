@@ -367,12 +367,19 @@ function renderTickets(tickets) {
         let timeClass = 'ticket-time-good';
         let timeText = '-';
 
-        if (t.created_at && t.znuny_created_at) {
-            const diff = (new Date(t.znuny_created_at) - new Date(t.created_at)) / 60000;
-            if (diff <= 5) timeClass = 'ticket-time-good';
-            else if (diff <= 10) timeClass = 'ticket-time-warning';
-            else timeClass = 'ticket-time-bad';
-            timeText = formatTimeDiff(diff * 60000);
+        // Use pre-calculated time_to_create_minutes from server (handles timezone correctly)
+        if (t.time_to_create_minutes !== null && t.time_to_create_minutes !== undefined) {
+            const diff = t.time_to_create_minutes;
+            if (diff < 0) {
+                // Negative time - data issue
+                timeClass = 'ticket-time-bad';
+                timeText = '-';
+            } else {
+                if (diff <= 5) timeClass = 'ticket-time-good';
+                else if (diff <= 10) timeClass = 'ticket-time-warning';
+                else timeClass = 'ticket-time-bad';
+                timeText = formatTimeDiff(diff * 60000);
+            }
         }
 
         return `

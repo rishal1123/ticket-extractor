@@ -9,6 +9,9 @@
 <button class="btn btn-warning btn-sm" onclick="triggerExtraction()" id="triggerBtn">
     <i class="bi bi-play-fill me-1"></i><span class="d-none d-sm-inline">Run Now</span>
 </button>
+<button class="btn btn-outline-danger btn-sm ms-1" onclick="adminLogout()" title="Logout">
+    <i class="bi bi-box-arrow-right"></i>
+</button>
 {% endblock %}
 
 {% block extra_css %}
@@ -110,6 +113,31 @@
 {% endblock %}
 
 {% block content %}
+<!-- Admin Login Overlay -->
+<div id="adminLoginOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style="background: rgba(255,255,255,0.95); z-index: 1050; display: none !important;">
+    <div class="card shadow" style="max-width: 400px; width: 100%;">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-shield-lock me-2"></i>Admin Login</h5>
+        </div>
+        <div class="card-body">
+            <form id="adminLoginForm" onsubmit="submitAdminLogin(event)">
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-control" id="adminPassword" required autofocus>
+                    <div class="form-text">Enter admin password to access settings</div>
+                </div>
+                <div id="loginError" class="alert alert-danger d-none mb-3"></div>
+                <button type="submit" class="btn btn-primary w-100" id="loginBtn">
+                    <i class="bi bi-box-arrow-in-right me-1"></i>Login
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Admin Content (hidden until login) -->
+<div id="adminContent" style="display: none;">
+
 <!-- Tab Navigation -->
 <ul class="nav nav-tabs mb-3" id="adminTabs" role="tablist">
     <li class="nav-item" role="presentation">
@@ -517,6 +545,101 @@
                 </div>
             </div>
         </div>
+
+        <!-- Performance Thresholds -->
+        <div class="col-12">
+            <div class="config-section">
+                <h6><i class="bi bi-speedometer2 me-1"></i>Performance Thresholds (Time to Create)</h6>
+                <p class="text-muted small mb-3">Define time thresholds (in minutes) for staff performance color coding. Tickets created within each threshold will be displayed with the corresponding color.</p>
+                <div class="row g-3">
+                    <div class="col-6 col-md-3">
+                        <div class="card border-success">
+                            <div class="card-body p-2 text-center">
+                                <div class="text-success fw-bold mb-1"><i class="bi bi-check-circle me-1"></i>On Time</div>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">≤</span>
+                                    <input type="number" class="form-control text-center" id="perf_good" min="1" max="1440" value="5">
+                                    <span class="input-group-text">min</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="card border-warning">
+                            <div class="card-body p-2 text-center">
+                                <div class="text-warning fw-bold mb-1"><i class="bi bi-exclamation-circle me-1"></i>Warning</div>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">≤</span>
+                                    <input type="number" class="form-control text-center" id="perf_warning" min="1" max="1440" value="10">
+                                    <span class="input-group-text">min</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="card border-danger" style="border-color: #fd7e14 !important;">
+                            <div class="card-body p-2 text-center">
+                                <div class="fw-bold mb-1" style="color: #fd7e14;"><i class="bi bi-clock-history me-1"></i>Late</div>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">≤</span>
+                                    <input type="number" class="form-control text-center" id="perf_bad" min="1" max="1440" value="30">
+                                    <span class="input-group-text">min</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="card border-danger">
+                            <div class="card-body p-2 text-center">
+                                <div class="text-danger fw-bold mb-1"><i class="bi bi-x-circle me-1"></i>Critical</div>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">></span>
+                                    <input type="number" class="form-control text-center" id="perf_critical" min="1" max="1440" value="60">
+                                    <span class="input-group-text">min</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3 text-muted small">
+                    <strong>Legend:</strong>
+                    <span class="badge bg-success me-2">On Time</span> ≤ Good threshold
+                    <span class="badge bg-warning text-dark me-2">Warning</span> Good to Warning
+                    <span class="badge me-2" style="background: #fd7e14;">Late</span> Warning to Late
+                    <span class="badge bg-danger">Critical</span> > Critical threshold
+                </div>
+            </div>
+        </div>
+
+        <!-- Security Settings -->
+        <div class="col-12 col-md-6">
+            <div class="config-section">
+                <h6><i class="bi bi-shield-lock me-1"></i>Security</h6>
+                <div class="mb-2">
+                    <label class="form-label small">Current Password</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="currentPassword">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('currentPassword')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">New Password</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="newPassword">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('newPassword')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="mb-0">
+                    <button class="btn btn-outline-primary btn-sm" onclick="changeAdminPassword()">
+                        <i class="bi bi-key me-1"></i>Change Password
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="alert alert-warning mt-3 mb-0">
@@ -526,6 +649,8 @@
 </div><!-- End Config Tab -->
 
 </div><!-- End Tab Content -->
+
+</div><!-- End Admin Content -->
 {% endblock %}
 
 {% block script %}
@@ -535,9 +660,106 @@ let currentLogPage = 0;
 const logPageSize = 50;
 
 document.addEventListener('DOMContentLoaded', function() {
+    checkAdminLogin();
+});
+
+function checkAdminLogin() {
+    const isLoggedIn = sessionStorage.getItem('adminLoggedIn') === 'true';
+    if (isLoggedIn) {
+        showAdminContent();
+    } else {
+        showLoginForm();
+    }
+}
+
+function showLoginForm() {
+    document.getElementById('adminLoginOverlay').style.display = 'flex';
+    document.getElementById('adminContent').style.display = 'none';
+    document.getElementById('adminPassword').focus();
+}
+
+function showAdminContent() {
+    document.getElementById('adminLoginOverlay').style.display = 'none';
+    document.getElementById('adminContent').style.display = 'block';
     refreshAll();
     refreshInterval = setInterval(refreshAll, 30000);
-});
+}
+
+async function submitAdminLogin(e) {
+    e.preventDefault();
+    const password = document.getElementById('adminPassword').value;
+    const btn = document.getElementById('loginBtn');
+    const errorDiv = document.getElementById('loginError');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split spinning me-1"></i>Verifying...';
+    errorDiv.classList.add('d-none');
+
+    try {
+        const response = await fetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            sessionStorage.setItem('adminLoggedIn', 'true');
+            showAdminContent();
+        } else {
+            errorDiv.textContent = data.message || 'Invalid password';
+            errorDiv.classList.remove('d-none');
+            document.getElementById('adminPassword').value = '';
+            document.getElementById('adminPassword').focus();
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Error connecting to server';
+        errorDiv.classList.remove('d-none');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-box-arrow-in-right me-1"></i>Login';
+    }
+}
+
+function adminLogout() {
+    sessionStorage.removeItem('adminLoggedIn');
+    clearInterval(refreshInterval);
+    showLoginForm();
+}
+
+async function changeAdminPassword() {
+    const currentPassword = document.getElementById('currentPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+
+    if (!currentPassword || !newPassword) {
+        alert('Please enter both current and new password');
+        return;
+    }
+
+    if (newPassword.length < 4) {
+        alert('New password must be at least 4 characters');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/admin/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            alert('Password changed successfully!');
+            document.getElementById('currentPassword').value = '';
+            document.getElementById('newPassword').value = '';
+        } else {
+            alert('Failed: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
 
 async function refreshAll() {
     await Promise.all([
@@ -904,6 +1126,7 @@ document.getElementById('config-tab').addEventListener('shown.bs.tab', function(
 
 async function loadConfig() {
     try {
+        // Load portal configs
         const response = await fetch('/api/config');
         const data = await response.json();
 
@@ -914,6 +1137,17 @@ async function loadConfig() {
                     el.value = data.config[key] || '';
                 }
             });
+        }
+
+        // Load performance thresholds
+        const threshResponse = await fetch('/api/settings/performance-thresholds');
+        const threshData = await threshResponse.json();
+
+        if (threshData.thresholds) {
+            document.getElementById('perf_good').value = threshData.thresholds.good || 5;
+            document.getElementById('perf_warning').value = threshData.thresholds.warning || 10;
+            document.getElementById('perf_bad').value = threshData.thresholds.bad || 30;
+            document.getElementById('perf_critical').value = threshData.thresholds.critical || 60;
         }
     } catch (error) {
         console.error('Error loading config:', error);
@@ -927,6 +1161,7 @@ async function saveConfig() {
     btn.innerHTML = '<i class="bi bi-hourglass-split spinning me-1"></i>Saving...';
 
     try {
+        // Save portal configs
         const config = {};
         configKeys.forEach(key => {
             const el = document.getElementById('cfg_' + key);
@@ -943,10 +1178,26 @@ async function saveConfig() {
 
         const data = await response.json();
 
-        if (data.success) {
+        // Save performance thresholds
+        const thresholds = {
+            good: parseInt(document.getElementById('perf_good').value) || 5,
+            warning: parseInt(document.getElementById('perf_warning').value) || 10,
+            bad: parseInt(document.getElementById('perf_bad').value) || 30,
+            critical: parseInt(document.getElementById('perf_critical').value) || 60
+        };
+
+        const threshResponse = await fetch('/api/settings/performance-thresholds', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(thresholds)
+        });
+
+        const threshData = await threshResponse.json();
+
+        if (data.success && threshData.success) {
             alert('Configuration saved successfully!\n\nNote: Some changes may require a server restart.');
         } else {
-            alert('Failed to save: ' + (data.message || 'Unknown error'));
+            alert('Failed to save: ' + (data.message || threshData.message || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving config:', error);

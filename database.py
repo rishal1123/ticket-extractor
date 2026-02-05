@@ -239,6 +239,53 @@ class Database:
                 )
             """)
 
+            # Site visits table for tracking OAN site visit articles
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS site_visits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id INTEGER,
+                    znuny_ticket_id TEXT NOT NULL,
+                    article_id INTEGER,
+                    site_type TEXT,
+                    service_provider TEXT,
+                    scheduled_time TEXT,
+                    assigned_to TEXT,
+                    visit_date DATE,
+                    article_created_at DATETIME,
+                    ticket_completed_at DATETIME,
+                    time_taken_minutes INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ticket_id) REFERENCES tickets(id),
+                    UNIQUE(znuny_ticket_id, article_id)
+                )
+            """)
+
+            # App settings table for configurable parameters
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    description TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Insert default settings if not exist
+            default_settings = [
+                ('perf_threshold_good', '5', 'Time in minutes considered "on time" (green)'),
+                ('perf_threshold_warning', '10', 'Time in minutes considered "warning" (yellow)'),
+                ('perf_threshold_bad', '30', 'Time in minutes considered "late" (orange)'),
+                ('perf_threshold_critical', '60', 'Time in minutes considered "critical" (red)'),
+                ('admin_password', 'admin123', 'Password for admin panel access'),
+            ]
+            for key, value, desc in default_settings:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO app_settings (key, value, description)
+                    VALUES (?, ?, ?)
+                """, (key, value, desc))
+
             # Performance indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal ON tickets(portal)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_completed ON tickets(completed_at)")
@@ -253,6 +300,15 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_source ON system_logs(source)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_assigned ON site_visits(assigned_to)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_date ON site_visits(visit_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_status ON site_visits(status)")
+
+            # Migration: Add znuny_url to site_visits
+            try:
+                cursor.execute("ALTER TABLE site_visits ADD COLUMN znuny_url TEXT")
+            except:
+                pass  # Column already exists
 
             logger.info("Database initialized successfully")
 
@@ -392,6 +448,17 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,))
+            row = cursor.fetchone()
+            return self._row_to_ticket(row) if row else None
+
+    def get_ticket_by_portal_id(self, portal: str, portal_ticket_id: str) -> Optional[Ticket]:
+        """Find a ticket by portal name and portal's ticket ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM tickets WHERE portal = ? AND (ticket_id = ? OR account = ?)",
+                (portal, portal_ticket_id, portal_ticket_id)
+            )
             row = cursor.fetchone()
             return self._row_to_ticket(row) if row else None
 
@@ -564,12 +631,36 @@ class Database:
             cursor = conn.cursor()
             now = now_maldives()
             placeholders = ",".join("?" * len(ticket_ids))
+
+            # First get znuny_ticket_ids for tickets being completed (for site visit completion)
+            cursor.execute(f"""
+                SELECT znuny_ticket_id FROM tickets
+                WHERE portal = ? AND ticket_id IN ({placeholders})
+                    AND status != 'Complete' AND znuny_ticket_id IS NOT NULL
+            """, [portal] + list(ticket_ids))
+            znuny_ids = [row["znuny_ticket_id"] for row in cursor.fetchall()]
+
+            # Mark tickets as complete
             cursor.execute(f"""
                 UPDATE tickets
                 SET status = 'Complete', updated_at = ?, completed_at = ?
                 WHERE portal = ? AND ticket_id IN ({placeholders}) AND status != 'Complete'
             """, [now, now, portal] + list(ticket_ids))
             count = cursor.rowcount
+
+            # Also complete any pending site visits for these tickets
+            for znuny_id in znuny_ids:
+                cursor.execute("""
+                    UPDATE site_visits
+                    SET ticket_completed_at = ?,
+                        status = 'completed',
+                        time_taken_minutes = CAST(
+                            (julianday(?) - julianday(article_created_at)) * 24 * 60 AS INTEGER
+                        ),
+                        updated_at = ?
+                    WHERE znuny_ticket_id = ? AND status = 'pending'
+                """, (now, now, now, znuny_id))
+
             if count > 0:
                 logger.info(f"Marked {count} tickets as complete for {portal}")
             return count
@@ -753,14 +844,21 @@ class Database:
                 }
             }
 
-    def get_staff_detailed_stats(self, date_from: str = None, date_to: str = None) -> dict:
+    def get_staff_detailed_stats(self, date_from: str = None, date_to: str = None, thresholds: dict = None) -> dict:
         """Get detailed staff statistics including on-time percentages."""
+        # Use default thresholds if not provided
+        if thresholds is None:
+            thresholds = {"good": 5, "warning": 10, "bad": 30, "critical": 60}
+
+        t_good = thresholds.get("good", 5)
+        t_warning = thresholds.get("warning", 10)
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
             # Build date filter
             date_filter = ""
-            params = []
+            params = [t_good, t_good, t_warning, t_warning]
             if date_from:
                 date_filter += " AND DATE(znuny_created_at) >= ?"
                 params.append(date_from)
@@ -768,27 +866,28 @@ class Database:
                 date_filter += " AND DATE(znuny_created_at) <= ?"
                 params.append(date_to)
 
-            # Get tickets with time-to-create calculation
+            # Get tickets with time-to-create calculation (ignore negative times)
             cursor.execute(f"""
                 SELECT
                     znuny_created_by as staff,
                     COUNT(*) as total_tickets,
                     SUM(CASE WHEN
-                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 <= 5
-                        THEN 1 ELSE 0 END) as within_5min,
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 <= ?
+                        THEN 1 ELSE 0 END) as within_good,
                     SUM(CASE WHEN
-                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 > 5
-                        AND (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 <= 10
-                        THEN 1 ELSE 0 END) as within_10min,
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 > ?
+                        AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 <= ?
+                        THEN 1 ELSE 0 END) as within_warning,
                     SUM(CASE WHEN
-                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 > 10
-                        THEN 1 ELSE 0 END) as over_10min,
-                    AVG((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as avg_minutes
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 > ?
+                        THEN 1 ELSE 0 END) as over_warning,
+                    AVG((julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60) as avg_minutes
                 FROM tickets
                 WHERE znuny_created_by IS NOT NULL
                     AND znuny_created_by != ''
                     AND znuny_created_at IS NOT NULL
                     AND created_at IS NOT NULL
+                    AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) >= 0
                     {date_filter}
                 GROUP BY znuny_created_by
             """, params)
@@ -797,11 +896,11 @@ class Database:
             for row in cursor.fetchall():
                 staff_tickets[row["staff"]] = {
                     "tickets_created": row["total_tickets"],
-                    "within_5min": row["within_5min"] or 0,
-                    "within_10min": row["within_10min"] or 0,
-                    "over_10min": row["over_10min"] or 0,
+                    "within_5min": row["within_good"] or 0,
+                    "within_10min": row["within_warning"] or 0,
+                    "over_10min": row["over_warning"] or 0,
                     "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0,
-                    "on_time_pct": round((row["within_5min"] or 0) / row["total_tickets"] * 100, 1) if row["total_tickets"] > 0 else 0
+                    "on_time_pct": round((row["within_good"] or 0) / row["total_tickets"] * 100, 1) if row["total_tickets"] > 0 else 0
                 }
 
             # Get articles count
@@ -868,9 +967,13 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Build query
+            # Build query with calculated time_to_create_minutes
             query = """
-                SELECT * FROM tickets
+                SELECT *,
+                    CASE WHEN znuny_created_at IS NOT NULL AND created_at IS NOT NULL
+                         THEN (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60
+                         ELSE NULL END as time_to_create_minutes
+                FROM tickets
                 WHERE znuny_created_by = ?
             """
             params = [staff_name]
@@ -883,8 +986,11 @@ class Database:
                 params.append(date_to)
 
             # Get total count
-            count_query = query.replace("SELECT *", "SELECT COUNT(*)")
-            cursor.execute(count_query, params)
+            count_query = query.replace("SELECT *,", "SELECT COUNT(*) FROM (SELECT *,").replace("FROM tickets", "FROM tickets) sub")
+            cursor.execute(count_query.split("FROM (SELECT")[0] + " FROM tickets WHERE znuny_created_by = ?" +
+                          (" AND DATE(znuny_created_at) >= ?" if date_from else "") +
+                          (" AND DATE(znuny_created_at) <= ?" if date_to else ""),
+                          params[:len([p for p in [staff_name, date_from, date_to] if p])])
             total = cursor.fetchone()[0]
 
             # Get tickets with pagination
@@ -892,7 +998,14 @@ class Database:
             params.extend([limit, offset])
             cursor.execute(query, params)
 
-            tickets = [self._row_to_ticket(row) for row in cursor.fetchall()]
+            # Convert rows to tickets with time_to_create_minutes
+            tickets = []
+            for row in cursor.fetchall():
+                ticket = self._row_to_ticket(row)
+                # Add pre-calculated time_to_create_minutes
+                time_minutes = row["time_to_create_minutes"]
+                ticket.time_to_create_minutes = round(time_minutes, 1) if time_minutes is not None else None
+                tickets.append(ticket)
 
             return {
                 "staff_name": staff_name,
@@ -900,8 +1013,13 @@ class Database:
                 "tickets": tickets
             }
 
-    def get_staff_performance_trend(self, staff_name: str, days: int = 30) -> list:
+    def get_staff_performance_trend(self, staff_name: str, days: int = 30, thresholds: dict = None) -> list:
         """Get daily performance trend for a staff member."""
+        # Use default threshold if not provided
+        if thresholds is None:
+            thresholds = self.get_performance_thresholds()
+        t_good = thresholds.get("good", 5)
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -910,23 +1028,24 @@ class Database:
                     DATE(znuny_created_at) as date,
                     COUNT(*) as tickets_created,
                     SUM(CASE WHEN
-                        (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 <= 5
-                        THEN 1 ELSE 0 END) as within_5min,
-                    AVG((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as avg_minutes
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 <= ?
+                        THEN 1 ELSE 0 END) as within_good,
+                    AVG((julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60) as avg_minutes
                 FROM tickets
                 WHERE znuny_created_by = ?
                     AND znuny_created_at IS NOT NULL
                     AND created_at IS NOT NULL
+                    AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) >= 0
                     AND DATE(znuny_created_at) >= DATE('now', ? || ' days')
                 GROUP BY DATE(znuny_created_at)
                 ORDER BY date DESC
-            """, (staff_name, -days))
+            """, (t_good, staff_name, -days))
 
             return [{
                 "date": row["date"],
                 "tickets_created": row["tickets_created"],
-                "within_5min": row["within_5min"] or 0,
-                "on_time_pct": round((row["within_5min"] or 0) / row["tickets_created"] * 100, 1) if row["tickets_created"] > 0 else 0,
+                "within_5min": row["within_good"] or 0,
+                "on_time_pct": round((row["within_good"] or 0) / row["tickets_created"] * 100, 1) if row["tickets_created"] > 0 else 0,
                 "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0
             } for row in cursor.fetchall()]
 
@@ -940,14 +1059,14 @@ class Database:
                 SELECT
                     znuny_created_by as staff,
                     COUNT(*) as delayed_count,
-                    AVG((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as avg_delay,
-                    MAX((julianday(znuny_created_at) - julianday(created_at)) * 24 * 60) as max_delay
+                    AVG((julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60) as avg_delay,
+                    MAX((julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60) as max_delay
                 FROM tickets
                 WHERE znuny_created_by IS NOT NULL
                     AND znuny_created_by != ''
                     AND znuny_created_at IS NOT NULL
                     AND created_at IS NOT NULL
-                    AND (julianday(znuny_created_at) - julianday(created_at)) * 24 * 60 > ?
+                    AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 > ?
             """
             params = [min_delay_minutes]
 
@@ -991,6 +1110,241 @@ class Database:
             lines.append(f"{s['name']},{s['tickets_created']},{s['within_5min']},{s['within_10min']},{s['over_10min']},{s['on_time_pct']},{s['avg_minutes']},{s['articles_count']},{s['tickets_updated']}")
 
         return "\n".join(lines)
+
+    # ==================== Site Visits ====================
+
+    def upsert_site_visit(self, znuny_ticket_id: str, article_id: int, site_type: str,
+                          service_provider: str, scheduled_time: str, assigned_to: str,
+                          visit_date: str, article_created_at: datetime,
+                          ticket_id: int = None, znuny_url: str = None) -> int:
+        """Insert or update a site visit record."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO site_visits
+                    (ticket_id, znuny_ticket_id, article_id, site_type, service_provider,
+                     scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(znuny_ticket_id, article_id) DO UPDATE SET
+                    site_type = excluded.site_type,
+                    service_provider = excluded.service_provider,
+                    scheduled_time = excluded.scheduled_time,
+                    assigned_to = excluded.assigned_to,
+                    visit_date = excluded.visit_date,
+                    article_created_at = excluded.article_created_at,
+                    znuny_url = excluded.znuny_url,
+                    updated_at = excluded.updated_at
+            """, (ticket_id, znuny_ticket_id, article_id, site_type, service_provider,
+                  scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, now_maldives()))
+            return cursor.lastrowid
+
+    def update_site_visit_completion(self, znuny_ticket_id: str, completed_at: datetime):
+        """Update site visits when ticket is completed."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE site_visits
+                SET ticket_completed_at = ?,
+                    status = 'completed',
+                    time_taken_minutes = CAST(
+                        (julianday(?) - julianday(article_created_at)) * 24 * 60 AS INTEGER
+                    ),
+                    updated_at = ?
+                WHERE znuny_ticket_id = ? AND status = 'pending'
+            """, (completed_at, completed_at, now_maldives(), znuny_ticket_id))
+
+    def complete_site_visit_by_followup(self, znuny_ticket_id: str, article_id: int,
+                                         followup_article_time: datetime):
+        """Mark a site visit as completed when a follow-up article is found."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Only complete if there's a pending site visit with this article_id
+            # and the followup article is after the site visit article
+            cursor.execute("""
+                UPDATE site_visits
+                SET ticket_completed_at = ?,
+                    status = 'completed',
+                    time_taken_minutes = CAST(
+                        (julianday(?) - julianday(article_created_at)) * 24 * 60 AS INTEGER
+                    ),
+                    updated_at = ?
+                WHERE znuny_ticket_id = ? AND article_id = ? AND status = 'pending'
+            """, (followup_article_time, followup_article_time, now_maldives(),
+                  znuny_ticket_id, article_id))
+            return cursor.rowcount > 0
+
+    def get_pending_site_visits_for_ticket(self, znuny_ticket_id: str) -> list:
+        """Get pending site visits for a Znuny ticket."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, article_id, article_created_at, assigned_to
+                FROM site_visits
+                WHERE znuny_ticket_id = ? AND status = 'pending'
+            """, (znuny_ticket_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_site_visits_for_ticket(self, ticket_id: int) -> list:
+        """Get all site visits for a ticket (by internal ticket_id)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM site_visits
+                WHERE ticket_id = ?
+                ORDER BY visit_date DESC, scheduled_time DESC
+            """, (ticket_id,))
+            return [{
+                "id": row["id"],
+                "znuny_ticket_id": row["znuny_ticket_id"],
+                "article_id": row["article_id"],
+                "site_type": row["site_type"],
+                "service_provider": row["service_provider"],
+                "scheduled_time": row["scheduled_time"],
+                "assigned_to": row["assigned_to"],
+                "visit_date": row["visit_date"],
+                "article_created_at": row["article_created_at"],
+                "ticket_completed_at": row["ticket_completed_at"],
+                "time_taken_minutes": row["time_taken_minutes"],
+                "status": row["status"],
+                "znuny_url": row["znuny_url"]
+            } for row in cursor.fetchall()]
+
+    def get_site_visits(self, date_from: str = None, date_to: str = None,
+                        assigned_to: str = None, status: str = None,
+                        limit: int = 100, offset: int = 0) -> dict:
+        """Get site visits with optional filters."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT sv.*, t.portal, t.address, t.customer_name, t.ticket_id as portal_ticket_id
+                FROM site_visits sv
+                LEFT JOIN tickets t ON sv.ticket_id = t.id
+                WHERE 1=1
+            """
+            params = []
+
+            if date_from:
+                query += " AND DATE(sv.visit_date) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(sv.visit_date) <= ?"
+                params.append(date_to)
+            if assigned_to:
+                query += " AND sv.assigned_to = ?"
+                params.append(assigned_to)
+            if status:
+                query += " AND sv.status = ?"
+                params.append(status)
+
+            # Get total count
+            count_query = query.replace("SELECT sv.*, t.portal, t.address, t.customer_name, t.ticket_id as portal_ticket_id", "SELECT COUNT(*)")
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+
+            # Get visits with pagination
+            query += " ORDER BY sv.visit_date DESC, sv.scheduled_time DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cursor.execute(query, params)
+
+            visits = []
+            for row in cursor.fetchall():
+                visits.append({
+                    "id": row["id"],
+                    "ticket_id": row["ticket_id"],
+                    "znuny_ticket_id": row["znuny_ticket_id"],
+                    "article_id": row["article_id"],
+                    "site_type": row["site_type"],
+                    "service_provider": row["service_provider"],
+                    "scheduled_time": row["scheduled_time"],
+                    "assigned_to": row["assigned_to"],
+                    "visit_date": row["visit_date"],
+                    "article_created_at": row["article_created_at"],
+                    "ticket_completed_at": row["ticket_completed_at"],
+                    "time_taken_minutes": row["time_taken_minutes"],
+                    "status": row["status"],
+                    "znuny_url": row["znuny_url"],
+                    "portal": row["portal"],
+                    "address": row["address"],
+                    "customer_name": row["customer_name"],
+                    "portal_ticket_id": row["portal_ticket_id"]
+                })
+
+            return {"total": total, "visits": visits}
+
+    def get_site_visit_staff_stats(self, date_from: str = None, date_to: str = None) -> list:
+        """Get site visit statistics by assigned staff."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT
+                    assigned_to,
+                    COUNT(*) as total_visits,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                    AVG(CASE WHEN time_taken_minutes IS NOT NULL THEN time_taken_minutes END) as avg_time,
+                    MIN(CASE WHEN time_taken_minutes IS NOT NULL THEN time_taken_minutes END) as min_time,
+                    MAX(CASE WHEN time_taken_minutes IS NOT NULL THEN time_taken_minutes END) as max_time
+                FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != ''
+            """
+            params = []
+
+            if date_from:
+                query += " AND DATE(visit_date) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(visit_date) <= ?"
+                params.append(date_to)
+
+            query += " GROUP BY assigned_to ORDER BY total_visits DESC"
+            cursor.execute(query, params)
+
+            return [{
+                "assigned_to": row["assigned_to"],
+                "total_visits": row["total_visits"],
+                "completed": row["completed"] or 0,
+                "pending": row["pending"] or 0,
+                "avg_time_minutes": round(row["avg_time"], 1) if row["avg_time"] else None,
+                "min_time_minutes": row["min_time"],
+                "max_time_minutes": row["max_time"]
+            } for row in cursor.fetchall()]
+
+    def get_site_visit_by_date(self, date_from: str = None, date_to: str = None) -> list:
+        """Get site visits aggregated by date."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT
+                    visit_date,
+                    COUNT(*) as total_visits,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                    AVG(CASE WHEN time_taken_minutes IS NOT NULL THEN time_taken_minutes END) as avg_time
+                FROM site_visits
+                WHERE visit_date IS NOT NULL
+            """
+            params = []
+
+            if date_from:
+                query += " AND DATE(visit_date) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(visit_date) <= ?"
+                params.append(date_to)
+
+            query += " GROUP BY visit_date ORDER BY visit_date DESC LIMIT 30"
+            cursor.execute(query, params)
+
+            return [{
+                "date": row["visit_date"],
+                "total_visits": row["total_visits"],
+                "completed": row["completed"] or 0,
+                "pending": row["pending"] or 0,
+                "avg_time_minutes": round(row["avg_time"], 1) if row["avg_time"] else None
+            } for row in cursor.fetchall()]
 
     def _row_to_ticket(self, row) -> Ticket:
         keys = row.keys()
@@ -1136,3 +1490,55 @@ class Database:
             deleted = cursor.rowcount
             logger.info(f"Cleared {deleted} system logs older than {days} days")
             return deleted
+
+    # ==================== App Settings ====================
+
+    def get_setting(self, key: str, default: str = None) -> str:
+        """Get a single setting value."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str, description: str = None):
+        """Set a single setting value."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if description:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO app_settings (key, value, description, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, (key, value, description, now_maldives()))
+            else:
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """, (key, value, now_maldives()))
+
+    def get_all_settings(self) -> dict:
+        """Get all settings as a dictionary."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT key, value, description FROM app_settings")
+            return {
+                row["key"]: {"value": row["value"], "description": row["description"]}
+                for row in cursor.fetchall()
+            }
+
+    def get_performance_thresholds(self) -> dict:
+        """Get performance threshold settings."""
+        return {
+            "good": int(self.get_setting("perf_threshold_good", "5")),
+            "warning": int(self.get_setting("perf_threshold_warning", "10")),
+            "bad": int(self.get_setting("perf_threshold_bad", "30")),
+            "critical": int(self.get_setting("perf_threshold_critical", "60"))
+        }
+
+    def set_performance_thresholds(self, good: int, warning: int, bad: int, critical: int):
+        """Set performance threshold settings."""
+        self.set_setting("perf_threshold_good", str(good))
+        self.set_setting("perf_threshold_warning", str(warning))
+        self.set_setting("perf_threshold_bad", str(bad))
+        self.set_setting("perf_threshold_critical", str(critical))

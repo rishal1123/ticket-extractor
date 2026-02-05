@@ -54,6 +54,78 @@ class ZnunyTicketDetails:
     articles: list[ZnunyArticle] = field(default_factory=list)
 
 
+@dataclass
+class SiteVisit:
+    """Represents a parsed OAN Site Visit from a Znuny article."""
+    znuny_ticket_id: str
+    article_number: int
+    article_created_at: datetime | None
+    site_type: str = ""
+    service_provider: str = ""
+    scheduled_time: str = ""  # HHMM or "now"
+    assigned_to: str = ""
+    visit_date: str = ""  # Date of the visit (from article date)
+
+
+def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> SiteVisit | None:
+    """
+    Parse an OAN Site Visit Arranged article to extract visit details.
+
+    Expected format in article body:
+    Site Type:  Fault ( no BB)
+    Service Provider: ooredoo
+    Time: 1130
+    Assigned to: @maah
+    """
+    # Check if this is a site visit article
+    if "OAN Site Visit Arranged" not in article.subject:
+        return None
+
+    body = article.body or ""
+
+    # Parse fields from body
+    site_type = ""
+    service_provider = ""
+    scheduled_time = ""
+    assigned_to = ""
+
+    # Site Type
+    site_match = re.search(r"Site Type:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+    if site_match:
+        site_type = site_match.group(1).strip()
+
+    # Service Provider
+    provider_match = re.search(r"Service Provider:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+    if provider_match:
+        service_provider = provider_match.group(1).strip()
+
+    # Time - can be HHMM format or "now"
+    time_match = re.search(r"Time:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+    if time_match:
+        scheduled_time = time_match.group(1).strip()
+
+    # Assigned to - usually starts with @
+    assigned_match = re.search(r"Assigned to:\s*@?(.+?)(?:\n|$)", body, re.IGNORECASE)
+    if assigned_match:
+        assigned_to = assigned_match.group(1).strip()
+
+    # Get visit date from article creation date
+    visit_date = ""
+    if article.created_at:
+        visit_date = article.created_at.strftime("%Y-%m-%d")
+
+    return SiteVisit(
+        znuny_ticket_id=znuny_ticket_id,
+        article_number=article.article_number,
+        article_created_at=article.created_at,
+        site_type=site_type,
+        service_provider=service_provider,
+        scheduled_time=scheduled_time,
+        assigned_to=assigned_to,
+        visit_date=visit_date
+    )
+
+
 class ZnunyClient:
     """Client for searching tickets in Znuny using Selenium."""
 
@@ -323,7 +395,7 @@ class ZnunyClient:
                 if created_match:
                     created_at_str = created_match.group(1)
                     try:
-                        created_at = datetime.strptime(created_at_str, "%m/%d/%Y %H:%M")
+                        created_at = datetime.strptime(created_at_str, "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
                     except ValueError:
                         pass
 
@@ -424,7 +496,7 @@ class ZnunyClient:
                     time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
                     if time_match:
                         try:
-                            article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M")
+                            article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
                         except ValueError:
                             pass
 
@@ -502,6 +574,80 @@ class ZnunyClient:
 
         logger.info(f"Fetched details for {len(details)} tickets")
         return details
+
+    def get_site_visit_tickets(self) -> list[dict]:
+        """
+        Get all tickets that have OAN Site Visit articles.
+        Searches for tickets with "OAN Site Visit" in the title.
+        Returns list of tickets with their details.
+        """
+        all_tickets = self.get_open_tickets()
+
+        if not all_tickets:
+            return []
+
+        # Filter for site visit tickets
+        site_visit_tickets = [
+            t for t in all_tickets
+            if "site visit" in t.get("title", "").lower()
+        ]
+
+        logger.info(f"Found {len(site_visit_tickets)} site visit tickets")
+        return site_visit_tickets
+
+    def extract_isp_ticket_id_from_title(self, title: str) -> dict:
+        """
+        Extract ISP portal ticket ID from a Znuny ticket title.
+        Returns dict with portal and ticket_id if found.
+
+        Common title formats:
+        - "Dhiraagu - New Service - TGR1A-802 / Service #: BB20213001 / Order ID: 0125858440"
+        - "Ooredoo - Relocation - H09-15-07 / 152402"
+        - "ROL - Fault - ROL250141"
+        """
+        result = {"portal": None, "ticket_id": None, "address": None}
+
+        title_lower = title.lower()
+
+        # Detect portal
+        if "dhiraagu" in title_lower:
+            result["portal"] = "dhiraagu"
+            # Extract Order ID or Service #
+            order_match = re.search(r"Order ID:\s*(\d+)", title, re.IGNORECASE)
+            if order_match:
+                result["ticket_id"] = order_match.group(1)
+            else:
+                service_match = re.search(r"Service #:\s*(\w+)", title, re.IGNORECASE)
+                if service_match:
+                    result["ticket_id"] = service_match.group(1)
+
+        elif "ooredoo" in title_lower:
+            result["portal"] = "ooredoo"
+            # Extract ticket number (usually at the end or after /)
+            ooredoo_match = re.search(r"/\s*(\d{5,})", title)
+            if ooredoo_match:
+                result["ticket_id"] = ooredoo_match.group(1)
+
+        elif "rol" in title_lower:
+            result["portal"] = "rol"
+            # Extract ROL ticket ID (format: ROL + digits)
+            rol_match = re.search(r"(ROL\d+)", title, re.IGNORECASE)
+            if rol_match:
+                result["ticket_id"] = rol_match.group(1)
+
+        elif "medianet" in title_lower:
+            result["portal"] = "medianet"
+            # Extract Medianet ticket ID
+            medianet_match = re.search(r"(SR-\d+|#\s*\d+)", title, re.IGNORECASE)
+            if medianet_match:
+                result["ticket_id"] = medianet_match.group(1).replace("#", "").strip()
+
+        # Try to extract address (usually between - and / or after specific patterns)
+        addr_match = re.search(r"-\s+([A-Z0-9]+-[A-Z0-9]+(?:-\d+)?)\s*[/|]", title)
+        if addr_match:
+            result["address"] = addr_match.group(1)
+
+        return result
 
     async def check_ticket_in_znuny(self, portal_ticket_id: str, customer_name: str = None) -> tuple[bool, str | None]:
         """
