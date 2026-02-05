@@ -415,6 +415,9 @@ class MedianetExtractor(BaseExtractor):
     def _parse_ticket_detail_page(self, board_status: str) -> Ticket | None:
         """Parse the ticket detail page and extract all information."""
         try:
+            # Capture the current URL (contains UUID for this ticket)
+            portal_url = self.browser.driver.current_url
+
             # Ticket number
             ticket_id = self._get_element_text(self.TICKET_NUMBER_SELECTOR)
             if not ticket_id:
@@ -530,7 +533,8 @@ class MedianetExtractor(BaseExtractor):
                 status=status,
                 kpi=priority,  # Using priority as KPI
                 notes=notes,
-                completed_at=completed_at  # Set for closed/resolved tickets
+                completed_at=completed_at,  # Set for closed/resolved tickets
+                portal_url=portal_url  # Direct URL to ticket detail page
             )
 
         except Exception as e:

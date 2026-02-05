@@ -85,7 +85,8 @@ class ZnunyService:
                 ticket_id,
                 znuny_created_at=details.created_at,
                 znuny_created_by=details.created_by,
-                znuny_address=details.address
+                znuny_address=details.address,
+                znuny_url=details.znuny_url
             )
 
             # Store articles
@@ -146,7 +147,8 @@ class ZnunyService:
                             ticket.id,
                             znuny_created_at=details.created_at,
                             znuny_created_by=details.created_by,
-                            znuny_address=details.address
+                            znuny_address=details.address,
+                            znuny_url=details.znuny_url
                         )
                         for article in details.articles:
                             self.db.upsert_znuny_article(

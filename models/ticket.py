@@ -25,6 +25,8 @@ class Ticket:
     znuny_created_at: Optional[datetime] = None  # When ticket was created in Znuny
     znuny_created_by: Optional[str] = None       # Staff who created ticket in Znuny
     znuny_address: Optional[str] = None          # Address from Znuny phone ticket
+    znuny_url: Optional[str] = None              # Direct URL to ticket in Znuny
+    portal_url: Optional[str] = None             # Direct URL to ticket in ISP portal
 
     def to_dict(self) -> dict:
         return {
@@ -47,7 +49,9 @@ class Ticket:
             "znuny_ticket_id": self.znuny_ticket_id,
             "znuny_created_at": self.znuny_created_at.isoformat() if self.znuny_created_at else None,
             "znuny_created_by": self.znuny_created_by,
-            "znuny_address": self.znuny_address
+            "znuny_address": self.znuny_address,
+            "znuny_url": self.znuny_url,
+            "portal_url": self.portal_url
         }
 
     @classmethod
@@ -92,5 +96,7 @@ class Ticket:
             znuny_ticket_id=data.get("znuny_ticket_id"),
             znuny_created_at=znuny_created_at,
             znuny_created_by=data.get("znuny_created_by"),
-            znuny_address=data.get("znuny_address")
+            znuny_address=data.get("znuny_address"),
+            znuny_url=data.get("znuny_url"),
+            portal_url=data.get("portal_url")
         )

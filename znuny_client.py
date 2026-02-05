@@ -50,6 +50,7 @@ class ZnunyTicketDetails:
     owner: str
     state: str
     address: str = ""  # Address from phone ticket or first article
+    znuny_url: str = ""  # Direct URL to ticket in Znuny
     articles: list[ZnunyArticle] = field(default_factory=list)
 
 
@@ -302,6 +303,9 @@ class ZnunyClient:
             self.driver.get(ticket_info["href"])
             time.sleep(2)
 
+            # Capture the ticket URL
+            znuny_url = self.driver.current_url
+
             # Parse ticket details from sidebar
             created_at = None
             created_at_str = ""
@@ -463,6 +467,7 @@ class ZnunyClient:
                 owner=owner,
                 state=state,
                 address=address,
+                znuny_url=znuny_url,
                 articles=articles
             )
 

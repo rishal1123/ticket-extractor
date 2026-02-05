@@ -34,6 +34,36 @@ def get_extractor_class(portal_name: str):
     return extractors.get(portal_name.lower())
 
 
+# Portal URL patterns for generating links
+PORTAL_URL_PATTERNS = {
+    "dhiraagu": "https://afas.dhiraagu.com.mv/orders/hdc/{ticket_id}?activeRelationManager=notes",
+    "ooredoo": "https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/{ticket_id}",
+    "rol": "https://support.rol.net.mv/staff/index.php?/Tickets/Ticket/View/{ticket_id}/inbox/55/-1/-1",
+    # Medianet uses UUID-based URLs that must be captured during extraction
+}
+
+
+def _generate_portal_url(ticket) -> str | None:
+    """Generate portal URL for a ticket if not already stored."""
+    # If URL is already stored (e.g., Medianet), use it
+    if ticket.portal_url:
+        return ticket.portal_url
+
+    # Generate URL from pattern for other portals
+    pattern = PORTAL_URL_PATTERNS.get(ticket.portal)
+    if pattern and ticket.ticket_id:
+        return pattern.format(ticket_id=ticket.ticket_id)
+
+    return None
+
+
+def ticket_to_dict_with_urls(ticket) -> dict:
+    """Convert ticket to dict with generated portal URL."""
+    data = ticket.to_dict()
+    data["portal_url"] = _generate_portal_url(ticket)
+    return data
+
+
 def run_portal_extraction():
     """Run extraction for all configured portals."""
     logger.info("Starting scheduled portal extraction")
@@ -114,7 +144,8 @@ def sync_znuny_for_tickets():
                         ticket.id,
                         znuny_created_at=details.created_at,
                         znuny_created_by=details.created_by,
-                        znuny_address=details.address
+                        znuny_address=details.address,
+                        znuny_url=details.znuny_url
                     )
                     for article in details.articles:
                         sync_db.upsert_znuny_article(
@@ -344,7 +375,7 @@ async def get_tickets(
 
         return JSONResponse(content={
             "total": total,
-            "tickets": [t.to_dict() for t in tickets]
+            "tickets": [ticket_to_dict_with_urls(t) for t in tickets]
         })
     except Exception as e:
         logger.error(f"Error getting tickets: {e}")
@@ -362,7 +393,7 @@ async def get_ticket(ticket_id: int):
         notes_history = db.get_ticket_notes_history(ticket_id)
 
         return JSONResponse(content={
-            "ticket": ticket.to_dict(),
+            "ticket": ticket_to_dict_with_urls(ticket),
             "notes_history": notes_history
         })
     except HTTPException:
@@ -617,7 +648,8 @@ async def sync_znuny_details():
                         ticket.id,
                         znuny_created_at=details.created_at,
                         znuny_created_by=details.created_by,
-                        znuny_address=details.address
+                        znuny_address=details.address,
+                        znuny_url=details.znuny_url
                     )
 
                     # Store articles
@@ -680,7 +712,8 @@ async def sync_single_ticket_znuny(ticket_id: int):
             ticket.id,
             znuny_created_at=details.created_at,
             znuny_created_by=details.created_by,
-            znuny_address=details.address
+            znuny_address=details.address,
+            znuny_url=details.znuny_url
         )
 
         # Store articles
@@ -792,7 +825,7 @@ async def get_staff_tickets(
         return JSONResponse(content={
             "staff_name": result["staff_name"],
             "total": result["total"],
-            "tickets": [t.to_dict() for t in result["tickets"]]
+            "tickets": [ticket_to_dict_with_urls(t) for t in result["tickets"]]
         })
     except Exception as e:
         logger.error(f"Error getting staff tickets: {e}")

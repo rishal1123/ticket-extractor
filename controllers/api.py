@@ -364,6 +364,29 @@ async def update_config(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Portal URL patterns for generating links
+PORTAL_URL_PATTERNS = {
+    "dhiraagu": "https://afas.dhiraagu.com.mv/orders/hdc/{ticket_id}?activeRelationManager=notes",
+    "ooredoo": "https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/{ticket_id}",
+    "rol": "https://support.rol.net.mv/staff/index.php?/Tickets/Ticket/View/{ticket_id}/inbox/55/-1/-1",
+    # Medianet uses UUID-based URLs that must be captured during extraction
+}
+
+
+def _generate_portal_url(ticket) -> str | None:
+    """Generate portal URL for a ticket if not already stored."""
+    # If URL is already stored (e.g., Medianet), use it
+    if ticket.portal_url:
+        return ticket.portal_url
+
+    # Generate URL from pattern for other portals
+    pattern = PORTAL_URL_PATTERNS.get(ticket.portal)
+    if pattern and ticket.ticket_id:
+        return pattern.format(ticket_id=ticket.ticket_id)
+
+    return None
+
+
 # Helper functions
 def _ticket_to_dict(ticket) -> dict:
     """Convert ticket object to dictionary."""
@@ -387,5 +410,7 @@ def _ticket_to_dict(ticket) -> dict:
         "znuny_ticket_id": ticket.znuny_ticket_id,
         "znuny_created_at": ticket.znuny_created_at.isoformat() if ticket.znuny_created_at else None,
         "znuny_created_by": ticket.znuny_created_by,
-        "znuny_address": ticket.znuny_address
+        "znuny_address": ticket.znuny_address,
+        "portal_url": _generate_portal_url(ticket),
+        "znuny_url": ticket.znuny_url
     }

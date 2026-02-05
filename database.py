@@ -101,6 +101,18 @@ class Database:
             except:
                 pass  # Column already exists
 
+            # Add portal_url column (migration)
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN portal_url TEXT")
+            except:
+                pass  # Column already exists
+
+            # Add znuny_url column (migration)
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN znuny_url TEXT")
+            except:
+                pass  # Column already exists
+
             # Znuny articles table - stores article/note history from Znuny
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS znuny_articles (
@@ -248,6 +260,7 @@ class Database:
                         status = ?,
                         kpi = ?,
                         notes = ?,
+                        portal_url = COALESCE(?, portal_url),
                         updated_at = ?,
                         completed_at = COALESCE(?, completed_at)
                     WHERE id = ?
@@ -261,6 +274,7 @@ class Database:
                     ticket.status,
                     ticket.kpi,
                     ticket.notes,
+                    ticket.portal_url,
                     now_maldives(),
                     ticket.completed_at,  # Set completed_at if provided
                     existing_id
@@ -282,9 +296,9 @@ class Database:
                 cursor.execute("""
                     INSERT INTO tickets (
                         portal, ticket_id, address, account, customer_name, ticket_type,
-                        portal_created_at, service_type, status, kpi, notes, completed_at,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        portal_created_at, service_type, status, kpi, notes, portal_url,
+                        completed_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     ticket.portal,
                     ticket.ticket_id,
@@ -297,6 +311,7 @@ class Database:
                     ticket.status,
                     ticket.kpi,
                     ticket.notes,
+                    ticket.portal_url,
                     ticket.completed_at,  # Set completed_at if provided (for closed tickets)
                     current_time,
                     current_time
@@ -364,7 +379,8 @@ class Database:
             logger.info(f"Updated Znuny status for ticket {ticket_id}: in_znuny={in_znuny}")
 
     def update_znuny_details(self, ticket_id: int, znuny_created_at: datetime = None,
-                             znuny_created_by: str = None, znuny_address: str = None):
+                             znuny_created_by: str = None, znuny_address: str = None,
+                             znuny_url: str = None):
         """Update Znuny-specific details for a ticket."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -373,9 +389,10 @@ class Database:
                     znuny_created_at = COALESCE(?, znuny_created_at),
                     znuny_created_by = COALESCE(?, znuny_created_by),
                     znuny_address = COALESCE(?, znuny_address),
+                    znuny_url = COALESCE(?, znuny_url),
                     updated_at = ?
                 WHERE id = ?""",
-                (znuny_created_at, znuny_created_by, znuny_address, now_maldives(), ticket_id)
+                (znuny_created_at, znuny_created_by, znuny_address, znuny_url, now_maldives(), ticket_id)
             )
             logger.info(f"Updated Znuny details for ticket {ticket_id}: created_by={znuny_created_by}")
 
@@ -952,6 +969,8 @@ class Database:
             znuny_created_at=datetime.fromisoformat(row["znuny_created_at"]) if "znuny_created_at" in keys and row["znuny_created_at"] else None,
             znuny_created_by=row["znuny_created_by"] if "znuny_created_by" in keys else None,
             znuny_address=row["znuny_address"] if "znuny_address" in keys else None,
+            znuny_url=row["znuny_url"] if "znuny_url" in keys else None,
+            portal_url=row["portal_url"] if "portal_url" in keys else None,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
             completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None

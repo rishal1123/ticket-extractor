@@ -141,7 +141,11 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                         <div class="col-md-3">
                             <div class="info-card">
                                 <div class="label">Znuny Ticket #</div>
-                                <div class="value">${ticket.znuny_ticket_id || '-'}</div>
+                                <div class="value">
+                                    ${ticket.znuny_url
+                                        ? `<a href="${ticket.znuny_url}" target="_blank" class="text-decoration-none">${ticket.znuny_ticket_id} <i class="bi bi-box-arrow-up-right small"></i></a>`
+                                        : (ticket.znuny_ticket_id || '-')}
+                                </div>
                             </div>
                         </div>
                         <div class="col-md-3">
@@ -214,7 +218,11 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                         <div class="col-6">
                             <div class="info-card">
                                 <div class="label">Ticket ID</div>
-                                <div class="value">${ticket.ticket_id}</div>
+                                <div class="value">
+                                    ${ticket.portal_url
+                                        ? `<a href="${ticket.portal_url}" target="_blank" class="text-decoration-none">${ticket.ticket_id} <i class="bi bi-box-arrow-up-right small"></i></a>`
+                                        : ticket.ticket_id}
+                                </div>
                             </div>
                         </div>
                         <div class="col-6">
