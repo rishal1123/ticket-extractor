@@ -6,33 +6,15 @@ from typing import Optional
 from contextlib import asynccontextmanager
 import os
 import threading
-import time
-
-import schedule
 
 from database import Database, now_maldives
 from znuny_client import ZnunyClient
 from services.znuny_service import ZnunyService
+from services.scheduler_service import get_scheduler
 from config import Config, APP_VERSION
 from utils.logger import get_logger
-from extractors import DhiraaguExtractor, OoredooExtractor, ROLExtractor, MedianetExtractor
 
 logger = get_logger("dashboard")
-
-# Global flag for scheduler
-scheduler_running = False
-scheduler_thread = None
-
-
-def get_extractor_class(portal_name: str):
-    """Get the extractor class for a portal name."""
-    extractors = {
-        "dhiraagu": DhiraaguExtractor,
-        "ooredoo": OoredooExtractor,
-        "rol": ROLExtractor,
-        "medianet": MedianetExtractor
-    }
-    return extractors.get(portal_name.lower())
 
 
 # Portal URL patterns for generating links
@@ -65,150 +47,13 @@ def ticket_to_dict_with_urls(ticket) -> dict:
     return data
 
 
-def run_portal_extraction():
-    """Run extraction for all configured portals."""
-    logger.info("Starting scheduled portal extraction")
-    extraction_db = Database()
-    extraction_db.log_system("info", "scheduler", "Portal extraction started")
-    results = []
-
-    for config in Config.get_all_portals():
-        if not config.url or not config.username:
-            logger.warning(f"Portal {config.name} not configured, skipping")
-            extraction_db.log_system("warning", f"extractor.{config.name}", "Portal not configured, skipping")
-            continue
-
-        extractor_class = get_extractor_class(config.name)
-        if not extractor_class:
-            logger.warning(f"No extractor for {config.name}, skipping")
-            continue
-
-        try:
-            logger.info(f"Extracting from {config.name}")
-            extractor = extractor_class(config, extraction_db, headless=True)
-            result = extractor.run()
-            results.append(result)
-            extraction_db.log_system(
-                "info", f"extractor.{config.name}",
-                f"Extraction complete: {result.get('tickets_found', 0)} found, {result.get('tickets_new', 0)} new",
-                f"Status: {result.get('status')}"
-            )
-        except Exception as e:
-            logger.error(f"Extraction failed for {config.name}: {e}")
-            results.append({"portal": config.name, "status": "failed", "error": str(e)})
-            extraction_db.log_system("error", f"extractor.{config.name}", f"Extraction failed: {e}")
-
-        time.sleep(2)  # Small delay between portals
-
-    # Summary
-    total_found = sum(r.get("tickets_found", 0) for r in results)
-    total_new = sum(r.get("tickets_new", 0) for r in results)
-    failed = [r["portal"] for r in results if r.get("status") == "failed"]
-
-    logger.info(f"Portal extraction complete: {total_found} found, {total_new} new")
-    summary = f"Total: {total_found} found, {total_new} new"
-    if failed:
-        logger.warning(f"Failed portals: {', '.join(failed)}")
-        summary += f", Failed: {', '.join(failed)}"
-        extraction_db.log_system("warning", "scheduler", f"Extraction completed with failures", summary)
-    else:
-        extraction_db.log_system("info", "scheduler", "Extraction completed successfully", summary)
-
-    return results
-
-
-def sync_znuny_comprehensive():
-    """Comprehensive Znuny sync: all tickets, site visits, and ISP ticket linking."""
-    logger.info("Starting comprehensive Znuny sync")
-    sync_db = Database()
-
-    sync_db.log_system("info", "znuny", "Comprehensive Znuny sync started")
-
-    try:
-        znuny_service = ZnunyService(sync_db)
-        results = znuny_service.sync_all_site_visits()
-
-        logger.info(f"Znuny sync complete: {results}")
-        sync_db.log_system(
-            "info" if results["errors"] == 0 else "warning",
-            "znuny",
-            f"Znuny sync complete: {results['znuny_tickets_found']} tickets, {results['site_visits_extracted']} site visits",
-            f"Tickets: {results['znuny_tickets_found']}, ISP synced: {results['isp_tickets_synced']}, "
-            f"Site visits: {results['site_visits_extracted']}, Linked: {results['site_visits_linked']}, "
-            f"Errors: {results['errors']}"
-        )
-        return results
-    except Exception as e:
-        logger.error(f"Comprehensive Znuny sync failed: {e}")
-        sync_db.log_system("error", "znuny", f"Znuny sync failed: {e}")
-        raise
-
-
-def scheduled_job():
-    """Combined job that runs portal extraction and comprehensive Znuny sync."""
-    job_db = Database()
-    try:
-        run_portal_extraction()
-    except Exception as e:
-        logger.error(f"Portal extraction failed: {e}")
-        job_db.log_system("error", "scheduler", f"Portal extraction crashed: {e}")
-
-    try:
-        sync_znuny_comprehensive()
-    except Exception as e:
-        logger.error(f"Znuny sync failed: {e}")
-        job_db.log_system("error", "scheduler", f"Znuny sync crashed: {e}")
-
-
-def scheduler_loop():
-    """Background scheduler loop."""
-    global scheduler_running
-    interval = Config.EXTRACTION_INTERVAL_MINUTES
-    logger.info(f"Scheduler started with {interval} minute interval")
-
-    scheduler_db = Database()
-    scheduler_db.log_system("info", "scheduler", f"Scheduler started with {interval} minute interval")
-
-    # Schedule the job
-    schedule.every(interval).minutes.do(scheduled_job)
-
-    # Run immediately on start
-    scheduled_job()
-
-    while scheduler_running:
-        schedule.run_pending()
-        time.sleep(1)
-
-    logger.info("Scheduler stopped")
-    scheduler_db.log_system("info", "scheduler", "Scheduler stopped")
-
-
-def start_scheduler():
-    """Start the background scheduler thread."""
-    global scheduler_running, scheduler_thread
-    if scheduler_thread and scheduler_thread.is_alive():
-        logger.info("Scheduler already running")
-        return
-
-    scheduler_running = True
-    scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True, name="ExtractionScheduler")
-    scheduler_thread.start()
-    logger.info("Background scheduler thread started")
-
-
-def stop_scheduler():
-    """Stop the background scheduler."""
-    global scheduler_running
-    scheduler_running = False
-    logger.info("Scheduler stop requested")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage app lifespan - start scheduler on startup."""
-    start_scheduler()
+    scheduler = get_scheduler()
+    scheduler.start()
     yield
-    stop_scheduler()
+    scheduler.stop()
 
 
 app = FastAPI(title="Ticket Extractor Dashboard", lifespan=lifespan)
@@ -320,38 +165,21 @@ async def get_tickets(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0)
 ):
-    """Get tickets with optional filters."""
+    """Get tickets with optional filters (SQL-level filtering)."""
     try:
-        tickets = db.get_all_tickets(portal=portal, include_completed=include_completed or completed_only)
-
-        # Filter for completed only if requested
-        if completed_only:
-            tickets = [t for t in tickets if t.completed_at is not None]
-
-        # Apply additional filters
-        if status:
-            tickets = [t for t in tickets if t.status and status.lower() in t.status.lower()]
-
-        if ticket_type:
-            tickets = [t for t in tickets if t.ticket_type and ticket_type.lower() in t.ticket_type.lower()]
-
-        if in_znuny is not None:
-            tickets = [t for t in tickets if t.in_znuny == in_znuny]
-
-        if staff:
-            tickets = [t for t in tickets if t.znuny_created_by and staff.lower() == t.znuny_created_by.lower()]
-
-        if search:
-            search_lower = search.lower()
-            tickets = [t for t in tickets if (
-                (t.ticket_id and search_lower in t.ticket_id.lower()) or
-                (t.customer_name and search_lower in t.customer_name.lower()) or
-                (t.address and search_lower in t.address.lower())
-            )]
-
-        # Pagination
-        total = len(tickets)
-        tickets = tickets[offset:offset + limit]
+        # Use database-level filtering for efficiency
+        tickets, total = db.get_tickets_filtered(
+            portal=portal,
+            status=status,
+            ticket_type=ticket_type,
+            in_znuny=in_znuny,
+            staff=staff,
+            search=search,
+            include_completed=include_completed or completed_only,
+            completed_only=completed_only,
+            limit=limit,
+            offset=offset
+        )
 
         return JSONResponse(content={
             "total": total,
@@ -504,14 +332,18 @@ async def get_login_summary():
 async def get_scheduler_status():
     """Get scheduler status and next run time."""
     try:
-        jobs = schedule.get_jobs()
+        import schedule as sched_lib
+        scheduler = get_scheduler()
+        status = scheduler.get_status()
+
+        jobs = sched_lib.get_jobs()
         next_run = None
         if jobs:
             next_run = str(jobs[0].next_run) if jobs[0].next_run else None
 
         return JSONResponse(content={
-            "running": scheduler_running,
-            "interval_minutes": Config.EXTRACTION_INTERVAL_MINUTES,
+            "running": status["running"],
+            "interval_minutes": status["interval_minutes"],
             "jobs_count": len(jobs),
             "next_run": next_run
         })
@@ -529,9 +361,12 @@ async def get_scheduler_status():
 async def trigger_extraction():
     """Manually trigger portal extraction and Znuny sync."""
     try:
-        # Run in a background thread to not block the response
+        scheduler = get_scheduler()
+
+        # Run extraction and sync in a background thread
         def run_async():
-            scheduled_job()
+            scheduler.run_portal_extraction()
+            scheduler.run_znuny_sync()
 
         thread = threading.Thread(target=run_async, daemon=True)
         thread.start()

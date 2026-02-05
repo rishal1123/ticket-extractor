@@ -444,6 +444,80 @@ class Database:
             rows = cursor.fetchall()
             return [self._row_to_ticket(row) for row in rows]
 
+    def get_tickets_filtered(
+        self,
+        portal: str = None,
+        status: str = None,
+        ticket_type: str = None,
+        in_znuny: bool = None,
+        staff: str = None,
+        search: str = None,
+        include_completed: bool = False,
+        completed_only: bool = False,
+        limit: int = 100,
+        offset: int = 0
+    ) -> tuple[list[Ticket], int]:
+        """Get tickets with SQL-level filtering. Returns (tickets, total_count)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Build WHERE clause dynamically
+            conditions = []
+            params = []
+
+            # Completion status filter
+            if completed_only:
+                conditions.append("completed_at IS NOT NULL")
+            elif not include_completed:
+                conditions.append("completed_at IS NULL")
+
+            if portal:
+                conditions.append("portal = ?")
+                params.append(portal)
+
+            if status:
+                conditions.append("status LIKE ?")
+                params.append(f"%{status}%")
+
+            if ticket_type:
+                conditions.append("ticket_type LIKE ?")
+                params.append(f"%{ticket_type}%")
+
+            if in_znuny is not None:
+                conditions.append("in_znuny = ?")
+                params.append(1 if in_znuny else 0)
+
+            if staff:
+                conditions.append("LOWER(znuny_created_by) = LOWER(?)")
+                params.append(staff)
+
+            if search:
+                conditions.append(
+                    "(ticket_id LIKE ? OR customer_name LIKE ? OR address LIKE ? OR account LIKE ?)"
+                )
+                search_param = f"%{search}%"
+                params.extend([search_param, search_param, search_param, search_param])
+
+            # Build query
+            where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+            # Get total count
+            count_query = f"SELECT COUNT(*) FROM tickets WHERE {where_clause}"
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+
+            # Get paginated results
+            query = f"""
+                SELECT * FROM tickets
+                WHERE {where_clause}
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+            """
+            cursor.execute(query, params + [limit, offset])
+            rows = cursor.fetchall()
+
+            return [self._row_to_ticket(row) for row in rows], total
+
     def get_ticket_by_id(self, ticket_id: int) -> Optional[Ticket]:
         with self._get_connection() as conn:
             cursor = conn.cursor()

@@ -25,7 +25,8 @@ Extractor/
 │   ├── extraction_service.py  # Portal extraction logic
 │   ├── znuny_service.py       # Znuny sync logic
 │   ├── stats_service.py       # Statistics/analytics
-│   └── config_service.py      # Configuration management (.env)
+│   ├── config_service.py      # Configuration management (.env)
+│   └── scheduler_service.py   # Background job scheduling
 │
 ├── controllers/         # Controller Layer - HTTP Handlers
 │   ├── __init__.py      # Router exports
@@ -212,10 +213,11 @@ Business logic separated from HTTP handlers:
 
 | Service | File | Responsibility |
 |---------|------|----------------|
-| `ExtractionService` | extraction_service.py | Run portal extractions, manage scheduler |
+| `ExtractionService` | extraction_service.py | Run portal extractions |
 | `ZnunyService` | znuny_service.py | Znuny sync, ticket checking, article fetch |
 | `StatsService` | stats_service.py | Dashboard stats, staff metrics, reports |
 | `ConfigService` | config_service.py | Environment config management |
+| `SchedulerService` | scheduler_service.py | Background job scheduling, extraction timing |
 
 ### 5. Controllers Layer (controllers/)
 

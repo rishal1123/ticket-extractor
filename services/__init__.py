@@ -7,10 +7,13 @@ from .extraction_service import ExtractionService
 from .znuny_service import ZnunyService
 from .stats_service import StatsService
 from .config_service import ConfigService
+from .scheduler_service import SchedulerService, get_scheduler
 
 __all__ = [
     'ExtractionService',
     'ZnunyService',
     'StatsService',
-    'ConfigService'
+    'ConfigService',
+    'SchedulerService',
+    'get_scheduler'
 ]
