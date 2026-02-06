@@ -545,12 +545,19 @@ async function loadZnunySyncStatus() {
         notInZnunyEl.textContent = notInZnuny;
 
         // Change card background based on count - green when 0, red when > 0
+        const lastSyncTime = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
         if (notInZnuny === 0) {
             cardEl.style.backgroundColor = '#27ae60';
-            syncInfoEl.textContent = status.last_sync_time ? `Synced ${formatRelativeTime(status.last_sync_time)}` : 'All synced';
+            syncInfoEl.innerHTML = `
+                <span class="extraction-status success">OK</span>
+                <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>
+            `;
         } else {
             cardEl.style.backgroundColor = '#dc3545';
-            syncInfoEl.textContent = `${notInZnuny} pending sync`;
+            syncInfoEl.innerHTML = `
+                <span class="extraction-status failed">Pending</span>
+                <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>
+            `;
         }
     } catch (error) {
         console.error('Error loading Znuny sync status:', error);
