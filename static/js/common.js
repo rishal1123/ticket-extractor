@@ -119,7 +119,16 @@ async function showTicketDetail(ticketId, callbacks = {}) {
         const znunyData = await znunyResponse.json();
         const siteVisitsData = await siteVisitsResponse.json();
 
-        const ticket = ticketData.ticket;
+        const ticket = ticketData.ticket || ticketData;
+
+        // Check if ticket data is valid
+        if (!ticket || !ticket.portal) {
+            console.error('Invalid ticket data:', ticketData);
+            alert('Could not load ticket details. The ticket may not exist.');
+            showLoading(false);
+            return;
+        }
+
         const siteVisits = siteVisitsData.visits || [];
         const znunyArticles = (znunyData.articles || []).sort((a, b) => {
             // Sort by created_at descending (newest first)

@@ -47,7 +47,8 @@ Extractor/
 │   ├── tickets.html     # All tickets view (extends base.html)
 │   ├── staff_stats.html # Staff performance stats (extends base.html)
 │   ├── staff_detail.html# Individual staff performance detail
-│   └── admin.html       # Admin panel with Status & Config tabs
+│   ├── reports.html     # Reports page with date-filtered statistics
+│   └── admin.html       # Admin panel with Status, Reports, Staff & Config tabs
 │
 ├── static/              # Static assets
 │   ├── js/common.js     # Shared JavaScript functions
@@ -74,8 +75,8 @@ Extractor/
 | **Repository** | `database.py` | Data persistence, queries |
 
 ### Entry Points
-- `dashboard.py` - Main entry point (recommended)
-- `app.py` - MVC-structured alternative (`python main.py --mvc`)
+- `app.py` - Main entry point (recommended, MVC architecture)
+- `dashboard.py` - Legacy entry point (deprecated, redirects to app.py)
 - `main.py` - CLI with options for extraction modes
 
 ## Template Architecture
@@ -236,7 +237,10 @@ HTTP route handlers (MVC app only):
 - `/tickets` - All tickets with filtering (includes staff filter)
 - `/staff` - Staff performance statistics with % On Time metrics
 - `/staff/{name}` - Individual staff performance detail page
-- `/admin` - Admin panel with extraction logs
+- `/field-visits` - Site visits/field visits management
+- `/znuny-tickets` - Znuny-only tickets (orphan tickets not linked to ISP portals)
+- `/reports` - Reports with date-filtered statistics (Today, Yesterday, 7 Days, 30 Days)
+- `/admin` - Admin panel with Status, Reports, Staff Management & Config tabs
 
 **Key API Endpoints:**
 | Endpoint | Method | Description |
@@ -322,14 +326,14 @@ This measures the time difference between when a ticket entered the extractor an
 ## Running the Application
 
 ```bash
-# Start with dashboard and scheduler
+# Recommended: Start MVC app with scheduler
+python app.py
+
+# Alternative: Using main.py
 python main.py
 
-# Dashboard only
+# Legacy (deprecated)
 python dashboard.py
-
-# Using MVC app structure
-python main.py --mvc
 ```
 
 The app runs on http://localhost:8000 by default.
@@ -341,7 +345,7 @@ The app runs on http://localhost:8000 by default.
 ```bash
 # Windows - Kill existing Python processes and restart
 taskkill //F //IM python.exe
-python dashboard.py
+python app.py
 
 # Or find and kill process on port 8000
 netstat -ano | grep 8000  # Find PID
@@ -549,6 +553,46 @@ Some tickets have **negative time differences** - these are historical tickets w
 - **OFF:** Includes all tickets, showing negative avg times for historical data
 
 **API Parameter:** `/api/staff-stats-detailed?exclude_negative=true|false`
+
+## Reports Page (`/reports`)
+
+Standalone reports page accessible from the main navigation bar with date-filtered statistics.
+
+### Time Period Filters
+- **Today** - Current day's statistics
+- **Yesterday** - Previous day's statistics
+- **7 Days** - Last week's statistics
+- **30 Days** - Last month's statistics
+
+### Report Sections
+1. **Summary Stats Cards**: ISP Tickets, Znuny Only, Articles, Site Visits, Avg On Time %, Active Staff
+2. **Tickets by Portal**: Breakdown by ISP with total, in Znuny, and pending counts
+3. **Performance Breakdown**: Within 5min, 5-10min, Over 10min counts with percentages
+4. **Staff Performance Table**: Ranked staff list with metrics (clickable rows to view staff detail)
+
+### Export
+- **Export CSV** button downloads staff statistics for the selected period
+
+## Admin Panel Features
+
+### Staff Management Tab (Admin → Staff)
+Merge duplicate staff names when the same person uses different names:
+
+1. **Staff List Table**: Shows all staff with record counts per source (ISP tickets, Znuny tickets, Articles, Site Visits)
+2. **Merge Staff Names**:
+   - Select source name (to be replaced)
+   - Select target name (to keep)
+   - Preview shows affected record counts per table
+   - Merge updates all records across all tables
+3. **Recent Merges Log**: Shows history of merge operations
+
+### API Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/staff-list` | GET | Get all staff names with counts |
+| `/api/admin/staff-merge-preview` | GET | Preview merge operation |
+| `/api/admin/staff-merge` | POST | Execute staff merge |
+| `/api/admin/report-portal-stats` | GET | Get portal stats for reports |
 
 ## Portal & Znuny URLs
 

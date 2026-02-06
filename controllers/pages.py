@@ -85,6 +85,15 @@ async def znuny_tickets_page(request: Request):
     )
 
 
+@router.get("/reports", response_class=HTMLResponse)
+async def reports_page(request: Request):
+    """Render the reports page."""
+    return templates.TemplateResponse(
+        "reports.html",
+        {"request": request, "active_page": "reports"}
+    )
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     """Render the admin panel page."""

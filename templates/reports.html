@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+
+{% block title %}Reports - Ticket Extractor{% endblock %}
+{% block nav_icon %}bar-chart{% endblock %}
+{% block nav_title %}Reports{% endblock %}
+{% block nav_title_short %}Reports{% endblock %}
+
+{% block extra_css %}
+.portal-dhiraagu { background-color: #e65100 !important; }
+.portal-ooredoo { background-color: #9b59b6 !important; }
+.portal-rol { background-color: #3498db !important; }
+.portal-medianet { background-color: #1abc9c !important; }
+{% endblock %}
+
+{% block content %}
+<!-- Time Period Selector -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+    <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-outline-primary report-period-btn active" data-period="today" onclick="setReportPeriod('today')">Today</button>
+        <button type="button" class="btn btn-outline-primary report-period-btn" data-period="yesterday" onclick="setReportPeriod('yesterday')">Yesterday</button>
+        <button type="button" class="btn btn-outline-primary report-period-btn" data-period="week" onclick="setReportPeriod('week')">7 Days</button>
+        <button type="button" class="btn btn-outline-primary report-period-btn" data-period="month" onclick="setReportPeriod('month')">30 Days</button>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="loadReportData()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+    <button class="btn btn-success btn-sm" onclick="exportReportCSV()">
+        <i class="bi bi-download me-1"></i>Export CSV
+    </button>
+    <span class="text-muted small ms-auto" id="reportPeriodInfo">Today</span>
+</div>
+
+<!-- Summary Stats Cards -->
+<div class="row mb-3 g-2">
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-success" id="reportIspTickets">--</div>
+                <div class="small text-muted">ISP Tickets</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold" style="color: #8a2be2;" id="reportZnunyTickets">--</div>
+                <div class="small text-muted">Znuny Only</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-info" id="reportArticles">--</div>
+                <div class="small text-muted">Articles</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-warning" id="reportSiteVisits">--</div>
+                <div class="small text-muted">Site Visits</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-primary" id="reportOnTime">--</div>
+                <div class="small text-muted">Avg On Time</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body p-2 text-center">
+                <div class="fs-4 fw-bold text-secondary" id="reportStaffCount">--</div>
+                <div class="small text-muted">Active Staff</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Portal Breakdown -->
+<div class="row g-3 mb-3">
+    <div class="col-12 col-md-6">
+        <div class="table-container h-100">
+            <h6 class="mb-3"><i class="bi bi-server me-2"></i>Tickets by Portal</h6>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Portal</th>
+                            <th class="text-center">Total</th>
+                            <th class="text-center">In Znuny</th>
+                            <th class="text-center">Pending</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportPortalTable">
+                        <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-6">
+        <div class="table-container h-100">
+            <h6 class="mb-3"><i class="bi bi-clock me-2"></i>Performance Breakdown</h6>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Metric</th>
+                            <th class="text-center">Count</th>
+                            <th class="text-center">%</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportPerfTable">
+                        <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Staff Performance Table -->
+<div class="table-container">
+    <h6 class="mb-3"><i class="bi bi-people me-2"></i>Staff Performance</h6>
+    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light sticky-top">
+                <tr>
+                    <th>#</th>
+                    <th>Staff</th>
+                    <th class="text-center">ISP</th>
+                    <th class="text-center d-none d-md-table-cell">Znuny</th>
+                    <th class="text-center d-none d-sm-table-cell">Articles</th>
+                    <th class="text-center d-none d-lg-table-cell">Visits</th>
+                    <th class="text-center">On Time %</th>
+                    <th class="text-center d-none d-sm-table-cell">Avg Time</th>
+                </tr>
+            </thead>
+            <tbody id="reportStaffTable">
+                <tr><td colspan="8" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+let currentReportPeriod = 'today';
+let reportData = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadReportData();
+});
+
+function setReportPeriod(period) {
+    currentReportPeriod = period;
+    document.querySelectorAll('.report-period-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.period === period);
+    });
+    loadReportData();
+}
+
+function getReportDateRange() {
+    const today = new Date();
+    let dateFrom, dateTo;
+
+    switch (currentReportPeriod) {
+        case 'today':
+            dateFrom = dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'yesterday':
+            const yesterday = new Date(today);
+            yesterday.setDate(today.getDate() - 1);
+            dateFrom = dateTo = yesterday.toISOString().split('T')[0];
+            break;
+        case 'week':
+            const weekStart = new Date(today);
+            weekStart.setDate(today.getDate() - 7);
+            dateFrom = weekStart.toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+        case 'month':
+            const monthStart = new Date(today);
+            monthStart.setDate(today.getDate() - 30);
+            dateFrom = monthStart.toISOString().split('T')[0];
+            dateTo = today.toISOString().split('T')[0];
+            break;
+    }
+    return { dateFrom, dateTo };
+}
+
+async function loadReportData() {
+    const { dateFrom, dateTo } = getReportDateRange();
+
+    // Update period info
+    document.getElementById('reportPeriodInfo').textContent =
+        dateFrom === dateTo ? dateFrom : `${dateFrom} to ${dateTo}`;
+
+    try {
+        const params = new URLSearchParams();
+        params.append('date_from', dateFrom);
+        params.append('date_to', dateTo);
+        params.append('exclude_negative', 'true');
+
+        const [staffResponse, portalResponse] = await Promise.all([
+            fetch('/api/staff-stats-detailed?' + params.toString()),
+            fetch('/api/admin/report-portal-stats?' + params.toString())
+        ]);
+
+        const staffData = await staffResponse.json();
+        const portalData = await portalResponse.json();
+
+        reportData = { staff: staffData.stats || staffData, portal: portalData };
+
+        updateReportSummary(reportData);
+        renderReportPortalTable(reportData.portal);
+        renderReportPerfTable(reportData.staff);
+        renderReportStaffTable(reportData.staff.staff || []);
+    } catch (error) {
+        console.error('Error loading report data:', error);
+    }
+}
+
+function updateReportSummary(data) {
+    const stats = data.staff;
+
+    document.getElementById('reportIspTickets').textContent = stats.total_tickets || 0;
+    document.getElementById('reportZnunyTickets').textContent = stats.total_znuny_only || 0;
+    document.getElementById('reportArticles').textContent = stats.total_articles || 0;
+    document.getElementById('reportSiteVisits').textContent = stats.total_site_visits || 0;
+    document.getElementById('reportStaffCount').textContent = stats.staff?.length || 0;
+
+    // Calculate avg on-time
+    if (stats.staff && stats.staff.length > 0) {
+        const avgOnTime = stats.staff.reduce((sum, s) => sum + (s.on_time_pct || 0), 0) / stats.staff.length;
+        const el = document.getElementById('reportOnTime');
+        el.textContent = Math.round(avgOnTime) + '%';
+        el.className = 'fs-4 fw-bold ' + (avgOnTime >= 80 ? 'text-success' : avgOnTime >= 50 ? 'text-warning' : 'text-danger');
+    } else {
+        document.getElementById('reportOnTime').textContent = '--%';
+    }
+}
+
+function renderReportPortalTable(portalData) {
+    const tbody = document.getElementById('reportPortalTable');
+
+    if (!portalData.portals || portalData.portals.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No data</td></tr>';
+        return;
+    }
+
+    const portalColors = {
+        dhiraagu: '#e65100',
+        ooredoo: '#9b59b6',
+        rol: '#3498db',
+        medianet: '#1abc9c'
+    };
+
+    tbody.innerHTML = portalData.portals.map(p => `
+        <tr>
+            <td>
+                <span class="badge" style="background-color: ${portalColors[p.portal] || '#6c757d'}">
+                    ${p.portal.charAt(0).toUpperCase() + p.portal.slice(1)}
+                </span>
+            </td>
+            <td class="text-center"><strong>${p.total || 0}</strong></td>
+            <td class="text-center"><span class="badge bg-success">${p.in_znuny || 0}</span></td>
+            <td class="text-center"><span class="badge bg-warning text-dark">${p.pending || 0}</span></td>
+        </tr>
+    `).join('');
+
+    // Add total row
+    const totalTickets = portalData.portals.reduce((sum, p) => sum + (p.total || 0), 0);
+    const totalInZnuny = portalData.portals.reduce((sum, p) => sum + (p.in_znuny || 0), 0);
+    const totalPending = portalData.portals.reduce((sum, p) => sum + (p.pending || 0), 0);
+
+    tbody.innerHTML += `
+        <tr class="table-light fw-bold">
+            <td>Total</td>
+            <td class="text-center">${totalTickets}</td>
+            <td class="text-center">${totalInZnuny}</td>
+            <td class="text-center">${totalPending}</td>
+        </tr>
+    `;
+}
+
+function renderReportPerfTable(stats) {
+    const tbody = document.getElementById('reportPerfTable');
+
+    // Aggregate performance data
+    let within5 = 0, within10 = 0, over10 = 0;
+    (stats.staff || []).forEach(s => {
+        within5 += s.within_5min || 0;
+        within10 += s.within_10min || 0;
+        over10 += s.over_10min || 0;
+    });
+
+    const total = within5 + within10 + over10;
+    const pct5 = total > 0 ? Math.round(within5 / total * 100) : 0;
+    const pct10 = total > 0 ? Math.round(within10 / total * 100) : 0;
+    const pctOver = total > 0 ? Math.round(over10 / total * 100) : 0;
+
+    tbody.innerHTML = `
+        <tr>
+            <td><span class="badge bg-success">Within 5 min</span></td>
+            <td class="text-center">${within5}</td>
+            <td class="text-center">${pct5}%</td>
+        </tr>
+        <tr>
+            <td><span class="badge bg-warning text-dark">5-10 min</span></td>
+            <td class="text-center">${within10}</td>
+            <td class="text-center">${pct10}%</td>
+        </tr>
+        <tr>
+            <td><span class="badge bg-danger">Over 10 min</span></td>
+            <td class="text-center">${over10}</td>
+            <td class="text-center">${pctOver}%</td>
+        </tr>
+        <tr class="table-light fw-bold">
+            <td>Total Tickets</td>
+            <td class="text-center">${total}</td>
+            <td class="text-center">100%</td>
+        </tr>
+    `;
+}
+
+function renderReportStaffTable(staff) {
+    const tbody = document.getElementById('reportStaffTable');
+
+    if (!staff || staff.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No staff activity in this period</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = staff.map((s, index) => {
+        const rank = index + 1;
+        const rankClass = rank === 1 ? 'bg-warning' : rank === 2 ? 'bg-secondary' : rank === 3 ? 'bg-info' : 'bg-light text-dark';
+        const onTimePct = s.on_time_pct || 0;
+        const perfClass = onTimePct >= 80 ? 'text-success' : onTimePct >= 50 ? 'text-warning' : 'text-danger';
+        const avgMin = s.avg_minutes || 0;
+        const avgClass = avgMin <= 5 ? 'text-success' : avgMin <= 10 ? 'text-warning' : 'text-danger';
+        const avgText = avgMin < 0 ? '-' : avgMin < 60 ? Math.round(avgMin) + 'm' : Math.floor(avgMin/60) + 'h ' + Math.round(avgMin%60) + 'm';
+
+        return `
+            <tr onclick="window.location='/staff/${encodeURIComponent(s.name)}'" style="cursor: pointer;">
+                <td><span class="badge ${rankClass}">${rank}</span></td>
+                <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td class="text-center"><span class="badge bg-success">${s.tickets_created || 0}</span></td>
+                <td class="text-center d-none d-md-table-cell"><span class="badge" style="background-color: #8a2be2;">${s.znuny_only_count || 0}</span></td>
+                <td class="text-center d-none d-sm-table-cell"><span class="badge bg-info">${s.articles_count || 0}</span></td>
+                <td class="text-center d-none d-lg-table-cell"><span class="badge bg-warning text-dark">${s.site_visits_total || 0}</span></td>
+                <td class="text-center"><strong class="${perfClass}">${onTimePct}%</strong></td>
+                <td class="text-center d-none d-sm-table-cell"><span class="${avgClass}">${avgText}</span></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function exportReportCSV() {
+    const { dateFrom, dateTo } = getReportDateRange();
+    window.location.href = `/api/reports/staff-csv?date_from=${dateFrom}&date_to=${dateTo}`;
+}
+{% endblock %}
