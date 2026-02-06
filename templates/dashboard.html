@@ -163,15 +163,15 @@
         </a>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" id="notInZnunyCard" style="border-left: 4px solid #dc3545;">
+        <div class="stat-card card h-100" id="notInZnunyCard" style="background-color: #dc3545; border: none;">
             <div class="card-body text-center py-3">
-                <div class="stat-value text-danger" id="notInZnuny">0</div>
-                <div class="fw-semibold mb-1 text-danger" id="notInZnunyLabel">Not in Znuny</div>
+                <div class="stat-value text-white" id="notInZnuny">0</div>
+                <div class="fw-semibold mb-1 text-white" id="notInZnunyLabel">Not in Znuny</div>
                 <div class="extraction-info">
-                    <small class="text-muted" id="znunySyncInfo">--</small>
+                    <small class="text-white-50" id="znunySyncInfo">--</small>
                 </div>
                 <div class="today-count mt-1">
-                    <small class="text-muted">Total: <span id="totalTickets">0</span> active</small>
+                    <small class="text-white-50">Total: <span id="totalTickets">0</span> active</small>
                 </div>
             </div>
         </div>
@@ -544,16 +544,12 @@ async function loadZnunySyncStatus() {
 
         notInZnunyEl.textContent = notInZnuny;
 
-        // Change color based on count - green when 0, red when > 0
+        // Change card background based on count - green when 0, red when > 0
         if (notInZnuny === 0) {
-            notInZnunyEl.className = 'stat-value text-success';
-            labelEl.className = 'fw-semibold mb-1 text-success';
-            cardEl.style.borderLeftColor = '#27ae60';
+            cardEl.style.backgroundColor = '#27ae60';
             syncInfoEl.textContent = status.last_sync_time ? `Synced ${formatRelativeTime(status.last_sync_time)}` : 'All synced';
         } else {
-            notInZnunyEl.className = 'stat-value text-danger';
-            labelEl.className = 'fw-semibold mb-1 text-danger';
-            cardEl.style.borderLeftColor = '#dc3545';
+            cardEl.style.backgroundColor = '#dc3545';
             syncInfoEl.textContent = `${notInZnuny} pending sync`;
         }
     } catch (error) {
