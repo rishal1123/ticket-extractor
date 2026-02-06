@@ -134,12 +134,6 @@ def main():
         action="store_true",
         help="Run browser in visible mode (disable headless)"
     )
-    parser.add_argument(
-        "--mvc",
-        action="store_true",
-        help="Use MVC-based app.py instead of dashboard.py"
-    )
-
     args = parser.parse_args()
 
     # Setup logging
@@ -154,12 +148,8 @@ def main():
         if args.dashboard_only:
             # Run only dashboard
             logger.info("Starting dashboard only mode")
-            if args.mvc:
-                from app import run_app
-                run_app()
-            else:
-                from dashboard import run_dashboard
-                run_dashboard()
+            from app import run_app
+            run_app()
 
         elif args.once:
             # Run once and exit
@@ -184,12 +174,8 @@ def main():
             # Run scheduler with dashboard
             if not args.no_dashboard:
                 logger.info(f"Starting dashboard at http://{Config.DASHBOARD_HOST}:{Config.DASHBOARD_PORT}")
-                if args.mvc:
-                    from app import run_app
-                    run_app()
-                else:
-                    from dashboard import run_dashboard
-                    run_dashboard()
+                from app import run_app
+                run_app()
             else:
                 # Run scheduler in main thread (no dashboard)
                 run_scheduler()

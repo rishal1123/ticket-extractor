@@ -2,13 +2,14 @@
 Admin Controller - Handles admin panel routes.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from typing import Optional
 import threading
 
 from database import Database
 from services import ExtractionService, StatsService, ZnunyService
+from services.scheduler_service import get_scheduler
 from config import Config
 from utils.logger import get_logger
 
@@ -26,17 +27,21 @@ def get_db():
 
 @router.get("/scheduler-status")
 async def get_scheduler_status():
-    """Get scheduler status information."""
+    """Get scheduler status and next run time."""
     try:
-        import schedule
-        jobs = schedule.get_jobs()
+        import schedule as sched_lib
+        scheduler = get_scheduler()
+        status = scheduler.get_status()
+
+        jobs = sched_lib.get_jobs()
         next_run = None
         if jobs:
             next_run = str(jobs[0].next_run) if jobs[0].next_run else None
 
         return JSONResponse(content={
-            "running": len(jobs) > 0,
-            "interval_minutes": Config.EXTRACTION_INTERVAL_MINUTES,
+            "running": status["running"],
+            "interval_minutes": status["interval_minutes"],
+            "jobs_count": len(jobs),
             "next_run": next_run
         })
     except Exception as e:
@@ -44,45 +49,31 @@ async def get_scheduler_status():
         return JSONResponse(content={
             "running": False,
             "interval_minutes": Config.EXTRACTION_INTERVAL_MINUTES,
-            "next_run": None
+            "jobs_count": 0,
+            "next_run": None,
+            "error": str(e)
         })
 
 
 @router.post("/trigger-extraction")
 async def trigger_extraction():
-    """Manually trigger extraction."""
-    global _extraction_running
-
-    if _extraction_running:
-        return JSONResponse(content={
-            "success": False,
-            "message": "Extraction already in progress"
-        })
-
+    """Manually trigger portal extraction and Znuny sync."""
     try:
-        _extraction_running = True
+        scheduler = get_scheduler()
 
-        def run_extraction():
-            global _extraction_running
-            try:
-                service = ExtractionService()
-                service.extract_from_all_portals()
+        # Run extraction and sync in a background thread
+        def run_async():
+            scheduler.run_portal_extraction()
+            scheduler.run_znuny_sync()
 
-                # Also sync Znuny
-                znuny_service = ZnunyService()
-                znuny_service.sync_unchecked_tickets()
-            finally:
-                _extraction_running = False
-
-        thread = threading.Thread(target=run_extraction)
+        thread = threading.Thread(target=run_async, daemon=True)
         thread.start()
 
         return JSONResponse(content={
             "success": True,
-            "message": "Extraction triggered"
+            "message": "Extraction triggered in background"
         })
     except Exception as e:
-        _extraction_running = False
         logger.error(f"Error triggering extraction: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -178,4 +169,95 @@ async def get_delayed_tickets(
         return JSONResponse(content=data)
     except Exception as e:
         logger.error(f"Error getting delayed tickets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/login")
+async def admin_login(request: Request):
+    """Authenticate admin user."""
+    try:
+        data = await request.json()
+        password = data.get("password", "").strip()
+
+        db = get_db()
+        stored_password = db.get_setting("admin_password", "admin123")
+
+        if password == stored_password:
+            return JSONResponse(content={"success": True, "message": "Login successful"})
+        else:
+            return JSONResponse(content={"success": False, "message": "Invalid password"})
+    except Exception as e:
+        logger.error(f"Error in admin login: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/change-password")
+async def change_admin_password(request: Request):
+    """Change admin password."""
+    try:
+        data = await request.json()
+        current_password = data.get("current_password", "")
+        new_password = data.get("new_password", "")
+
+        db = get_db()
+        stored_password = db.get_setting("admin_password", "admin123")
+
+        if current_password != stored_password:
+            return JSONResponse(content={"success": False, "message": "Current password is incorrect"})
+
+        if len(new_password) < 4:
+            return JSONResponse(content={"success": False, "message": "Password must be at least 4 characters"})
+
+        db.set_setting("admin_password", new_password, "Password for admin panel access")
+        logger.info("Admin password changed")
+        return JSONResponse(content={"success": True, "message": "Password changed successfully"})
+    except Exception as e:
+        logger.error(f"Error changing admin password: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Settings router (separate prefix for /api/settings routes)
+settings_router = APIRouter(prefix="/api/settings")
+
+
+@settings_router.get("/performance-thresholds")
+async def get_performance_thresholds():
+    """Get performance threshold settings."""
+    try:
+        db = get_db()
+        thresholds = db.get_performance_thresholds()
+        return JSONResponse(content={"success": True, "thresholds": thresholds})
+    except Exception as e:
+        logger.error(f"Error getting performance thresholds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@settings_router.post("/performance-thresholds")
+async def update_performance_thresholds(request: Request):
+    """Update performance threshold settings."""
+    try:
+        data = await request.json()
+        db = get_db()
+        db.set_performance_thresholds(
+            good=int(data.get("good", 5)),
+            warning=int(data.get("warning", 10)),
+            bad=int(data.get("bad", 30)),
+            critical=int(data.get("critical", 60))
+        )
+        logger.info(f"Performance thresholds updated: {data}")
+        return JSONResponse(content={"success": True, "message": "Thresholds saved"})
+    except Exception as e:
+        logger.error(f"Error updating performance thresholds: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@settings_router.get("")
+async def get_all_settings():
+    """Get all app settings."""
+    try:
+        db = get_db()
+        settings = db.get_all_settings()
+        return JSONResponse(content={"success": True, "settings": settings})
+    except Exception as e:
+        logger.error(f"Error getting settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))

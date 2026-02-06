@@ -233,6 +233,20 @@ class ZnunyService:
         """Get Znuny articles for a ticket."""
         return self.db.get_znuny_articles(ticket_id=ticket_id)
 
+    def check_all_tickets_in_znuny(self) -> Dict:
+        """
+        Check Znuny status for all tickets not yet marked as in Znuny.
+        Alias for sync_unchecked_tickets with a different return format.
+
+        Returns:
+            Dict with checked and updated counts
+        """
+        result = self.sync_unchecked_tickets()
+        return {
+            "checked": result.get("checked", 0),
+            "updated": result.get("found", 0)
+        }
+
     def _complete_site_visits_by_followup(self, znuny_ticket_id: str, articles: list) -> int:
         """
         Check if any pending site visits should be completed based on follow-up articles.
@@ -301,6 +315,7 @@ class ZnunyService:
             "znuny_tickets_found": 0,
             "znuny_tickets_processed": 0,
             "znuny_tickets_skipped": 0,
+            "znuny_only_captured": 0,
             "site_visits_extracted": 0,
             "site_visits_linked": 0,
             "site_visits_completed": 0,
@@ -489,6 +504,28 @@ class ZnunyService:
                     # Check for follow-up articles to complete site visits
                     completed = self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
                     results["site_visits_completed"] += completed
+
+                    # Capture Znuny-only tickets (not linked to any ISP portal)
+                    if not isp_ticket and not self.db.is_ticket_linked_to_isp(znuny_ticket_id):
+                        # Get last article info for tracking
+                        last_article = details.articles[-1] if details.articles else None
+
+                        self.db.upsert_znuny_only_ticket({
+                            "znuny_ticket_id": znuny_ticket_id,
+                            "title": title,
+                            "state": ticket_info.get("state"),
+                            "queue": ticket_info.get("queue"),
+                            "priority": ticket_info.get("priority"),
+                            "created_at": details.created_at,
+                            "created_by": details.created_by,
+                            "closed_at": None,  # Open ticket
+                            "article_count": len(details.articles),
+                            "last_article_by": last_article.created_by if last_article else None,
+                            "last_article_at": last_article.created_at if last_article else None,
+                            "znuny_url": details.znuny_url
+                        })
+                        results["znuny_only_captured"] += 1
+                        logger.debug(f"Captured Znuny-only ticket: {znuny_ticket_id}")
 
                 except Exception as e:
                     logger.error(f"Error processing Znuny ticket {ticket_info.get('ticket_number', '?')}: {e}")

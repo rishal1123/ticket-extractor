@@ -10,65 +10,30 @@ Structure:
 """
 
 import os
-import time
-import threading
 from contextlib import asynccontextmanager
 
-import schedule
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from config import Config
 from database import Database
-from controllers import pages_router, api_router, admin_router
-from services import ExtractionService, ZnunyService
+from controllers import (
+    pages_router,
+    api_router,
+    admin_router,
+    settings_router,
+    field_visits_router,
+    znuny_only_router
+)
+from services.scheduler_service import get_scheduler
 from utils.logger import setup_logger, get_logger
 
 logger = get_logger("app")
 
 
-def scheduled_extraction():
-    """Run scheduled extraction task."""
-    logger.info("Starting scheduled extraction")
-    db = Database()
-
-    try:
-        extraction_service = ExtractionService(db)
-        results = extraction_service.extract_from_all_portals(headless=True)
-
-        total_found = results.get("total_found", 0)
-        total_new = results.get("total_new", 0)
-
-        logger.info(f"Extraction complete: {total_found} found, {total_new} new")
-
-        # Sync Znuny for newly found tickets
-        try:
-            znuny_service = ZnunyService(db)
-            znuny_service.sync_unchecked_tickets()
-        except Exception as e:
-            logger.error(f"Znuny sync failed: {e}")
-
-    except Exception as e:
-        logger.error(f"Scheduled extraction failed: {e}")
-
-
-def run_scheduler():
-    """Run the background scheduler."""
-    interval = Config.EXTRACTION_INTERVAL_MINUTES
-    logger.info(f"Starting scheduler with {interval} minute interval")
-
-    # Schedule periodic runs
-    schedule.every(interval).minutes.do(scheduled_extraction)
-
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan events."""
+    """Manage app lifespan - start scheduler on startup."""
     # Startup
     logger.info("Starting Ticket Extractor application")
 
@@ -76,20 +41,16 @@ async def lifespan(app: FastAPI):
     db = Database()
     logger.info("Database initialized")
 
-    # Run initial extraction
-    logger.info("Running initial extraction...")
-    threading.Thread(target=scheduled_extraction, daemon=True).start()
-
     # Start background scheduler
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
+    scheduler = get_scheduler()
+    scheduler.start()
     logger.info("Background scheduler started")
 
     yield
 
     # Shutdown
     logger.info("Shutting down application")
-    schedule.clear()
+    scheduler.stop()
 
 
 def create_app() -> FastAPI:
@@ -107,9 +68,15 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     # Include routers (controllers)
+    # Pages router (HTML pages - no prefix)
     app.include_router(pages_router)
-    app.include_router(api_router)
-    app.include_router(admin_router)
+
+    # API routers
+    app.include_router(api_router)              # /api/*
+    app.include_router(admin_router)            # /api/admin/*
+    app.include_router(settings_router)         # /api/settings/*
+    app.include_router(field_visits_router)     # /api/field-visits/*
+    app.include_router(znuny_only_router)       # /api/znuny-only/*
 
     return app
 

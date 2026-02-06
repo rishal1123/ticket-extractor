@@ -412,11 +412,13 @@ To update credentials or settings:
 
 ## Scheduler
 
-The background scheduler (in dashboard.py):
-1. Runs every 5 minutes (configurable)
+The background scheduler (managed by `SchedulerService` in `services/scheduler_service.py`):
+1. Runs every 5 minutes (configurable via `EXTRACTION_INTERVAL_MINUTES`)
 2. Extracts tickets from all configured portals
 3. Syncs Znuny status for unchecked tickets
 4. Logs all extraction results
+
+The scheduler is started automatically via the FastAPI lifespan in `app.py`.
 
 ## Portal-Specific Notes
 
@@ -448,7 +450,7 @@ The background scheduler (in dashboard.py):
 1. Create new extractor in `extractors/` inheriting from `BaseExtractor`
 2. Implement `login()`, `extract_tickets()`, `logout()`, `is_logged_in()`
 3. Add configuration in `config.py`
-4. Register in `dashboard.py` `get_extractor_class()`
+4. Register in `services/extraction_service.py` `get_extractor_class()`
 5. Add to `extractors/__init__.py`
 
 ### Modifying Ticket Fields
@@ -536,7 +538,17 @@ Two CSV export endpoints are available:
 ### Definition: "On Time"
 A ticket is considered "On Time" if it was created in Znuny within **5 minutes** of appearing in the extractor.
 
-**Calculation:** `created_at - znuny_created_at <= 5 minutes`
+**Calculation:** `znuny_created_at - created_at <= 5 minutes`
+
+### Negative Time / Historical Tickets
+Some tickets have **negative time differences** - these are historical tickets where the Znuny ticket existed before the extractor first saw it. This happens with tickets created before the extractor was running.
+
+**Exclude Negative Time Toggle:**
+- Located in the Staff Stats page filter section
+- **ON (default):** Excludes tickets with negative time from all calculations
+- **OFF:** Includes all tickets, showing negative avg times for historical data
+
+**API Parameter:** `/api/staff-stats-detailed?exclude_negative=true|false`
 
 ## Portal & Znuny URLs
 

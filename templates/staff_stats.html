@@ -164,6 +164,14 @@
                 <input type="date" class="form-control form-control-sm" id="dateTo" onchange="setDateFilter('custom')">
             </div>
         </div>
+        <div class="col-12 col-md-auto">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="excludeNegative" checked onchange="loadStaffStats()">
+                <label class="form-check-label small text-muted" for="excludeNegative" title="Exclude historical tickets where Znuny ticket existed before extractor saw it">
+                    Exclude negative time
+                </label>
+            </div>
+        </div>
     </div>
     <div class="mt-1 text-muted small" id="dateRangeInfo"></div>
 </div>
@@ -288,40 +296,43 @@ async function loadStaffStats() {
     try {
         const dateFrom = document.getElementById('dateFrom').value;
         const dateTo = document.getElementById('dateTo').value;
+        const excludeNegative = document.getElementById('excludeNegative').checked;
 
         let url = '/api/staff-stats-detailed';
         const params = new URLSearchParams();
         if (dateFrom) params.append('date_from', dateFrom);
         if (dateTo) params.append('date_to', dateTo);
+        params.append('exclude_negative', excludeNegative);
         if (params.toString()) url += '?' + params.toString();
 
         const response = await fetch(url);
         const data = await response.json();
+        const stats = data.stats || data;  // Handle both wrapped and unwrapped responses
 
-        document.getElementById('totalTickets').textContent = data.total_tickets || 0;
-        document.getElementById('totalArticles').textContent = data.total_articles || 0;
-        document.getElementById('totalStaff').textContent = data.staff?.length || 0;
+        document.getElementById('totalTickets').textContent = stats.total_tickets || 0;
+        document.getElementById('totalArticles').textContent = stats.total_articles || 0;
+        document.getElementById('totalStaff').textContent = stats.staff?.length || 0;
 
         // Calculate average on-time percentage
-        if (data.staff && data.staff.length > 0) {
-            const avgOnTime = data.staff.reduce((sum, s) => sum + (s.on_time_pct || 0), 0) / data.staff.length;
+        if (stats.staff && stats.staff.length > 0) {
+            const avgOnTime = stats.staff.reduce((sum, s) => sum + (s.on_time_pct || 0), 0) / stats.staff.length;
             const avgEl = document.getElementById('avgOnTime');
             avgEl.textContent = Math.round(avgOnTime) + '%';
             avgEl.className = 'stat-value ' + (avgOnTime >= 80 ? 'perf-good' : avgOnTime >= 50 ? 'perf-warning' : 'perf-bad');
         }
 
         const infoEl = document.getElementById('dateRangeInfo');
-        if (data.date_from && data.date_to) {
-            if (data.date_from === data.date_to) {
-                infoEl.textContent = `Stats for: ${data.date_from}`;
+        if (stats.date_from && stats.date_to) {
+            if (stats.date_from === stats.date_to) {
+                infoEl.textContent = `Stats for: ${stats.date_from}`;
             } else {
-                infoEl.textContent = `Stats from ${data.date_from} to ${data.date_to}`;
+                infoEl.textContent = `Stats from ${stats.date_from} to ${stats.date_to}`;
             }
         } else {
             infoEl.textContent = 'All-time stats';
         }
 
-        renderStaffTable(data.staff || []);
+        renderStaffTable(stats.staff || []);
     } catch (error) {
         console.error('Error loading staff stats:', error);
     } finally {

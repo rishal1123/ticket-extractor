@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Ticket Extractor{% endblock %}
+{% block nav_icon %}shield-lock{% endblock %}
+{% block nav_title %}Admin Login{% endblock %}
+{% block nav_title_short %}Login{% endblock %}
+
+{% block extra_css %}
+.login-container {
+    min-height: calc(100vh - 120px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.login-card {
+    max-width: 400px;
+    width: 100%;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+.login-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 12px 12px 0 0;
+    padding: 1.5rem;
+    text-align: center;
+}
+.login-header i {
+    font-size: 3rem;
+    margin-bottom: 0.5rem;
+}
+.login-body {
+    padding: 2rem;
+}
+.form-control:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+.btn-login {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: none;
+    padding: 0.75rem;
+    font-weight: 600;
+}
+.btn-login:hover {
+    background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+}
+.back-link {
+    text-align: center;
+    margin-top: 1rem;
+}
+.back-link a {
+    color: #6c757d;
+    text-decoration: none;
+}
+.back-link a:hover {
+    color: #495057;
+}
+{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-card card">
+        <div class="login-header">
+            <i class="bi bi-shield-lock-fill d-block"></i>
+            <h4 class="mb-0">Admin Login</h4>
+        </div>
+        <div class="login-body">
+            <form id="loginForm" onsubmit="submitLogin(event)">
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-key"></i></span>
+                        <input type="password" class="form-control" id="password" placeholder="Enter admin password" required autofocus>
+                        <button class="btn btn-outline-secondary" type="button" onclick="togglePassword()">
+                            <i class="bi bi-eye" id="toggleIcon"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="loginError" class="alert alert-danger d-none mb-3"></div>
+                <button type="submit" class="btn btn-primary btn-login w-100" id="loginBtn">
+                    <i class="bi bi-box-arrow-in-right me-2"></i>Login
+                </button>
+            </form>
+            <div class="back-link">
+                <a href="/"><i class="bi bi-arrow-left me-1"></i>Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+// Check if already logged in
+document.addEventListener('DOMContentLoaded', function() {
+    if (sessionStorage.getItem('adminLoggedIn') === 'true') {
+        // Already logged in, redirect to admin
+        window.location.href = '/admin';
+    }
+    document.getElementById('password').focus();
+});
+
+function togglePassword() {
+    const input = document.getElementById('password');
+    const icon = document.getElementById('toggleIcon');
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.classList.remove('bi-eye');
+        icon.classList.add('bi-eye-slash');
+    } else {
+        input.type = 'password';
+        icon.classList.remove('bi-eye-slash');
+        icon.classList.add('bi-eye');
+    }
+}
+
+async function submitLogin(e) {
+    e.preventDefault();
+    const password = document.getElementById('password').value.trim();
+    const btn = document.getElementById('loginBtn');
+    const errorDiv = document.getElementById('loginError');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split spinning me-2"></i>Verifying...';
+    errorDiv.classList.add('d-none');
+
+    try {
+        const response = await fetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            sessionStorage.setItem('adminLoggedIn', 'true');
+            // Redirect to admin page or return URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const returnUrl = urlParams.get('return') || '/admin';
+            window.location.href = returnUrl;
+        } else {
+            errorDiv.textContent = data.message || 'Invalid password';
+            errorDiv.classList.remove('d-none');
+            document.getElementById('password').value = '';
+            document.getElementById('password').focus();
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Error connecting to server';
+        errorDiv.classList.remove('d-none');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-box-arrow-in-right me-2"></i>Login';
+    }
+}
+{% endblock %}

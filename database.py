@@ -310,6 +310,33 @@ class Database:
             except:
                 pass  # Column already exists
 
+            # Znuny-only tickets table (tickets not linked to any ISP portal)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS znuny_tickets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    znuny_ticket_id TEXT UNIQUE NOT NULL,
+                    title TEXT,
+                    state TEXT,
+                    queue TEXT,
+                    priority TEXT,
+                    created_at DATETIME,
+                    created_by TEXT,
+                    closed_at DATETIME,
+                    time_to_close_minutes REAL,
+                    article_count INTEGER DEFAULT 0,
+                    last_article_by TEXT,
+                    last_article_at DATETIME,
+                    znuny_url TEXT,
+                    first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Indexes for znuny_tickets
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_state ON znuny_tickets(state)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_by ON znuny_tickets(created_by)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_at ON znuny_tickets(created_at)")
+
             logger.info("Database initialized successfully")
 
     def upsert_ticket(self, ticket: Ticket) -> tuple[int, bool, bool]:
@@ -969,8 +996,17 @@ class Database:
                 }
             }
 
-    def get_staff_detailed_stats(self, date_from: str = None, date_to: str = None, thresholds: dict = None) -> dict:
-        """Get detailed staff statistics including on-time percentages."""
+    def get_staff_detailed_stats(self, date_from: str = None, date_to: str = None,
+                                   thresholds: dict = None, exclude_negative: bool = True) -> dict:
+        """Get detailed staff statistics including on-time percentages.
+
+        Args:
+            date_from: Optional start date filter (YYYY-MM-DD)
+            date_to: Optional end date filter (YYYY-MM-DD)
+            thresholds: Optional dict with 'good', 'warning', 'bad', 'critical' thresholds
+            exclude_negative: If True (default), exclude tickets with negative time differences
+                              (historical tickets where Znuny ticket existed before extractor)
+        """
         # Use default thresholds if not provided
         if thresholds is None:
             thresholds = {"good": 5, "warning": 10, "bad": 30, "critical": 60}
@@ -991,13 +1027,20 @@ class Database:
                 date_filter += " AND DATE(znuny_created_at) <= ?"
                 params.append(date_to)
 
-            # Get tickets with time-to-create calculation (ignore negative times)
+            # Add filter for negative time if exclude_negative is True
+            negative_filter = ""
+            if exclude_negative:
+                negative_filter = " AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 >= 0"
+
+            # Get tickets with time-to-create calculation
+            # Time diff = znuny_created_at - created_at (positive = Znuny created after extractor saw it)
             cursor.execute(f"""
                 SELECT
                     znuny_created_by as staff,
                     COUNT(*) as total_tickets,
                     SUM(CASE WHEN
-                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 <= ?
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 >= 0
+                        AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 <= ?
                         THEN 1 ELSE 0 END) as within_good,
                     SUM(CASE WHEN
                         (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 > ?
@@ -1006,26 +1049,28 @@ class Database:
                     SUM(CASE WHEN
                         (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 > ?
                         THEN 1 ELSE 0 END) as over_warning,
-                    AVG((julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60) as avg_minutes
+                    AVG((julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60) as avg_minutes,
+                    COUNT(*) as tickets_with_valid_time
                 FROM tickets
                 WHERE znuny_created_by IS NOT NULL
                     AND znuny_created_by != ''
                     AND znuny_created_at IS NOT NULL
                     AND created_at IS NOT NULL
-                    AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) >= 0
+                    {negative_filter}
                     {date_filter}
                 GROUP BY znuny_created_by
             """, params)
 
             staff_tickets = {}
             for row in cursor.fetchall():
+                valid_tickets = row["tickets_with_valid_time"] or 0
                 staff_tickets[row["staff"]] = {
                     "tickets_created": row["total_tickets"],
                     "within_5min": row["within_good"] or 0,
                     "within_10min": row["within_warning"] or 0,
                     "over_10min": row["over_warning"] or 0,
                     "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0,
-                    "on_time_pct": round((row["within_good"] or 0) / row["total_tickets"] * 100, 1) if row["total_tickets"] > 0 else 0
+                    "on_time_pct": round((row["within_good"] or 0) / valid_tickets * 100, 1) if valid_tickets > 0 else 0
                 }
 
             # Get articles count
@@ -1153,26 +1198,36 @@ class Database:
                     DATE(znuny_created_at) as date,
                     COUNT(*) as tickets_created,
                     SUM(CASE WHEN
-                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 <= ?
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 >= 0
+                        AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 <= ?
                         THEN 1 ELSE 0 END) as within_good,
-                    AVG((julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60) as avg_minutes
+                    AVG(CASE WHEN
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 >= 0
+                        THEN (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60
+                        ELSE NULL END) as avg_minutes,
+                    SUM(CASE WHEN
+                        (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 >= 0
+                        THEN 1 ELSE 0 END) as valid_tickets
                 FROM tickets
                 WHERE znuny_created_by = ?
                     AND znuny_created_at IS NOT NULL
                     AND created_at IS NOT NULL
-                    AND (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) >= 0
                     AND DATE(znuny_created_at) >= DATE('now', ? || ' days')
                 GROUP BY DATE(znuny_created_at)
                 ORDER BY date DESC
             """, (t_good, staff_name, -days))
 
-            return [{
-                "date": row["date"],
-                "tickets_created": row["tickets_created"],
-                "within_5min": row["within_good"] or 0,
-                "on_time_pct": round((row["within_good"] or 0) / row["tickets_created"] * 100, 1) if row["tickets_created"] > 0 else 0,
-                "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0
-            } for row in cursor.fetchall()]
+            results = []
+            for row in cursor.fetchall():
+                valid = row["valid_tickets"] or 0
+                results.append({
+                    "date": row["date"],
+                    "tickets_created": row["tickets_created"],
+                    "within_5min": row["within_good"] or 0,
+                    "on_time_pct": round((row["within_good"] or 0) / valid * 100, 1) if valid > 0 else 0,
+                    "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0
+                })
+            return results
 
     def get_delayed_tickets_by_staff(self, min_delay_minutes: int = 5,
                                       date_from: str = None, date_to: str = None) -> list:
@@ -1694,3 +1749,230 @@ class Database:
         self.set_setting("perf_threshold_warning", str(warning))
         self.set_setting("perf_threshold_bad", str(bad))
         self.set_setting("perf_threshold_critical", str(critical))
+
+    # ==================== Znuny-Only Tickets ====================
+
+    def is_ticket_linked_to_isp(self, znuny_ticket_id: str) -> bool:
+        """Check if a Znuny ticket is linked to any ISP portal ticket."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 1 FROM tickets
+                WHERE znuny_ticket_id = ?
+                LIMIT 1
+            """, (znuny_ticket_id,))
+            return cursor.fetchone() is not None
+
+    def upsert_znuny_only_ticket(self, data: dict) -> int:
+        """Insert or update a Znuny-only ticket (not linked to ISP)."""
+        now = now_maldives()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Calculate time_to_close if closed
+            time_to_close = None
+            if data.get("closed_at") and data.get("created_at"):
+                try:
+                    created = data["created_at"]
+                    closed = data["closed_at"]
+                    if isinstance(created, str):
+                        created = datetime.fromisoformat(created.replace('Z', '+00:00'))
+                    if isinstance(closed, str):
+                        closed = datetime.fromisoformat(closed.replace('Z', '+00:00'))
+                    time_to_close = (closed - created).total_seconds() / 60
+                except Exception:
+                    pass
+
+            cursor.execute("""
+                INSERT INTO znuny_tickets
+                    (znuny_ticket_id, title, state, queue, priority, created_at, created_by,
+                     closed_at, time_to_close_minutes, article_count, last_article_by,
+                     last_article_at, znuny_url, first_seen_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(znuny_ticket_id) DO UPDATE SET
+                    title = excluded.title,
+                    state = excluded.state,
+                    queue = excluded.queue,
+                    priority = excluded.priority,
+                    closed_at = excluded.closed_at,
+                    time_to_close_minutes = excluded.time_to_close_minutes,
+                    article_count = excluded.article_count,
+                    last_article_by = excluded.last_article_by,
+                    last_article_at = excluded.last_article_at,
+                    znuny_url = excluded.znuny_url,
+                    updated_at = excluded.updated_at
+            """, (
+                data.get("znuny_ticket_id"),
+                data.get("title"),
+                data.get("state"),
+                data.get("queue"),
+                data.get("priority"),
+                data.get("created_at"),
+                data.get("created_by"),
+                data.get("closed_at"),
+                time_to_close,
+                data.get("article_count", 0),
+                data.get("last_article_by"),
+                data.get("last_article_at"),
+                data.get("znuny_url"),
+                now,
+                now
+            ))
+            return cursor.lastrowid
+
+    def get_znuny_only_tickets(self, state: str = None, created_by: str = None,
+                                date_from: str = None, date_to: str = None,
+                                limit: int = 100, offset: int = 0) -> dict:
+        """Get Znuny-only tickets with optional filters."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = "SELECT * FROM znuny_tickets WHERE 1=1"
+            params = []
+
+            if state:
+                if state.lower() == "open":
+                    query += " AND (state IS NULL OR LOWER(state) NOT IN ('closed', 'resolved'))"
+                elif state.lower() == "closed":
+                    query += " AND LOWER(state) IN ('closed', 'resolved')"
+                else:
+                    query += " AND LOWER(state) = LOWER(?)"
+                    params.append(state)
+
+            if created_by:
+                query += " AND LOWER(created_by) = LOWER(?)"
+                params.append(created_by)
+
+            if date_from:
+                query += " AND DATE(created_at) >= ?"
+                params.append(date_from)
+
+            if date_to:
+                query += " AND DATE(created_at) <= ?"
+                params.append(date_to)
+
+            # Get total count
+            count_query = query.replace("SELECT *", "SELECT COUNT(*)")
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+
+            # Get paginated results
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cursor.execute(query, params)
+
+            tickets = [{
+                "id": row["id"],
+                "znuny_ticket_id": row["znuny_ticket_id"],
+                "title": row["title"],
+                "state": row["state"],
+                "queue": row["queue"],
+                "priority": row["priority"],
+                "created_at": row["created_at"],
+                "created_by": row["created_by"],
+                "closed_at": row["closed_at"],
+                "time_to_close_minutes": row["time_to_close_minutes"],
+                "article_count": row["article_count"],
+                "last_article_by": row["last_article_by"],
+                "last_article_at": row["last_article_at"],
+                "znuny_url": row["znuny_url"],
+                "first_seen_at": row["first_seen_at"],
+                "updated_at": row["updated_at"]
+            } for row in cursor.fetchall()]
+
+            return {"total": total, "tickets": tickets}
+
+    def get_znuny_only_stats(self) -> dict:
+        """Get summary statistics for Znuny-only tickets."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Total count
+            cursor.execute("SELECT COUNT(*) as total FROM znuny_tickets")
+            total = cursor.fetchone()["total"]
+
+            # Open count (not closed/resolved)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM znuny_tickets
+                WHERE state IS NULL OR LOWER(state) NOT IN ('closed', 'resolved')
+            """)
+            open_count = cursor.fetchone()["count"]
+
+            # Closed count
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM znuny_tickets
+                WHERE LOWER(state) IN ('closed', 'resolved')
+            """)
+            closed_count = cursor.fetchone()["count"]
+
+            # Today's date in MVT
+            today = now_maldives().date().isoformat()
+
+            # Today's new (first seen today)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM znuny_tickets
+                WHERE DATE(first_seen_at) = ?
+            """, (today,))
+            today_new = cursor.fetchone()["count"]
+
+            # Avg time to close (for closed tickets)
+            cursor.execute("""
+                SELECT AVG(time_to_close_minutes) as avg_time FROM znuny_tickets
+                WHERE time_to_close_minutes IS NOT NULL
+            """)
+            avg_close_time = cursor.fetchone()["avg_time"]
+
+            return {
+                "total": total,
+                "open": open_count,
+                "closed": closed_count,
+                "today_new": today_new,
+                "avg_close_time_minutes": round(avg_close_time, 1) if avg_close_time else None
+            }
+
+    def get_znuny_only_staff_stats(self, date_from: str = None, date_to: str = None) -> list:
+        """Get staff statistics for Znuny-only tickets."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT
+                    created_by,
+                    COUNT(*) as total_tickets,
+                    SUM(CASE WHEN LOWER(state) IN ('closed', 'resolved') THEN 1 ELSE 0 END) as closed_tickets,
+                    AVG(CASE WHEN time_to_close_minutes IS NOT NULL THEN time_to_close_minutes END) as avg_close_time,
+                    SUM(article_count) as total_articles
+                FROM znuny_tickets
+                WHERE created_by IS NOT NULL AND created_by != ''
+            """
+            params = []
+
+            if date_from:
+                query += " AND DATE(created_at) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(created_at) <= ?"
+                params.append(date_to)
+
+            query += " GROUP BY created_by ORDER BY total_tickets DESC"
+            cursor.execute(query, params)
+
+            return [{
+                "created_by": row["created_by"],
+                "total_tickets": row["total_tickets"],
+                "closed_tickets": row["closed_tickets"] or 0,
+                "open_tickets": row["total_tickets"] - (row["closed_tickets"] or 0),
+                "avg_close_time_minutes": round(row["avg_close_time"], 1) if row["avg_close_time"] else None,
+                "total_articles": row["total_articles"] or 0
+            } for row in cursor.fetchall()]
+
+    def get_znuny_only_staff_names(self) -> list:
+        """Get list of staff names who created Znuny-only tickets."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT created_by FROM znuny_tickets
+                WHERE created_by IS NOT NULL AND created_by != ''
+                ORDER BY created_by
+            """)
+            return [row["created_by"] for row in cursor.fetchall()]

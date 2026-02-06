@@ -56,42 +56,31 @@ async def get_tickets(
     search: Optional[str] = None,
     in_znuny: Optional[bool] = None,
     include_completed: bool = False,
+    completed_only: bool = False,
     staff: Optional[str] = None,
     limit: int = Query(default=50, le=1000),
     offset: int = 0
 ):
-    """Get tickets with optional filters."""
+    """Get tickets with optional filters (SQL-level filtering)."""
     try:
         db = get_db()
-        # Get all tickets first, then filter in-memory
-        all_tickets = db.get_all_tickets(portal=portal, include_completed=include_completed)
-
-        # Apply additional filters
-        filtered = all_tickets
-        if status:
-            filtered = [t for t in filtered if t.status == status]
-        if ticket_type:
-            filtered = [t for t in filtered if t.ticket_type == ticket_type]
-        if in_znuny is not None:
-            filtered = [t for t in filtered if t.in_znuny == in_znuny]
-        if staff:
-            filtered = [t for t in filtered if t.znuny_created_by == staff]
-        if search:
-            search_lower = search.lower()
-            filtered = [t for t in filtered if (
-                (t.ticket_id and search_lower in t.ticket_id.lower()) or
-                (t.customer_name and search_lower in t.customer_name.lower()) or
-                (t.address and search_lower in t.address.lower()) or
-                (t.account and search_lower in t.account.lower())
-            )]
-
-        total = len(filtered)
-        # Apply pagination
-        paginated = filtered[offset:offset + limit]
+        # Use database-level filtering for efficiency
+        tickets, total = db.get_tickets_filtered(
+            portal=portal,
+            status=status,
+            ticket_type=ticket_type,
+            in_znuny=in_znuny,
+            staff=staff,
+            search=search,
+            include_completed=include_completed or completed_only,
+            completed_only=completed_only,
+            limit=limit,
+            offset=offset
+        )
 
         return JSONResponse(content={
             "total": total,
-            "tickets": [_ticket_to_dict(t) for t in paginated]
+            "tickets": [_ticket_to_dict(t) for t in tickets]
         })
     except Exception as e:
         logger.error(f"Error getting tickets: {e}")
@@ -166,6 +155,36 @@ async def get_ticket_znuny_articles(ticket_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/tickets/{ticket_id}/site-visits")
+async def get_ticket_site_visits(ticket_id: int):
+    """Get site visits for a ticket."""
+    try:
+        db = get_db()
+        ticket = db.get_ticket_by_id(ticket_id)
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        visits = db.get_site_visits_for_ticket(ticket_id)
+        return JSONResponse(content={"visits": visits})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting site visits for ticket {ticket_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tickets/check-all-znuny")
+async def check_all_znuny_status():
+    """Check Znuny status for all tickets not yet marked as in Znuny."""
+    try:
+        service = get_znuny_service()
+        result = service.check_all_tickets_in_znuny()
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error checking all Znuny status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Znuny sync endpoints
 @router.get("/znuny-sync-status")
 async def get_znuny_sync_status():
@@ -209,12 +228,22 @@ async def get_staff_stats(
 @router.get("/staff-stats-detailed")
 async def get_staff_stats_detailed(
     date_from: Optional[str] = None,
-    date_to: Optional[str] = None
+    date_to: Optional[str] = None,
+    exclude_negative: bool = True
 ):
-    """Get detailed staff statistics with on-time metrics."""
+    """Get detailed staff statistics with on-time metrics.
+
+    Args:
+        date_from: Optional start date filter (YYYY-MM-DD)
+        date_to: Optional end date filter (YYYY-MM-DD)
+        exclude_negative: If True (default), exclude tickets with negative time differences
+                          (historical tickets where Znuny existed before extractor)
+    """
     try:
         service = get_stats_service()
-        stats = service.get_staff_stats_detailed(date_from=date_from, date_to=date_to)
+        stats = service.get_staff_stats_detailed(
+            date_from=date_from, date_to=date_to, exclude_negative=exclude_negative
+        )
         return JSONResponse(content={"stats": stats})
     except Exception as e:
         logger.error(f"Error getting detailed staff stats: {e}")
@@ -263,10 +292,38 @@ async def get_staff_names():
     try:
         service = get_stats_service()
         names = service.get_staff_names()
-        return JSONResponse(content={"names": names})
+        return JSONResponse(content={"staff": names})
     except Exception as e:
         logger.error(f"Error getting staff names: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/staff-delays")
+async def get_staff_delays(
+    min_delay: int = Query(5, ge=1),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None
+):
+    """Get delayed tickets grouped by staff."""
+    try:
+        db = get_db()
+        delays = db.get_delayed_tickets_by_staff(min_delay, date_from, date_to)
+        return JSONResponse(content={"delays": delays})
+    except Exception as e:
+        logger.error(f"Error getting staff delays: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/portals")
+async def get_portals():
+    """Get list of available portals."""
+    portals = [
+        {"name": "dhiraagu", "label": "Dhiraagu"},
+        {"name": "ooredoo", "label": "Ooredoo"},
+        {"name": "rol", "label": "ROL"},
+        {"name": "medianet", "label": "Medianet"}
+    ]
+    return JSONResponse(content={"portals": portals})
 
 
 # Export endpoints

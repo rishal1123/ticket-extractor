@@ -49,18 +49,22 @@ class StatsService:
         """
         return self.db.get_staff_stats(date_from=date_from, date_to=date_to)
 
-    def get_staff_stats_detailed(self, date_from: str = None, date_to: str = None) -> Dict:
+    def get_staff_stats_detailed(self, date_from: str = None, date_to: str = None,
+                                    exclude_negative: bool = True) -> Dict:
         """
         Get detailed staff statistics including on-time metrics.
 
         Args:
             date_from: Optional start date (YYYY-MM-DD)
             date_to: Optional end date (YYYY-MM-DD)
+            exclude_negative: If True (default), exclude tickets with negative time differences
 
         Returns:
             Dict with staff list and totals
         """
-        return self.db.get_staff_detailed_stats(date_from=date_from, date_to=date_to)
+        return self.db.get_staff_detailed_stats(
+            date_from=date_from, date_to=date_to, exclude_negative=exclude_negative
+        )
 
     def get_staff_tickets(self, staff_name: str, date_from: str = None,
                           date_to: str = None, limit: int = 50, offset: int = 0) -> Dict:

@@ -147,6 +147,22 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
+        <a href="/znuny-tickets" class="text-decoration-none">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #7c3aed;" title="View Znuny-only tickets">
+                <div class="card-body text-center py-3">
+                    <div class="stat-value" style="color: #7c3aed;" id="znunyOnlyCount">0</div>
+                    <div class="fw-semibold mb-1" style="color: #7c3aed;">Znuny Only</div>
+                    <div class="extraction-info">
+                        <small class="text-muted">Open: <span id="znunyOnlyOpen">0</span></small>
+                    </div>
+                    <div class="today-count mt-1">
+                        <small class="badge" style="background-color: #7c3aed; color: white;">Today: <span id="todayZnunyOnly">0</span></small>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card card h-100" style="border-left: 4px solid #dc3545;">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-danger" id="notInZnuny">0</div>
@@ -331,6 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadTickets();
     loadDelayedTickets();
     loadZnunySyncStatus();
+    loadZnunyOnlyStats();
     setInterval(refreshAll, 30000);
 });
 
@@ -611,6 +628,20 @@ function refreshAll() {
     loadTickets();
     loadDelayedTickets();
     loadZnunySyncStatus();
+    loadZnunyOnlyStats();
+}
+
+async function loadZnunyOnlyStats() {
+    try {
+        const response = await fetch('/api/znuny-only/stats');
+        const stats = await response.json();
+
+        document.getElementById('znunyOnlyCount').textContent = stats.total || 0;
+        document.getElementById('znunyOnlyOpen').textContent = stats.open || 0;
+        document.getElementById('todayZnunyOnly').textContent = stats.today_new || 0;
+    } catch (error) {
+        console.error('Error loading znuny-only stats:', error);
+    }
 }
 
 function updateExtractionInfo(portal, info) {
