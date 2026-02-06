@@ -42,35 +42,51 @@
 {% block content %}
 <!-- Performance Summary -->
 <div class="row mb-3 g-2">
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card card h-100">
             <div class="card-body perf-card">
-                <div class="perf-value text-primary" id="totalTickets">--</div>
-                <div class="small text-muted">Tickets Created</div>
+                <div class="perf-value text-success" id="totalTickets">--</div>
+                <div class="small text-muted">ISP Tickets</div>
             </div>
         </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body perf-card">
+                <div class="perf-value" id="znunyOnlyCount" style="color: #8a2be2;">--</div>
+                <div class="small text-muted">Znuny Only</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body perf-card">
+                <div class="perf-value text-info" id="totalArticles">--</div>
+                <div class="small text-muted">Articles</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100">
+            <div class="card-body perf-card">
+                <div class="perf-value text-warning" id="siteVisitsCount">--</div>
+                <div class="small text-muted">Site Visits</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card card h-100">
             <div class="card-body perf-card">
                 <div class="perf-value" id="onTimePercent">--</div>
-                <div class="small text-muted">On Time (&lt;5min)</div>
+                <div class="small text-muted">On Time %</div>
             </div>
         </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card card h-100">
             <div class="card-body perf-card">
-                <div class="perf-value text-info" id="avgTime">--</div>
+                <div class="perf-value text-primary" id="avgTime">--</div>
                 <div class="small text-muted">Avg Time</div>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="stat-card card h-100">
-            <div class="card-body perf-card">
-                <div class="perf-value text-secondary" id="totalArticles">--</div>
-                <div class="small text-muted">Articles Written</div>
             </div>
         </div>
     </div>
@@ -163,8 +179,8 @@
 <!-- Tickets List -->
 <div class="table-container">
     <div class="d-flex justify-content-between align-items-center mb-3">
-        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Tickets Created</h6>
-        <span class="badge bg-secondary" id="ticketCount">--</span>
+        <h6 class="mb-0"><i class="bi bi-ticket-detailed me-2"></i>ISP Tickets Created</h6>
+        <span class="badge bg-success" id="ticketCount">--</span>
     </div>
     <div class="table-responsive">
         <table class="table table-hover table-sm mb-0">
@@ -188,6 +204,32 @@
         <nav>
             <ul class="pagination pagination-sm mb-0" id="pagination"></ul>
         </nav>
+    </div>
+</div>
+
+<!-- Site Visits -->
+<div class="table-container mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0"><i class="bi bi-geo-alt me-2"></i>Site Visits Assigned</h6>
+        <span class="badge bg-warning text-dark" id="siteVisitsBadge">--</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th class="d-none d-sm-table-cell">Provider</th>
+                    <th class="d-none d-md-table-cell">Site Type</th>
+                    <th>Status</th>
+                    <th class="d-none d-sm-table-cell">Duration</th>
+                    <th>Znuny</th>
+                </tr>
+            </thead>
+            <tbody id="siteVisitsTable">
+                <tr><td colspan="7" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}
@@ -251,18 +293,23 @@ async function loadStaffData() {
         const params = new URLSearchParams();
         if (dateFrom) params.append('date_from', dateFrom);
         if (dateTo) params.append('date_to', dateTo);
+        params.append('exclude_negative', 'false');  // Include all for individual staff
         if (params.toString()) url += '?' + params.toString();
 
         const response = await fetch(url);
         const data = await response.json();
+        const stats = data.stats || data;  // Handle wrapped response
 
-        const staffData = data.staff.find(s => s.name === staffName);
+        const staffData = stats.staff?.find(s => s.name === staffName);
         if (staffData) {
             updateSummary(staffData);
         }
 
         // Load tickets
         await loadTickets();
+
+        // Load site visits
+        await loadSiteVisits();
     } catch (error) {
         console.error('Error loading staff data:', error);
     } finally {
@@ -272,7 +319,18 @@ async function loadStaffData() {
 
 function updateSummary(data) {
     document.getElementById('totalTickets').textContent = data.tickets_created || 0;
+    document.getElementById('znunyOnlyCount').textContent = data.znuny_only_count || 0;
     document.getElementById('totalArticles').textContent = data.articles_count || 0;
+
+    // Site visits display
+    const siteVisitsTotal = data.site_visits_total || 0;
+    const siteVisitsCompleted = data.site_visits_completed || 0;
+    const siteVisitsEl = document.getElementById('siteVisitsCount');
+    if (siteVisitsTotal > 0) {
+        siteVisitsEl.textContent = `${siteVisitsCompleted}/${siteVisitsTotal}`;
+    } else {
+        siteVisitsEl.textContent = '0';
+    }
 
     const onTimePct = data.on_time_pct || 0;
     const onTimeEl = document.getElementById('onTimePercent');
@@ -280,7 +338,14 @@ function updateSummary(data) {
     onTimeEl.className = 'perf-value ' + (onTimePct >= 80 ? 'trend-good' : onTimePct >= 50 ? 'trend-warning' : 'trend-bad');
 
     const avgMin = data.avg_minutes || 0;
-    document.getElementById('avgTime').textContent = avgMin < 60 ? avgMin + 'm' : Math.floor(avgMin/60) + 'h ' + Math.round(avgMin%60) + 'm';
+    const avgTimeEl = document.getElementById('avgTime');
+    if (avgMin < 0) {
+        avgTimeEl.textContent = '-';
+    } else if (avgMin < 60) {
+        avgTimeEl.textContent = Math.round(avgMin) + 'm';
+    } else {
+        avgTimeEl.textContent = Math.floor(avgMin/60) + 'h ' + Math.round(avgMin%60) + 'm';
+    }
 
     // Breakdown
     const total = data.tickets_created || 1;
@@ -406,5 +471,56 @@ function exportCSV() {
     if (dateFrom) url += `&date_from=${dateFrom}`;
     if (dateTo) url += `&date_to=${dateTo}`;
     window.location.href = url;
+}
+
+async function loadSiteVisits() {
+    try {
+        const { dateFrom, dateTo } = getDateRange();
+        let url = `/api/field-visits?assigned_to=${encodeURIComponent(staffName)}`;
+        if (dateFrom) url += `&date_from=${dateFrom}`;
+        if (dateTo) url += `&date_to=${dateTo}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        const visits = data.visits || [];
+        const completed = visits.filter(v => v.status === 'completed').length;
+        document.getElementById('siteVisitsBadge').textContent = visits.length > 0
+            ? `${completed}/${visits.length}`
+            : '0';
+
+        const tbody = document.getElementById('siteVisitsTable');
+        if (visits.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No site visits found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = visits.map(v => {
+            const statusBadge = v.status === 'completed'
+                ? '<span class="badge bg-success">Completed</span>'
+                : '<span class="badge bg-warning text-dark">Pending</span>';
+            const duration = v.time_taken_minutes
+                ? (v.time_taken_minutes < 60 ? `${Math.round(v.time_taken_minutes)}m` : `${Math.floor(v.time_taken_minutes/60)}h ${Math.round(v.time_taken_minutes%60)}m`)
+                : '-';
+            const znunyLink = v.znuny_url
+                ? `<a href="${v.znuny_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-1"><i class="bi bi-box-arrow-up-right"></i></a>`
+                : '-';
+            return `
+                <tr>
+                    <td>${v.visit_date || '-'}</td>
+                    <td>${v.scheduled_time || '-'}</td>
+                    <td class="d-none d-sm-table-cell">${v.service_provider || '-'}</td>
+                    <td class="d-none d-md-table-cell">${v.site_type || '-'}</td>
+                    <td>${statusBadge}</td>
+                    <td class="d-none d-sm-table-cell">${duration}</td>
+                    <td>${znunyLink}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Error loading site visits:', error);
+        document.getElementById('siteVisitsTable').innerHTML =
+            '<tr><td colspan="7" class="text-center text-muted py-3">Error loading site visits</td></tr>';
+    }
 }
 {% endblock %}
