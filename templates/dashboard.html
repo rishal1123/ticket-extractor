@@ -133,20 +133,6 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #27ae60;">
-            <div class="card-body text-center py-3">
-                <div class="stat-value" style="color: #27ae60;" id="openInZnuny">0</div>
-                <div class="fw-semibold mb-1" style="color: #27ae60;">In Znuny</div>
-                <div class="extraction-info">
-                    <small class="text-muted">Active tickets</small>
-                </div>
-                <div class="today-count mt-1">
-                    <small class="badge bg-success">Today: <span id="todayZnunyEntries">0</span></small>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-4 col-lg-2">
         <a href="/znuny-tickets" class="text-decoration-none">
             <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #7c3aed;" title="View Znuny-only tickets">
                 <div class="card-body text-center py-3">
@@ -508,10 +494,6 @@ async function loadStats() {
         updateExtractionInfo('ooredoo', lastExtraction['ooredoo']);
         updateExtractionInfo('rol', lastExtraction['rol']);
         updateExtractionInfo('medianet', lastExtraction['medianet']);
-
-        // Znuny stats
-        document.getElementById('openInZnuny').textContent = stats.open_in_znuny || 0;
-        document.getElementById('todayZnunyEntries').textContent = stats.today_znuny_entries || 0;
 
         // Today's extractions per portal
         const todayExtracted = stats.today_extracted || {};
