@@ -412,10 +412,17 @@ class ZnunyService:
                             results["isp_tickets_synced"] += 1
 
                     # Check if we can skip detail fetching for this ticket
-                    # Skip if: no ISP ticket link needed AND already synced AND no pending visits
+                    # NEVER skip tickets with "site visit" in title - always check for new articles
+                    has_site_visit_in_title = "site visit" in title.lower()
                     has_pending_visits = self.db.has_pending_site_visits(znuny_ticket_id)
 
-                    if (znuny_ticket_id in synced_znuny_ids and
+                    # Only skip if:
+                    # - No "site visit" in title (tickets with site visits need full processing)
+                    # - Already synced (has site visits extracted before)
+                    # - No pending visits needing completion
+                    # - ISP ticket (if any) already has details synced
+                    if (not has_site_visit_in_title and
+                        znuny_ticket_id in synced_znuny_ids and
                         not has_pending_visits and
                         (not isp_ticket or isp_ticket.znuny_created_by)):
                         results["znuny_tickets_skipped"] += 1
