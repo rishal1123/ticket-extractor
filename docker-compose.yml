@@ -16,5 +16,17 @@ services:
       # Override settings for container
       - DASHBOARD_HOST=0.0.0.0
       - DASHBOARD_PORT=8000
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
     shm_size: '2gb'  # Required for Chrome
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

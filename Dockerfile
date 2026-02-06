@@ -34,5 +34,5 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 
-# Run the application
-CMD ["python", "dashboard.py"]
+# Run the application (MVC architecture)
+CMD ["python", "app.py"]
