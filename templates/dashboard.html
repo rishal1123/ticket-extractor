@@ -537,13 +537,24 @@ async function loadZnunySyncStatus() {
         const status = await response.json();
 
         const notInZnuny = status.not_in_znuny || 0;
-        document.getElementById('notInZnuny').textContent = notInZnuny;
+        const notInZnunyEl = document.getElementById('notInZnuny');
+        notInZnunyEl.textContent = notInZnuny;
+
+        // Change color based on count - green when 0, red when > 0
+        const colorClass = notInZnuny === 0 ? 'text-success' : 'text-danger';
+        notInZnunyEl.className = 'stat-value ' + colorClass;
+
+        // Also update the label color
+        const labelEl = notInZnunyEl.nextElementSibling;
+        if (labelEl) {
+            labelEl.className = 'fw-semibold mb-1 ' + colorClass;
+        }
 
         // Update sync info display
         const el = document.getElementById('znunySyncInfo');
         if (el) {
-            const statusClass = notInZnuny === 0 ? 'success' : (notInZnuny > 5 ? 'failed' : 'success');
-            const statusText = notInZnuny === 0 ? 'Synced' : 'Pending';
+            const statusClass = notInZnuny === 0 ? 'success' : 'failed';
+            const statusText = notInZnuny === 0 ? 'All Synced' : 'Pending';
             const pendingText = status.pending_sync > 0 ? `${status.pending_sync} pending` : 'Details synced';
             const lastSyncText = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
 
