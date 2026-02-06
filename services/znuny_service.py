@@ -143,7 +143,10 @@ class ZnunyService:
 
     def sync_unchecked_tickets(self) -> Dict:
         """
-        Check Znuny status for all tickets that haven't been checked yet.
+        OPTIMIZED: Check Znuny status for all tickets that haven't been checked yet.
+
+        This method ONLY checks if tickets exist in Znuny and sets the znuny_ticket_id.
+        Full detail syncing (articles, site visits) is handled by sync_all_site_visits().
 
         Returns:
             Dict with sync statistics
@@ -153,6 +156,12 @@ class ZnunyService:
         tickets = [t for t in all_tickets if not t.in_znuny]
 
         results = {"checked": 0, "found": 0, "not_found": 0, "errors": 0}
+
+        if not tickets:
+            logger.info("No unchecked tickets to sync")
+            return results
+
+        logger.info(f"Checking {len(tickets)} tickets in Znuny")
 
         for ticket in tickets:
             search_term = ticket.account if ticket.portal == "rol" and ticket.account else ticket.ticket_id
@@ -166,52 +175,14 @@ class ZnunyService:
 
                 if exists:
                     results["found"] += 1
-                    # Sync details for found tickets
-                    details = self.znuny_client.get_ticket_details(znuny_id)
-                    if details:
-                        self.db.update_znuny_details(
-                            ticket.id,
-                            znuny_created_at=details.created_at,
-                            znuny_created_by=details.created_by,
-                            znuny_address=details.address,
-                            znuny_url=details.znuny_url
-                        )
-                        for article in details.articles:
-                            self.db.upsert_znuny_article(
-                                ticket_id=ticket.id,
-                                znuny_ticket_id=znuny_id,
-                                article_number=article.article_number,
-                                sender=article.sender,
-                                via=article.via,
-                                subject=article.subject,
-                                created_at=article.created_at,
-                                created_at_str=article.created_at_str,
-                                created_by=article.created_by,
-                                body=article.body
-                            )
-
-                            # Check for site visit articles
-                            site_visit = parse_site_visit_article(article, znuny_id)
-                            if site_visit:
-                                self.db.upsert_site_visit(
-                                    znuny_ticket_id=site_visit.znuny_ticket_id,
-                                    article_id=site_visit.article_number,
-                                    site_type=site_visit.site_type,
-                                    service_provider=site_visit.service_provider,
-                                    scheduled_time=site_visit.scheduled_time,
-                                    assigned_to=site_visit.assigned_to,
-                                    visit_date=site_visit.visit_date,
-                                    article_created_at=site_visit.article_created_at,
-                                    ticket_id=ticket.id,
-                                    znuny_url=details.znuny_url
-                                )
+                    logger.info(f"Found {ticket.portal}/{ticket.ticket_id} in Znuny as {znuny_id}")
                 else:
                     results["not_found"] += 1
             except Exception as e:
                 logger.error(f"Error checking ticket {ticket.id}: {e}")
                 results["errors"] += 1
 
-        logger.info(f"Znuny sync complete: {results}")
+        logger.info(f"ISP ticket check complete: {results['found']}/{results['checked']} found in Znuny")
         return results
 
     def sync_all_znuny_details(self) -> Dict:
@@ -315,13 +286,14 @@ class ZnunyService:
     def sync_all_site_visits(self, force_refresh: bool = False) -> Dict:
         """
         OPTIMIZED comprehensive site visit sync:
-        1. Get open tickets from Znuny (uses TTL cache unless force_refresh)
-        2. Prioritize tickets that:
+        1. Sync details for ISP tickets that have znuny_ticket_id but no details yet
+        2. Get open tickets from Znuny (uses TTL cache unless force_refresh)
+        3. Prioritize tickets that:
            - Have "site visit" in title (need site visit extraction)
            - Are linked to unsynced ISP tickets
            - Have pending site visits needing completion check
-        3. Skip fully-synced tickets that don't need updates
-        4. Extract site visits from articles with "OAN Site Visit Arranged"
+        4. Skip fully-synced tickets that don't need updates
+        5. Extract site visits from articles with "OAN Site Visit Arranged"
 
         Returns sync statistics.
         """
@@ -333,12 +305,64 @@ class ZnunyService:
             "site_visits_linked": 0,
             "site_visits_completed": 0,
             "isp_tickets_synced": 0,
+            "isp_details_synced": 0,
             "errors": 0
         }
 
         logger.info("Starting optimized Znuny sync")
 
         try:
+            # Step 0: Sync details for ISP tickets that were just linked to Znuny
+            # (have znuny_ticket_id but no znuny_created_by)
+            unsynced_isp = self.db.get_tickets_needing_znuny_details()
+            if unsynced_isp:
+                logger.info(f"Syncing details for {len(unsynced_isp)} newly linked ISP tickets")
+                for ticket in unsynced_isp:
+                    try:
+                        details = self.znuny_client.get_ticket_details(ticket.znuny_ticket_id)
+                        if details:
+                            self.db.update_znuny_details(
+                                ticket.id,
+                                znuny_created_at=details.created_at,
+                                znuny_created_by=details.created_by,
+                                znuny_address=details.address,
+                                znuny_url=details.znuny_url
+                            )
+                            # Store articles
+                            for article in details.articles:
+                                self.db.upsert_znuny_article(
+                                    ticket_id=ticket.id,
+                                    znuny_ticket_id=ticket.znuny_ticket_id,
+                                    article_number=article.article_number,
+                                    sender=article.sender,
+                                    via=article.via,
+                                    subject=article.subject,
+                                    created_at=article.created_at,
+                                    created_at_str=article.created_at_str,
+                                    created_by=article.created_by,
+                                    body=article.body
+                                )
+                                # Extract site visits
+                                site_visit = parse_site_visit_article(article, ticket.znuny_ticket_id)
+                                if site_visit:
+                                    self.db.upsert_site_visit(
+                                        znuny_ticket_id=site_visit.znuny_ticket_id,
+                                        article_id=site_visit.article_number,
+                                        site_type=site_visit.site_type,
+                                        service_provider=site_visit.service_provider,
+                                        scheduled_time=site_visit.scheduled_time,
+                                        assigned_to=site_visit.assigned_to,
+                                        visit_date=site_visit.visit_date,
+                                        article_created_at=site_visit.article_created_at,
+                                        ticket_id=ticket.id,
+                                        znuny_url=details.znuny_url
+                                    )
+                                    results["site_visits_extracted"] += 1
+                            results["isp_details_synced"] += 1
+                    except Exception as e:
+                        logger.error(f"Error syncing details for ticket {ticket.id}: {e}")
+                        results["errors"] += 1
+
             # Step 1: Get open tickets from Znuny (uses TTL-based cache)
             all_tickets = self.znuny_client.get_open_tickets(force_refresh=force_refresh)
             results["znuny_tickets_found"] = len(all_tickets)

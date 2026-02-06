@@ -536,6 +536,18 @@ class Database:
             row = cursor.fetchone()
             return self._row_to_ticket(row) if row else None
 
+    def get_tickets_needing_znuny_details(self) -> list[Ticket]:
+        """Get tickets that have znuny_ticket_id but no znuny_created_by (need detail sync)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM tickets
+                WHERE in_znuny = 1 AND znuny_ticket_id IS NOT NULL
+                AND (znuny_created_by IS NULL OR znuny_created_by = '')
+                AND completed_at IS NULL
+            """)
+            return [self._row_to_ticket(row) for row in cursor.fetchall()]
+
     def get_ticket_notes_history(self, ticket_id: int) -> list[dict]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
