@@ -84,6 +84,9 @@
                 <div class="extraction-info" id="dhiraaguExtraction">
                     <small class="text-muted">--</small>
                 </div>
+                <div class="today-count mt-1">
+                    <small class="badge bg-light text-dark border">Today: <span id="todayDhiraagu">0</span></small>
+                </div>
             </div>
         </div>
     </div>
@@ -94,6 +97,9 @@
                 <div class="portal-name fw-semibold mb-1" style="color: #9b59b6;">Ooredoo</div>
                 <div class="extraction-info" id="ooredooExtraction">
                     <small class="text-muted">--</small>
+                </div>
+                <div class="today-count mt-1">
+                    <small class="badge bg-light text-dark border">Today: <span id="todayOoredoo">0</span></small>
                 </div>
             </div>
         </div>
@@ -106,6 +112,9 @@
                 <div class="extraction-info" id="rolExtraction">
                     <small class="text-muted">--</small>
                 </div>
+                <div class="today-count mt-1">
+                    <small class="badge bg-light text-dark border">Today: <span id="todayRol">0</span></small>
+                </div>
             </div>
         </div>
     </div>
@@ -117,14 +126,23 @@
                 <div class="extraction-info" id="medianetExtraction">
                     <small class="text-muted">--</small>
                 </div>
+                <div class="today-count mt-1">
+                    <small class="badge bg-light text-dark border">Today: <span id="todayMedianet">0</span></small>
+                </div>
             </div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #2c3e50;">
+        <div class="stat-card card h-100" style="border-left: 4px solid #27ae60;">
             <div class="card-body text-center py-3">
-                <div class="stat-value text-dark" id="totalTickets">0</div>
-                <div class="text-muted small">Total Active</div>
+                <div class="stat-value" style="color: #27ae60;" id="openInZnuny">0</div>
+                <div class="fw-semibold mb-1" style="color: #27ae60;">In Znuny</div>
+                <div class="extraction-info">
+                    <small class="text-muted">Active tickets</small>
+                </div>
+                <div class="today-count mt-1">
+                    <small class="badge bg-success">Today: <span id="todayZnunyEntries">0</span></small>
+                </div>
             </div>
         </div>
     </div>
@@ -136,43 +154,8 @@
                 <div class="extraction-info" id="znunySyncInfo">
                     <small class="text-muted">--</small>
                 </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Today's Activity Section -->
-<div class="row mb-4 g-2">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-body py-2">
-                <div class="row align-items-center g-2">
-                    <div class="col-12 col-md-auto">
-                        <strong class="text-muted small"><i class="bi bi-calendar-check me-1"></i>Today:</strong>
-                    </div>
-                    <div class="col-6 col-md-auto">
-                        <span class="badge bg-light text-dark border me-1">
-                            <i class="bi bi-download me-1"></i>Extracted: <strong id="todayExtractedTotal">0</strong>
-                        </span>
-                    </div>
-                    <div class="col-6 col-md-auto">
-                        <span class="badge bg-success me-1">
-                            <i class="bi bi-box-arrow-in-right me-1"></i>In Znuny: <strong id="todayZnunyEntries">0</strong>
-                        </span>
-                    </div>
-                    <div class="col-6 col-md-auto">
-                        <span class="badge bg-info">
-                            <i class="bi bi-folder2-open me-1"></i>Open in Znuny: <strong id="openInZnuny">0</strong>
-                        </span>
-                    </div>
-                    <div class="col-12 col-md-auto ms-md-auto">
-                        <small class="text-muted">
-                            <span style="color: #e65100;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayDhiraagu">0</span></span>
-                            <span class="ms-2" style="color: #9b59b6;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayOoredoo">0</span></span>
-                            <span class="ms-2" style="color: #3498db;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayRol">0</span></span>
-                            <span class="ms-2" style="color: #1abc9c;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayMedianet">0</span></span>
-                        </small>
-                    </div>
+                <div class="today-count mt-1">
+                    <small class="text-muted">Total: <span id="totalTickets">0</span> active</small>
                 </div>
             </div>
         </div>
@@ -513,10 +496,9 @@ async function loadStats() {
         updateExtractionInfo('rol', lastExtraction['rol']);
         updateExtractionInfo('medianet', lastExtraction['medianet']);
 
-        // Today's activity stats
-        document.getElementById('todayExtractedTotal').textContent = stats.today_extracted_total || 0;
-        document.getElementById('todayZnunyEntries').textContent = stats.today_znuny_entries || 0;
+        // Znuny stats
         document.getElementById('openInZnuny').textContent = stats.open_in_znuny || 0;
+        document.getElementById('todayZnunyEntries').textContent = stats.today_znuny_entries || 0;
 
         // Today's extractions per portal
         const todayExtracted = stats.today_extracted || {};
