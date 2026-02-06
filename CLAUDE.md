@@ -726,26 +726,40 @@ Portal stat cards on the dashboard are clickable to open their respective ISP po
 - Click Ooredoo card → opens Ooredoo FMS portal
 - Click ROL card → opens ROL support portal
 - Click Medianet card → opens Medianet CRM portal
+- Click Znuny Only card → opens `/znuny-tickets` page
 
 Portal URLs are loaded from `config.py` and passed to the template context.
 
+## Znuny Sync Status Card
+
+The "Not in Znuny" card shows real-time sync status with dynamic coloring:
+
+| State | Background | Badge | Description |
+|-------|------------|-------|-------------|
+| All Synced | Green (#27ae60) | OK | All tickets are synced with Znuny |
+| Pending | Red (#dc3545) | Pending | N tickets need Znuny sync |
+
+The card displays:
+- **Count**: Number of tickets not yet in Znuny
+- **Status Badge**: "OK" (green) or "Pending" (red)
+- **Last Sync Time**: Relative time since last sync (e.g., "5 min ago")
+
+Data from `/api/znuny-sync-status`:
+- `not_in_znuny`: Count of tickets needing sync
+- `last_sync_time`: ISO timestamp of last sync
+
 ## Dashboard Today's Activity
 
-The dashboard shows a "Today's Activity" section with real-time statistics:
+The dashboard shows today's activity via "Today:" badges on each portal card:
 
 | Stat | Description |
 |------|-------------|
-| **Extracted** | Total tickets first seen by extractor today |
-| **In Znuny** | Tickets created in Znuny today |
-| **Open in Znuny** | Active tickets currently in Znuny |
-| **Per-portal breakdown** | Color-coded counts for each ISP |
+| **Today: N** | Tickets first seen by extractor today (per portal) |
+| **Znuny Only Today** | Znuny-only tickets created today |
 
 These stats are returned by the `/api/stats` endpoint:
-- `today_extracted_total`: Total tickets extracted today
 - `today_extracted`: Dict of tickets per portal (e.g., `{"dhiraagu": 5, "ooredoo": 3}`)
-- `today_znuny_entries`: Tickets entered to Znuny today
 - `today_znuny_by_portal`: Dict of Znuny entries per portal
-- `open_in_znuny`: Active tickets currently in Znuny
 
 ## Znuny Sync Optimization
 
