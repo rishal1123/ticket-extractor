@@ -207,6 +207,55 @@
     </div>
 </div>
 
+<!-- Znuny-Only Tickets -->
+<div class="table-container mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0"><i class="bi bi-ticket me-2" style="color: #8a2be2;"></i>Znuny-Only Tickets</h6>
+        <span class="badge" style="background-color: #8a2be2;" id="znunyTicketsBadge">--</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Ticket ID</th>
+                    <th>Title</th>
+                    <th class="d-none d-md-table-cell">Queue</th>
+                    <th>State</th>
+                    <th class="d-none d-sm-table-cell">Created</th>
+                    <th>Znuny</th>
+                </tr>
+            </thead>
+            <tbody id="znunyTicketsTable">
+                <tr><td colspan="6" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Articles -->
+<div class="table-container mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0"><i class="bi bi-chat-left-text me-2 text-info"></i>Articles Created</h6>
+        <span class="badge bg-info" id="articlesBadge">--</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Znuny Ticket</th>
+                    <th>Subject</th>
+                    <th class="d-none d-md-table-cell">Portal Ticket</th>
+                    <th class="d-none d-sm-table-cell">Via</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody id="articlesTable">
+                <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 <!-- Site Visits -->
 <div class="table-container mt-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -305,11 +354,13 @@ async function loadStaffData() {
             updateSummary(staffData);
         }
 
-        // Load tickets
-        await loadTickets();
-
-        // Load site visits
-        await loadSiteVisits();
+        // Load all data in parallel
+        await Promise.all([
+            loadTickets(),
+            loadZnunyTickets(),
+            loadArticles(),
+            loadSiteVisits()
+        ]);
     } catch (error) {
         console.error('Error loading staff data:', error);
     } finally {
@@ -471,6 +522,93 @@ function exportCSV() {
     if (dateFrom) url += `&date_from=${dateFrom}`;
     if (dateTo) url += `&date_to=${dateTo}`;
     window.location.href = url;
+}
+
+async function loadZnunyTickets() {
+    try {
+        const { dateFrom, dateTo } = getDateRange();
+        let url = `/api/staff/${encodeURIComponent(staffName)}/znuny-tickets`;
+        const params = new URLSearchParams();
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+        if (params.toString()) url += '?' + params.toString();
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        const tickets = data.tickets || [];
+        document.getElementById('znunyTicketsBadge').textContent = data.total || tickets.length;
+
+        const tbody = document.getElementById('znunyTicketsTable');
+        if (tickets.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No Znuny-only tickets found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = tickets.map(t => {
+            const stateClass = t.state?.toLowerCase() === 'closed' ? 'bg-secondary' :
+                               t.state?.toLowerCase() === 'open' ? 'bg-success' : 'bg-warning text-dark';
+            const znunyLink = t.znuny_url
+                ? `<a href="${t.znuny_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-1"><i class="bi bi-box-arrow-up-right"></i></a>`
+                : '-';
+            return `
+                <tr>
+                    <td><strong>${t.znuny_ticket_id || '-'}</strong></td>
+                    <td class="text-truncate" style="max-width: 200px;">${t.title || '-'}</td>
+                    <td class="d-none d-md-table-cell">${t.queue || '-'}</td>
+                    <td><span class="badge ${stateClass}">${t.state || '-'}</span></td>
+                    <td class="d-none d-sm-table-cell small">${formatMaldivesDateTime(t.created_at)}</td>
+                    <td>${znunyLink}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Error loading Znuny tickets:', error);
+        document.getElementById('znunyTicketsTable').innerHTML =
+            '<tr><td colspan="6" class="text-center text-muted py-3">Error loading Znuny tickets</td></tr>';
+    }
+}
+
+async function loadArticles() {
+    try {
+        const { dateFrom, dateTo } = getDateRange();
+        let url = `/api/staff/${encodeURIComponent(staffName)}/articles`;
+        const params = new URLSearchParams();
+        if (dateFrom) params.append('date_from', dateFrom);
+        if (dateTo) params.append('date_to', dateTo);
+        if (params.toString()) url += '?' + params.toString();
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        const articles = data.articles || [];
+        document.getElementById('articlesBadge').textContent = data.total || articles.length;
+
+        const tbody = document.getElementById('articlesTable');
+        if (articles.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No articles found</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = articles.map(a => {
+            const portalInfo = a.portal && a.portal_ticket_id
+                ? `<span class="badge badge-portal badge-${a.portal}">${a.portal}</span> ${a.portal_ticket_id}`
+                : '-';
+            return `
+                <tr>
+                    <td><strong>${a.znuny_ticket_id || '-'}</strong></td>
+                    <td class="text-truncate" style="max-width: 200px;">${a.subject || '-'}</td>
+                    <td class="d-none d-md-table-cell">${portalInfo}</td>
+                    <td class="d-none d-sm-table-cell">${a.via || '-'}</td>
+                    <td class="small">${formatMaldivesDateTime(a.created_at)}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('Error loading articles:', error);
+        document.getElementById('articlesTable').innerHTML =
+            '<tr><td colspan="5" class="text-center text-muted py-3">Error loading articles</td></tr>';
+    }
 }
 
 async function loadSiteVisits() {

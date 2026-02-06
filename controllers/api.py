@@ -298,6 +298,48 @@ async def get_staff_names():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/staff/{name}/znuny-tickets")
+async def get_staff_znuny_tickets(
+    name: str,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = Query(default=50, le=500),
+    offset: int = 0
+):
+    """Get Znuny-only tickets created by a specific staff member."""
+    try:
+        db = get_db()
+        result = db.get_staff_znuny_tickets(
+            name, date_from=date_from, date_to=date_to,
+            limit=limit, offset=offset
+        )
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error getting staff znuny tickets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/staff/{name}/articles")
+async def get_staff_articles(
+    name: str,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = Query(default=50, le=500),
+    offset: int = 0
+):
+    """Get articles created by a specific staff member."""
+    try:
+        db = get_db()
+        result = db.get_staff_articles(
+            name, date_from=date_from, date_to=date_to,
+            limit=limit, offset=offset
+        )
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error getting staff articles: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/staff-delays")
 async def get_staff_delays(
     min_delay: int = Query(5, ge=1),

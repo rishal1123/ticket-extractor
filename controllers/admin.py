@@ -261,3 +261,73 @@ async def get_all_settings():
     except Exception as e:
         logger.error(f"Error getting settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Staff Management ====================
+
+@router.get("/staff-list")
+async def get_staff_list():
+    """Get all unique staff names with counts from all tables."""
+    try:
+        db = get_db()
+        staff = db.get_all_staff_names_with_counts()
+        return JSONResponse(content={"success": True, "staff": staff})
+    except Exception as e:
+        logger.error(f"Error getting staff list: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/staff-merge-preview")
+async def get_staff_merge_preview(
+    source: str = Query(..., description="Staff name to merge from"),
+    target: str = Query(..., description="Staff name to merge into")
+):
+    """Preview the effect of merging one staff name into another."""
+    try:
+        if source == target:
+            return JSONResponse(content={
+                "success": False,
+                "message": "Source and target cannot be the same"
+            })
+
+        db = get_db()
+        preview = db.get_staff_merge_preview(source, target)
+        return JSONResponse(content={"success": True, "preview": preview})
+    except Exception as e:
+        logger.error(f"Error getting staff merge preview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/staff-merge")
+async def merge_staff(request: Request):
+    """Merge one staff name into another across all tables."""
+    try:
+        data = await request.json()
+        source = data.get("source", "").strip()
+        target = data.get("target", "").strip()
+
+        if not source or not target:
+            return JSONResponse(content={
+                "success": False,
+                "message": "Both source and target names are required"
+            })
+
+        if source == target:
+            return JSONResponse(content={
+                "success": False,
+                "message": "Source and target cannot be the same"
+            })
+
+        db = get_db()
+        result = db.merge_staff_names(source, target)
+
+        logger.info(f"Staff merge completed: '{source}' -> '{target}', {result['total_updated']} records updated")
+
+        return JSONResponse(content={
+            "success": True,
+            "message": f"Merged '{source}' into '{target}'",
+            "result": result
+        })
+    except Exception as e:
+        logger.error(f"Error merging staff: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

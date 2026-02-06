@@ -2057,3 +2057,321 @@ class Database:
                 ORDER BY created_by
             """)
             return [row["created_by"] for row in cursor.fetchall()]
+
+    # ==================== Staff Management ====================
+
+    def get_all_staff_names_with_counts(self) -> list:
+        """
+        Get all unique staff names from all tables with counts per source.
+        Returns list of dicts with: name, isp_tickets, znuny_tickets, articles, site_visits, total
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Collect staff names from all sources
+            staff_data = {}
+
+            # 1. ISP tickets (znuny_created_by)
+            cursor.execute("""
+                SELECT znuny_created_by as name, COUNT(*) as count
+                FROM tickets
+                WHERE znuny_created_by IS NOT NULL AND znuny_created_by != ''
+                GROUP BY znuny_created_by
+            """)
+            for row in cursor.fetchall():
+                name = row["name"]
+                if name not in staff_data:
+                    staff_data[name] = {"name": name, "isp_tickets": 0, "znuny_tickets": 0, "articles": 0, "site_visits": 0}
+                staff_data[name]["isp_tickets"] = row["count"]
+
+            # 2. Znuny-only tickets (created_by)
+            cursor.execute("""
+                SELECT created_by as name, COUNT(*) as count
+                FROM znuny_tickets
+                WHERE created_by IS NOT NULL AND created_by != ''
+                GROUP BY created_by
+            """)
+            for row in cursor.fetchall():
+                name = row["name"]
+                if name not in staff_data:
+                    staff_data[name] = {"name": name, "isp_tickets": 0, "znuny_tickets": 0, "articles": 0, "site_visits": 0}
+                staff_data[name]["znuny_tickets"] = row["count"]
+
+            # 3. Articles (created_by)
+            cursor.execute("""
+                SELECT created_by as name, COUNT(*) as count
+                FROM znuny_articles
+                WHERE created_by IS NOT NULL AND created_by != ''
+                GROUP BY created_by
+            """)
+            for row in cursor.fetchall():
+                name = row["name"]
+                if name not in staff_data:
+                    staff_data[name] = {"name": name, "isp_tickets": 0, "znuny_tickets": 0, "articles": 0, "site_visits": 0}
+                staff_data[name]["articles"] = row["count"]
+
+            # 4. Site visits (assigned_to)
+            cursor.execute("""
+                SELECT assigned_to as name, COUNT(*) as count
+                FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != ''
+                GROUP BY assigned_to
+            """)
+            for row in cursor.fetchall():
+                name = row["name"]
+                if name not in staff_data:
+                    staff_data[name] = {"name": name, "isp_tickets": 0, "znuny_tickets": 0, "articles": 0, "site_visits": 0}
+                staff_data[name]["site_visits"] = row["count"]
+
+            # Calculate totals and convert to list
+            result = []
+            for name, data in staff_data.items():
+                data["total"] = data["isp_tickets"] + data["znuny_tickets"] + data["articles"] + data["site_visits"]
+                result.append(data)
+
+            # Sort by total descending
+            result.sort(key=lambda x: x["total"], reverse=True)
+            return result
+
+    def get_staff_merge_preview(self, source_name: str, target_name: str) -> dict:
+        """
+        Preview what will be affected by merging source_name into target_name.
+        Returns counts of records that will be updated in each table.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            preview = {
+                "source": source_name,
+                "target": target_name,
+                "affected": {}
+            }
+
+            # Count affected ISP tickets
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM tickets
+                WHERE znuny_created_by = ?
+            """, (source_name,))
+            preview["affected"]["isp_tickets"] = cursor.fetchone()["count"]
+
+            # Count affected Znuny-only tickets (created_by)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM znuny_tickets
+                WHERE created_by = ?
+            """, (source_name,))
+            preview["affected"]["znuny_tickets_created"] = cursor.fetchone()["count"]
+
+            # Count affected Znuny-only tickets (last_article_by)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM znuny_tickets
+                WHERE last_article_by = ?
+            """, (source_name,))
+            preview["affected"]["znuny_tickets_last_article"] = cursor.fetchone()["count"]
+
+            # Count affected articles
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM znuny_articles
+                WHERE created_by = ?
+            """, (source_name,))
+            preview["affected"]["articles"] = cursor.fetchone()["count"]
+
+            # Count affected site visits
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM site_visits
+                WHERE assigned_to = ?
+            """, (source_name,))
+            preview["affected"]["site_visits"] = cursor.fetchone()["count"]
+
+            # Count affected staff performance daily
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM staff_performance_daily
+                WHERE staff_name = ?
+            """, (source_name,))
+            preview["affected"]["performance_daily"] = cursor.fetchone()["count"]
+
+            # Calculate total
+            preview["total_affected"] = sum(preview["affected"].values())
+
+            return preview
+
+    def merge_staff_names(self, source_name: str, target_name: str) -> dict:
+        """
+        Merge source_name into target_name across all tables.
+        Returns counts of records updated in each table.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            result = {
+                "source": source_name,
+                "target": target_name,
+                "updated": {}
+            }
+
+            # 1. Update ISP tickets (znuny_created_by)
+            cursor.execute("""
+                UPDATE tickets SET znuny_created_by = ?, updated_at = ?
+                WHERE znuny_created_by = ?
+            """, (target_name, now_maldives(), source_name))
+            result["updated"]["isp_tickets"] = cursor.rowcount
+
+            # 2. Update Znuny-only tickets (created_by)
+            cursor.execute("""
+                UPDATE znuny_tickets SET created_by = ?, updated_at = ?
+                WHERE created_by = ?
+            """, (target_name, now_maldives(), source_name))
+            result["updated"]["znuny_tickets_created"] = cursor.rowcount
+
+            # 3. Update Znuny-only tickets (last_article_by)
+            cursor.execute("""
+                UPDATE znuny_tickets SET last_article_by = ?, updated_at = ?
+                WHERE last_article_by = ?
+            """, (target_name, now_maldives(), source_name))
+            result["updated"]["znuny_tickets_last_article"] = cursor.rowcount
+
+            # 4. Update articles (created_by)
+            cursor.execute("""
+                UPDATE znuny_articles SET created_by = ?
+                WHERE created_by = ?
+            """, (target_name, source_name))
+            result["updated"]["articles"] = cursor.rowcount
+
+            # 5. Update site visits (assigned_to)
+            cursor.execute("""
+                UPDATE site_visits SET assigned_to = ?, updated_at = ?
+                WHERE assigned_to = ?
+            """, (target_name, now_maldives(), source_name))
+            result["updated"]["site_visits"] = cursor.rowcount
+
+            # 6. Handle staff performance daily - need to merge or delete
+            # First check if target already has entries for same dates
+            cursor.execute("""
+                SELECT date FROM staff_performance_daily
+                WHERE staff_name = ?
+            """, (source_name,))
+            source_dates = [row["date"] for row in cursor.fetchall()]
+
+            cursor.execute("""
+                SELECT date FROM staff_performance_daily
+                WHERE staff_name = ?
+            """, (target_name,))
+            target_dates = set(row["date"] for row in cursor.fetchall())
+
+            # For dates where both exist, delete source (target keeps its data)
+            # For dates where only source exists, update to target name
+            overlapping_dates = [d for d in source_dates if d in target_dates]
+            unique_dates = [d for d in source_dates if d not in target_dates]
+
+            if overlapping_dates:
+                cursor.execute(f"""
+                    DELETE FROM staff_performance_daily
+                    WHERE staff_name = ? AND date IN ({','.join('?' * len(overlapping_dates))})
+                """, [source_name] + overlapping_dates)
+
+            if unique_dates:
+                cursor.execute(f"""
+                    UPDATE staff_performance_daily SET staff_name = ?
+                    WHERE staff_name = ? AND date IN ({','.join('?' * len(unique_dates))})
+                """, [target_name, source_name] + unique_dates)
+
+            result["updated"]["performance_daily"] = len(source_dates)
+
+            # Calculate total
+            result["total_updated"] = sum(result["updated"].values())
+
+            logger.info(f"Merged staff '{source_name}' into '{target_name}': {result['total_updated']} records updated")
+
+            return result
+
+    def get_staff_znuny_tickets(self, staff_name: str, date_from: str = None, date_to: str = None,
+                                 limit: int = 50, offset: int = 0) -> dict:
+        """Get Znuny-only tickets created by a specific staff member."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT * FROM znuny_tickets
+                WHERE created_by = ?
+            """
+            params = [staff_name]
+
+            if date_from:
+                query += " AND DATE(created_at) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(created_at) <= ?"
+                params.append(date_to)
+
+            # Get total count
+            count_query = query.replace("SELECT *", "SELECT COUNT(*)")
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+
+            # Get paginated results
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cursor.execute(query, params)
+
+            tickets = [{
+                "id": row["id"],
+                "znuny_ticket_id": row["znuny_ticket_id"],
+                "title": row["title"],
+                "state": row["state"],
+                "queue": row["queue"],
+                "created_at": row["created_at"],
+                "created_by": row["created_by"],
+                "closed_at": row["closed_at"],
+                "time_to_close_minutes": row["time_to_close_minutes"],
+                "article_count": row["article_count"],
+                "znuny_url": row["znuny_url"]
+            } for row in cursor.fetchall()]
+
+            return {"total": total, "tickets": tickets}
+
+    def get_staff_articles(self, staff_name: str, date_from: str = None, date_to: str = None,
+                           limit: int = 50, offset: int = 0) -> dict:
+        """Get articles created by a specific staff member."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT a.*, t.portal, t.ticket_id as portal_ticket_id, t.customer_name
+                FROM znuny_articles a
+                LEFT JOIN tickets t ON a.ticket_id = t.id
+                WHERE a.created_by = ?
+            """
+            params = [staff_name]
+
+            if date_from:
+                query += " AND DATE(a.created_at) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(a.created_at) <= ?"
+                params.append(date_to)
+
+            # Get total count
+            count_query = query.replace("SELECT a.*, t.portal, t.ticket_id as portal_ticket_id, t.customer_name",
+                                         "SELECT COUNT(*)")
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+
+            # Get paginated results
+            query += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cursor.execute(query, params)
+
+            articles = [{
+                "id": row["id"],
+                "znuny_ticket_id": row["znuny_ticket_id"],
+                "article_number": row["article_number"],
+                "subject": row["subject"],
+                "sender": row["sender"],
+                "via": row["via"],
+                "created_at": row["created_at"],
+                "created_by": row["created_by"],
+                "portal": row["portal"],
+                "portal_ticket_id": row["portal_ticket_id"],
+                "customer_name": row["customer_name"]
+            } for row in cursor.fetchall()]
+
+            return {"total": total, "articles": articles}
