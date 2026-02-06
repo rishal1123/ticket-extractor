@@ -170,9 +170,6 @@
                 <div class="extraction-info">
                     <small class="text-white-50" id="znunySyncInfo">--</small>
                 </div>
-                <div class="today-count mt-1">
-                    <small class="text-white-50">Total: <span id="totalTickets">0</span> active</small>
-                </div>
             </div>
         </div>
     </div>
@@ -498,7 +495,6 @@ async function loadStats() {
         const response = await fetch('/api/stats');
         const stats = await response.json();
 
-        document.getElementById('totalTickets').textContent = stats.total || 0;
         document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
 
         const portals = stats.by_portal || {};
