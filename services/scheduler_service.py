@@ -98,21 +98,38 @@ class SchedulerService:
         return results
 
     def run_znuny_sync(self) -> dict:
-        """Run comprehensive Znuny sync."""
+        """Run comprehensive Znuny sync: check ISP tickets + sync site visits."""
         logger.info("Starting comprehensive Znuny sync")
         db = Database()
         db.log_system("info", "znuny", "Comprehensive Znuny sync started")
 
         try:
             znuny_service = ZnunyService(db)
+
+            # Step 1: Check if ISP tickets exist in Znuny (get their Znuny IDs)
+            logger.info("Checking ISP tickets in Znuny...")
+            check_results = znuny_service.sync_unchecked_tickets()
+            logger.info(f"ISP check complete: {check_results['checked']} checked, {check_results['found']} found in Znuny")
+            db.log_system(
+                "info",
+                "znuny",
+                f"ISP ticket check: {check_results['found']}/{check_results['checked']} found in Znuny"
+            )
+
+            # Step 2: Sync site visits and details from Znuny
+            logger.info("Syncing site visits from Znuny...")
             results = znuny_service.sync_all_site_visits()
+
+            # Combine results
+            results["isp_checked"] = check_results["checked"]
+            results["isp_found"] = check_results["found"]
 
             logger.info(f"Znuny sync complete: {results}")
             db.log_system(
                 "info" if results["errors"] == 0 else "warning",
                 "znuny",
                 f"Znuny sync complete: {results['znuny_tickets_found']} tickets, {results['site_visits_extracted']} site visits",
-                f"Tickets: {results['znuny_tickets_found']}, ISP synced: {results['isp_tickets_synced']}, "
+                f"ISP checked: {check_results['checked']}, ISP found: {check_results['found']}, "
                 f"Site visits: {results['site_visits_extracted']}, Linked: {results['site_visits_linked']}, "
                 f"Errors: {results['errors']}"
             )
