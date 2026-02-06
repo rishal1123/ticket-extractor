@@ -1106,6 +1106,80 @@ class Database:
                 staff_tickets[staff]["articles_count"] = row["articles_count"]
                 staff_tickets[staff]["tickets_updated"] = row["tickets_updated"]
 
+            # Get Znuny-only tickets count per staff
+            znuny_only_params = []
+            znuny_only_date_filter = ""
+            if date_from:
+                znuny_only_date_filter += " AND DATE(created_at) >= ?"
+                znuny_only_params.append(date_from)
+            if date_to:
+                znuny_only_date_filter += " AND DATE(created_at) <= ?"
+                znuny_only_params.append(date_to)
+
+            cursor.execute(f"""
+                SELECT created_by as staff, COUNT(*) as znuny_only_count
+                FROM znuny_tickets
+                WHERE created_by IS NOT NULL AND created_by != ''
+                {znuny_only_date_filter}
+                GROUP BY created_by
+            """, znuny_only_params)
+
+            for row in cursor.fetchall():
+                staff = row["staff"]
+                if staff not in staff_tickets:
+                    staff_tickets[staff] = {
+                        "tickets_created": 0,
+                        "within_5min": 0,
+                        "within_10min": 0,
+                        "over_10min": 0,
+                        "avg_minutes": 0,
+                        "on_time_pct": 0,
+                        "articles_count": 0,
+                        "tickets_updated": 0
+                    }
+                staff_tickets[staff]["znuny_only_count"] = row["znuny_only_count"]
+
+            # Get site visits stats per staff
+            site_visits_params = []
+            site_visits_date_filter = ""
+            if date_from:
+                site_visits_date_filter += " AND DATE(visit_date) >= ?"
+                site_visits_params.append(date_from)
+            if date_to:
+                site_visits_date_filter += " AND DATE(visit_date) <= ?"
+                site_visits_params.append(date_to)
+
+            cursor.execute(f"""
+                SELECT
+                    assigned_to as staff,
+                    COUNT(*) as site_visits_total,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as site_visits_completed,
+                    AVG(CASE WHEN status = 'completed' AND time_taken_minutes IS NOT NULL
+                        THEN time_taken_minutes ELSE NULL END) as avg_visit_time
+                FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != ''
+                {site_visits_date_filter}
+                GROUP BY assigned_to
+            """, site_visits_params)
+
+            for row in cursor.fetchall():
+                staff = row["staff"]
+                if staff not in staff_tickets:
+                    staff_tickets[staff] = {
+                        "tickets_created": 0,
+                        "within_5min": 0,
+                        "within_10min": 0,
+                        "over_10min": 0,
+                        "avg_minutes": 0,
+                        "on_time_pct": 0,
+                        "articles_count": 0,
+                        "tickets_updated": 0,
+                        "znuny_only_count": 0
+                    }
+                staff_tickets[staff]["site_visits_total"] = row["site_visits_total"]
+                staff_tickets[staff]["site_visits_completed"] = row["site_visits_completed"] or 0
+                staff_tickets[staff]["avg_visit_time"] = round(row["avg_visit_time"], 1) if row["avg_visit_time"] else 0
+
             # Build final list sorted by tickets created
             staff_list = []
             for name, stats in staff_tickets.items():
@@ -1118,7 +1192,11 @@ class Database:
                     "avg_minutes": stats.get("avg_minutes", 0),
                     "on_time_pct": stats.get("on_time_pct", 0),
                     "articles_count": stats.get("articles_count", 0),
-                    "tickets_updated": stats.get("tickets_updated", 0)
+                    "tickets_updated": stats.get("tickets_updated", 0),
+                    "znuny_only_count": stats.get("znuny_only_count", 0),
+                    "site_visits_total": stats.get("site_visits_total", 0),
+                    "site_visits_completed": stats.get("site_visits_completed", 0),
+                    "avg_visit_time": stats.get("avg_visit_time", 0)
                 })
 
             staff_list.sort(key=lambda x: (-x["tickets_created"], -x["on_time_pct"]))
@@ -1127,6 +1205,9 @@ class Database:
                 "staff": staff_list,
                 "total_tickets": sum(s["tickets_created"] for s in staff_list),
                 "total_articles": sum(s["articles_count"] for s in staff_list),
+                "total_znuny_only": sum(s["znuny_only_count"] for s in staff_list),
+                "total_site_visits": sum(s["site_visits_total"] for s in staff_list),
+                "total_site_visits_completed": sum(s["site_visits_completed"] for s in staff_list),
                 "date_from": date_from,
                 "date_to": date_to
             }
