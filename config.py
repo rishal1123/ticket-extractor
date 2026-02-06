@@ -57,8 +57,8 @@ class Config:
     DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")
     DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8000"))
 
-    # Database
-    DATABASE_PATH = os.path.join(os.path.dirname(__file__), "tickets.db")
+    # Database (can be overridden via DATABASE_PATH env var for Docker)
+    DATABASE_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "tickets.db"))
 
     @classmethod
     def get_all_portals(cls) -> list[PortalConfig]:

@@ -396,17 +396,31 @@ Edit `.env` with your portal credentials. Changes to `.env` persist on the host 
 
 | Volume | Purpose |
 |--------|---------|
-| `./data:/app/data` | Application data directory |
-| `./tickets.db:/app/tickets.db` | SQLite database |
+| `extractor_data:/app/data` | Named volume for persistent data (database, logs) |
 | `./.env:/app/.env:ro` | Environment config (read-only in container) |
+
+The database is stored at `/app/data/tickets.db` inside the container, persisted via the named volume `ticket-extractor-data`.
+
+**Backup the database:**
+```bash
+docker cp ticket-extractor:/app/data/tickets.db ./backup_tickets.db
+```
+
+**Restore database:**
+```bash
+docker cp ./backup_tickets.db ticket-extractor:/app/data/tickets.db
+docker-compose restart
+```
 
 ### Docker Compose Features
 
 - Chrome with Selenium for web scraping
-- Persistent database and data volumes
+- Named volume for persistent database (`ticket-extractor-data`)
 - Environment loaded from `.env` file (persists across restarts)
 - Automatic restart on failure
 - 2GB shared memory for Chrome stability
+- Health check with auto-restart on failure
+- Log rotation (10MB max, 3 files)
 
 ### Updating Configuration
 

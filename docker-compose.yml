@@ -7,9 +7,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
-      - ./tickets.db:/app/tickets.db
-      - ./.env:/app/.env:ro  # Mount .env file (read-only in container)
+      - extractor_data:/app/data          # Named volume for persistent data
+      - ./.env:/app/.env:ro               # Mount .env file (read-only in container)
     env_file:
       - .env  # Load environment variables from .env file
     environment:
@@ -17,6 +16,7 @@ services:
       - DASHBOARD_HOST=0.0.0.0
       - DASHBOARD_PORT=8000
       - PYTHONUNBUFFERED=1
+      - DATABASE_PATH=/app/data/tickets.db  # Store DB in persistent volume
     restart: unless-stopped
     shm_size: '2gb'  # Required for Chrome
     healthcheck:
@@ -30,3 +30,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  extractor_data:
+    name: ticket-extractor-data
