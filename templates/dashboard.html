@@ -141,6 +141,44 @@
     </div>
 </div>
 
+<!-- Today's Activity Section -->
+<div class="row mb-4 g-2">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body py-2">
+                <div class="row align-items-center g-2">
+                    <div class="col-12 col-md-auto">
+                        <strong class="text-muted small"><i class="bi bi-calendar-check me-1"></i>Today:</strong>
+                    </div>
+                    <div class="col-6 col-md-auto">
+                        <span class="badge bg-light text-dark border me-1">
+                            <i class="bi bi-download me-1"></i>Extracted: <strong id="todayExtractedTotal">0</strong>
+                        </span>
+                    </div>
+                    <div class="col-6 col-md-auto">
+                        <span class="badge bg-success me-1">
+                            <i class="bi bi-box-arrow-in-right me-1"></i>In Znuny: <strong id="todayZnunyEntries">0</strong>
+                        </span>
+                    </div>
+                    <div class="col-6 col-md-auto">
+                        <span class="badge bg-info">
+                            <i class="bi bi-folder2-open me-1"></i>Open in Znuny: <strong id="openInZnuny">0</strong>
+                        </span>
+                    </div>
+                    <div class="col-12 col-md-auto ms-md-auto">
+                        <small class="text-muted">
+                            <span style="color: #e65100;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayDhiraagu">0</span></span>
+                            <span class="ms-2" style="color: #9b59b6;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayOoredoo">0</span></span>
+                            <span class="ms-2" style="color: #3498db;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayRol">0</span></span>
+                            <span class="ms-2" style="color: #1abc9c;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem;"></i><span id="todayMedianet">0</span></span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 
 <!-- Tickets Table -->
 <div class="table-container">
@@ -474,6 +512,18 @@ async function loadStats() {
         updateExtractionInfo('ooredoo', lastExtraction['ooredoo']);
         updateExtractionInfo('rol', lastExtraction['rol']);
         updateExtractionInfo('medianet', lastExtraction['medianet']);
+
+        // Today's activity stats
+        document.getElementById('todayExtractedTotal').textContent = stats.today_extracted_total || 0;
+        document.getElementById('todayZnunyEntries').textContent = stats.today_znuny_entries || 0;
+        document.getElementById('openInZnuny').textContent = stats.open_in_znuny || 0;
+
+        // Today's extractions per portal
+        const todayExtracted = stats.today_extracted || {};
+        document.getElementById('todayDhiraagu').textContent = todayExtracted['dhiraagu'] || 0;
+        document.getElementById('todayOoredoo').textContent = todayExtracted['ooredoo'] || 0;
+        document.getElementById('todayRol').textContent = todayExtracted['rol'] || 0;
+        document.getElementById('todayMedianet').textContent = todayExtracted['medianet'] || 0;
 
         document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
 

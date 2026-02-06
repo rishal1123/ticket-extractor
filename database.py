@@ -823,6 +823,40 @@ class Database:
             # Last extraction per portal
             last_extraction = self.get_last_extraction_per_portal()
 
+            # Get today's date in MVT
+            today = now_maldives().date().isoformat()
+
+            # Today's extractions per portal (tickets first seen today)
+            cursor.execute("""
+                SELECT portal, COUNT(*) as count FROM tickets
+                WHERE DATE(created_at) = ?
+                GROUP BY portal
+            """, (today,))
+            today_extracted = {row["portal"]: row["count"] for row in cursor.fetchall()}
+            today_extracted_total = sum(today_extracted.values())
+
+            # Today's Znuny entries (tickets entered to Znuny today)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM tickets
+                WHERE DATE(znuny_created_at) = ?
+            """, (today,))
+            today_znuny_entries = cursor.fetchone()["count"]
+
+            # Znuny entries per portal today
+            cursor.execute("""
+                SELECT portal, COUNT(*) as count FROM tickets
+                WHERE DATE(znuny_created_at) = ?
+                GROUP BY portal
+            """, (today,))
+            today_znuny_by_portal = {row["portal"]: row["count"] for row in cursor.fetchall()}
+
+            # Total open tickets in Znuny (active tickets that are in Znuny)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM tickets
+                WHERE in_znuny = 1 AND completed_at IS NULL
+            """)
+            open_in_znuny = cursor.fetchone()["count"]
+
             return {
                 "total": total,
                 "completed": completed,
@@ -830,7 +864,12 @@ class Database:
                 "not_in_znuny": not_in_znuny,
                 "by_status": by_status,
                 "by_type": by_type,
-                "last_extraction": last_extraction
+                "last_extraction": last_extraction,
+                "open_in_znuny": open_in_znuny,
+                "today_extracted": today_extracted,
+                "today_extracted_total": today_extracted_total,
+                "today_znuny_entries": today_znuny_entries,
+                "today_znuny_by_portal": today_znuny_by_portal
             }
 
     def log_login_event(self, portal: str, event_type: str, session_id: str = None,

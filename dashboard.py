@@ -581,7 +581,16 @@ async def get_ticket_znuny_articles(ticket_id: int):
         time_diff = None
         time_diff_minutes = None
         if ticket.portal_created_at and ticket.znuny_created_at:
-            diff = ticket.znuny_created_at - ticket.portal_created_at
+            # Handle timezone-aware and naive datetime comparison
+            portal_dt = ticket.portal_created_at
+            znuny_dt = ticket.znuny_created_at
+
+            # If znuny_dt has timezone but portal_dt doesn't, remove timezone for comparison
+            if hasattr(znuny_dt, 'tzinfo') and znuny_dt.tzinfo is not None:
+                if portal_dt.tzinfo is None:
+                    znuny_dt = znuny_dt.replace(tzinfo=None)
+
+            diff = znuny_dt - portal_dt
             time_diff_minutes = int(diff.total_seconds() / 60)
             hours, minutes = divmod(abs(time_diff_minutes), 60)
             days, hours = divmod(hours, 24)

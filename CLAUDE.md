@@ -659,6 +659,24 @@ Portal stat cards on the dashboard are clickable to open their respective ISP po
 
 Portal URLs are loaded from `config.py` and passed to the template context.
 
+## Dashboard Today's Activity
+
+The dashboard shows a "Today's Activity" section with real-time statistics:
+
+| Stat | Description |
+|------|-------------|
+| **Extracted** | Total tickets first seen by extractor today |
+| **In Znuny** | Tickets created in Znuny today |
+| **Open in Znuny** | Active tickets currently in Znuny |
+| **Per-portal breakdown** | Color-coded counts for each ISP |
+
+These stats are returned by the `/api/stats` endpoint:
+- `today_extracted_total`: Total tickets extracted today
+- `today_extracted`: Dict of tickets per portal (e.g., `{"dhiraagu": 5, "ooredoo": 3}`)
+- `today_znuny_entries`: Tickets entered to Znuny today
+- `today_znuny_by_portal`: Dict of Znuny entries per portal
+- `open_in_znuny`: Active tickets currently in Znuny
+
 ## Znuny Sync Optimization
 
 The Znuny integration uses several optimization strategies:
