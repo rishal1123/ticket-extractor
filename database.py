@@ -2375,3 +2375,40 @@ class Database:
             } for row in cursor.fetchall()]
 
             return {"total": total, "articles": articles}
+
+    def get_report_portal_stats(self, date_from: str = None, date_to: str = None) -> dict:
+        """Get ticket statistics by portal for reporting."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT
+                    portal,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN in_znuny = 1 THEN 1 ELSE 0 END) as in_znuny,
+                    SUM(CASE WHEN in_znuny = 0 OR in_znuny IS NULL THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) as completed
+                FROM tickets
+                WHERE 1=1
+            """
+            params = []
+
+            if date_from:
+                query += " AND DATE(created_at) >= ?"
+                params.append(date_from)
+            if date_to:
+                query += " AND DATE(created_at) <= ?"
+                params.append(date_to)
+
+            query += " GROUP BY portal ORDER BY total DESC"
+            cursor.execute(query, params)
+
+            portals = [{
+                "portal": row["portal"],
+                "total": row["total"],
+                "in_znuny": row["in_znuny"] or 0,
+                "pending": row["pending"] or 0,
+                "completed": row["completed"] or 0
+            } for row in cursor.fetchall()]
+
+            return {"portals": portals}

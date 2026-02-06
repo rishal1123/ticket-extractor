@@ -331,3 +331,20 @@ async def merge_staff(request: Request):
     except Exception as e:
         logger.error(f"Error merging staff: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Reports ====================
+
+@router.get("/report-portal-stats")
+async def get_report_portal_stats(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None
+):
+    """Get ticket statistics by portal for reporting."""
+    try:
+        db = get_db()
+        stats = db.get_report_portal_stats(date_from, date_to)
+        return JSONResponse(content=stats)
+    except Exception as e:
+        logger.error(f"Error getting portal stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
