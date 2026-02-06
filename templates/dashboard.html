@@ -163,12 +163,12 @@
         </a>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="border-left: 4px solid #dc3545;">
+        <div class="stat-card card h-100" id="notInZnunyCard" style="border-left: 4px solid #dc3545;">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-danger" id="notInZnuny">0</div>
-                <div class="fw-semibold mb-1 text-danger">Not in Znuny</div>
-                <div class="extraction-info" id="znunySyncInfo">
-                    <small class="text-muted">--</small>
+                <div class="fw-semibold mb-1 text-danger" id="notInZnunyLabel">Not in Znuny</div>
+                <div class="extraction-info">
+                    <small class="text-muted" id="znunySyncInfo">--</small>
                 </div>
                 <div class="today-count mt-1">
                     <small class="text-muted">Total: <span id="totalTickets">0</span> active</small>
@@ -538,31 +538,23 @@ async function loadZnunySyncStatus() {
 
         const notInZnuny = status.not_in_znuny || 0;
         const notInZnunyEl = document.getElementById('notInZnuny');
+        const labelEl = document.getElementById('notInZnunyLabel');
+        const cardEl = document.getElementById('notInZnunyCard');
+        const syncInfoEl = document.getElementById('znunySyncInfo');
+
         notInZnunyEl.textContent = notInZnuny;
 
         // Change color based on count - green when 0, red when > 0
-        const colorClass = notInZnuny === 0 ? 'text-success' : 'text-danger';
-        notInZnunyEl.className = 'stat-value ' + colorClass;
-
-        // Also update the label color
-        const labelEl = notInZnunyEl.nextElementSibling;
-        if (labelEl) {
-            labelEl.className = 'fw-semibold mb-1 ' + colorClass;
-        }
-
-        // Update sync info display
-        const el = document.getElementById('znunySyncInfo');
-        if (el) {
-            const statusClass = notInZnuny === 0 ? 'success' : 'failed';
-            const statusText = notInZnuny === 0 ? 'All Synced' : 'Pending';
-            const pendingText = status.pending_sync > 0 ? `${status.pending_sync} pending` : 'Details synced';
-            const lastSyncText = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
-
-            el.innerHTML = `
-                <small class="extraction-status ${statusClass}">${statusText}</small>
-                <small class="text-muted d-block">${pendingText}</small>
-                <small class="text-muted d-block">Synced ${lastSyncText}</small>
-            `;
+        if (notInZnuny === 0) {
+            notInZnunyEl.className = 'stat-value text-success';
+            labelEl.className = 'fw-semibold mb-1 text-success';
+            cardEl.style.borderLeftColor = '#27ae60';
+            syncInfoEl.textContent = status.last_sync_time ? `Synced ${formatRelativeTime(status.last_sync_time)}` : 'All synced';
+        } else {
+            notInZnunyEl.className = 'stat-value text-danger';
+            labelEl.className = 'fw-semibold mb-1 text-danger';
+            cardEl.style.borderLeftColor = '#dc3545';
+            syncInfoEl.textContent = `${notInZnuny} pending sync`;
         }
     } catch (error) {
         console.error('Error loading Znuny sync status:', error);
