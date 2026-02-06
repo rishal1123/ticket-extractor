@@ -221,12 +221,19 @@ class ZnunyService:
         in_znuny = sum(1 for t in all_tickets if t.in_znuny)
         with_details = sum(1 for t in all_tickets if t.in_znuny and t.znuny_created_by)
 
+        # Get last sync time (most recent updated_at for tickets with Znuny details)
+        last_sync_time = None
+        synced_tickets = [t for t in all_tickets if t.in_znuny and t.znuny_created_by and t.updated_at]
+        if synced_tickets:
+            last_sync_time = max(t.updated_at for t in synced_tickets).isoformat()
+
         return {
             "total_active": stats.get("total", 0),
             "in_znuny": in_znuny,
             "not_in_znuny": stats.get("not_in_znuny", 0),
             "with_details": with_details,
-            "needing_sync": in_znuny - with_details
+            "needing_sync": in_znuny - with_details,
+            "last_sync_time": last_sync_time
         }
 
     def get_ticket_articles(self, ticket_id: int) -> List[Dict]:
