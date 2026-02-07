@@ -381,7 +381,11 @@ async function showTicketDetail(ticketId, callbacks = {}) {
 
         document.getElementById('checkZnunyBtn').onclick = () => checkZnuny(ticketId, callbacks);
         document.getElementById('syncZnunyBtn').onclick = () => syncZnunyData(ticketId, callbacks);
-        new bootstrap.Modal(document.getElementById('ticketModal')).show();
+
+        // Use getOrCreateInstance to avoid multiple modal instances causing backdrop issues
+        const modalEl = document.getElementById('ticketModal');
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
 
     } catch (error) {
         console.error('Error loading ticket detail:', error);

@@ -5,14 +5,7 @@
 {% block nav_title %}Staff Statistics{% endblock %}
 {% block nav_title_short %}Staff{% endblock %}
 
-{% block nav_buttons %}
-<button class="btn btn-outline-light btn-sm" onclick="syncZnunyDetails()">
-    <i class="bi bi-cloud-download me-1"></i><span class="d-none d-sm-inline">Sync Znuny</span>
-</button>
-<button class="btn btn-outline-light btn-sm" onclick="exportCSV()">
-    <i class="bi bi-download me-1"></i><span class="d-none d-sm-inline">Export</span>
-</button>
-{% endblock %}
+{% block nav_buttons %}{% endblock %}
 
 {% block extra_css %}
 .stat-icon {
@@ -198,6 +191,11 @@
                 </label>
             </div>
         </div>
+        <div class="col-auto ms-auto">
+            <button class="btn btn-outline-success btn-sm" onclick="exportCSV()">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+        </div>
     </div>
     <div class="mt-1 text-muted small" id="dateRangeInfo"></div>
 </div>
@@ -210,7 +208,7 @@
             <small class="text-muted">(click name to view details)</small>
         </h6>
         <div class="sync-info" id="syncInfo">
-            Click "Sync Znuny" to fetch latest
+            Auto-updates every 30s
         </div>
     </div>
     <div class="table-responsive">
@@ -232,7 +230,7 @@
                 <tr>
                     <td colspan="9" class="text-center text-muted py-4">
                         <i class="bi bi-cloud-download fs-3 d-block mb-2"></i>
-                        Click "Sync Znuny" to load stats
+                        Loading staff statistics...
                     </td>
                 </tr>
             </tbody>
@@ -378,7 +376,7 @@ function renderStaffTable(staff) {
             <tr>
                 <td colspan="9" class="text-center text-muted py-4">
                     <i class="bi bi-cloud-download fs-3 d-block mb-2"></i>
-                    Click "Sync Znuny" to load stats
+                    Loading staff statistics...
                 </td>
             </tr>
         `;

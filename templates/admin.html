@@ -6,10 +6,7 @@
 {% block nav_title_short %}Admin{% endblock %}
 
 {% block nav_buttons %}
-<button class="btn btn-warning btn-sm" onclick="triggerExtraction()" id="triggerBtn">
-    <i class="bi bi-play-fill me-1"></i><span class="d-none d-sm-inline">Run Now</span>
-</button>
-<button class="btn btn-outline-danger btn-sm ms-1" onclick="adminLogout()" title="Logout">
+<button class="btn btn-outline-danger btn-sm" onclick="adminLogout()" title="Logout">
     <i class="bi bi-box-arrow-right"></i>
 </button>
 {% endblock %}
@@ -164,7 +161,10 @@
             <div class="small opacity-75">Next Run</div>
             <div class="small" id="schedulerNextRun">--</div>
         </div>
-        <div class="col-12 col-md-3 text-end d-none d-md-block">
+        <div class="col-12 col-md-3 text-end">
+            <button class="btn btn-warning btn-sm me-1" onclick="triggerExtraction()" id="triggerBtn">
+                <i class="bi bi-play-fill me-1"></i>Run Now
+            </button>
             <button class="btn btn-light btn-sm" onclick="refreshAll()">
                 <i class="bi bi-arrow-clockwise me-1"></i>Refresh
             </button>

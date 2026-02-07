@@ -757,9 +757,31 @@ The dashboard shows today's activity via "Today:" badges on each portal card:
 | **Today: N** | Tickets first seen by extractor today (per portal) |
 | **Znuny Only Today** | Znuny-only tickets created today |
 
+### Today's Znuny Card
+A dedicated card shows today's Znuny activity:
+- **Tickets entered today**: Count of tickets synced to Znuny today
+- **Articles badge**: Number of articles created today
+
+Links to `/staff` page for detailed staff performance.
+
 These stats are returned by the `/api/stats` endpoint:
 - `today_extracted`: Dict of tickets per portal (e.g., `{"dhiraagu": 5, "ooredoo": 3}`)
 - `today_znuny_by_portal`: Dict of Znuny entries per portal
+- `today_znuny_entries`: Count of tickets entered to Znuny today
+- `today_articles_created`: Count of articles created today
+
+## Dashboard Action Buttons
+
+Action buttons are located in the page content (not navbar) for better UX:
+
+| Button | Location | Action |
+|--------|----------|--------|
+| **Check Znuny** | Dashboard | Check all tickets against Znuny system |
+| **Sync Details** | Dashboard | Bulk sync Znuny details for all tickets |
+| **Run Now** | Admin panel | Manually trigger extraction |
+| **Export CSV** | Staff page | Export staff statistics |
+
+This design keeps the navbar clean and places actions contextually on relevant pages.
 
 ## Znuny Sync Optimization
 

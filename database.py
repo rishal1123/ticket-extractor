@@ -915,6 +915,13 @@ class Database:
             """)
             pending_site_visits = cursor.fetchone()["count"]
 
+            # Today's articles created in Znuny
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM znuny_articles
+                WHERE DATE(created_at) = ?
+            """, (today,))
+            today_articles_created = cursor.fetchone()["count"]
+
             return {
                 "total": total,
                 "completed": completed,
@@ -930,7 +937,8 @@ class Database:
                 "today_znuny_by_portal": today_znuny_by_portal,
                 "today_site_visits_created": today_site_visits_created,
                 "today_site_visits_completed": today_site_visits_completed,
-                "pending_site_visits": pending_site_visits
+                "pending_site_visits": pending_site_visits,
+                "today_articles_created": today_articles_created
             }
 
     def log_login_event(self, portal: str, event_type: str, session_id: str = None,

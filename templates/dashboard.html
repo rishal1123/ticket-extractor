@@ -5,15 +5,9 @@
 {% block nav_title %}Ticket Extractor{% endblock %}
 {% block nav_title_short %}Dashboard{% endblock %}
 
-{% block nav_extra %}
-<span class="text-white-50 small me-2" id="lastUpdate">--</span>
-{% endblock %}
+{% block nav_extra %}{% endblock %}
 
-{% block nav_buttons %}
-<button class="btn btn-outline-light btn-sm" onclick="checkAllZnuny()">
-    <i class="bi bi-arrow-repeat me-1"></i>Check Znuny
-</button>
-{% endblock %}
+{% block nav_buttons %}{% endblock %}
 
 {% block extra_css %}
 .portal-name {
@@ -175,8 +169,34 @@
             </div>
         </a>
     </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <a href="/staff" class="text-decoration-none">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #17a2b8;" title="View staff performance">
+                <div class="card-body text-center py-3">
+                    <div class="stat-value" style="color: #17a2b8;" id="todayZnunyTickets">0</div>
+                    <div class="fw-semibold mb-1" style="color: #17a2b8;">Today's Znuny</div>
+                    <div class="extraction-info">
+                        <small class="text-muted">Tickets entered today</small>
+                    </div>
+                    <div class="today-count mt-1">
+                        <small class="badge bg-info">Articles: <span id="todayArticles">0</span></small>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
 </div>
 
+<!-- Action Buttons -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+    <button class="btn btn-outline-primary btn-sm" onclick="checkAllZnuny()">
+        <i class="bi bi-search me-1"></i>Check Znuny
+    </button>
+    <button class="btn btn-outline-secondary btn-sm" onclick="syncAllZnunyDetails()">
+        <i class="bi bi-cloud-download me-1"></i>Sync Details
+    </button>
+    <span class="text-muted small ms-auto" id="lastUpdate">--</span>
+</div>
 
 <!-- Tickets Table -->
 <div class="table-container">
@@ -523,6 +543,10 @@ async function loadStats() {
         document.getElementById('todaySiteVisitsCreated').textContent = stats.today_site_visits_created || 0;
         document.getElementById('todaySiteVisitsCompleted').textContent = stats.today_site_visits_completed || 0;
 
+        // Today's Znuny activity
+        document.getElementById('todayZnunyTickets').textContent = stats.today_znuny_entries || 0;
+        document.getElementById('todayArticles').textContent = stats.today_articles_created || 0;
+
         document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
 
     } catch (error) {
@@ -623,6 +647,27 @@ async function checkAllZnuny() {
     } catch (error) {
         console.error('Error checking all Znuny:', error);
         alert('Error checking Znuny status');
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function syncAllZnunyDetails() {
+    if (!confirm('Sync Znuny details for all tickets? This may take a while.')) return;
+
+    showLoading(true);
+    try {
+        const response = await fetch('/api/sync-znuny-details', { method: 'POST' });
+        const data = await response.json();
+
+        alert(`Synced ${data.synced || 0} tickets with Znuny details.`);
+        loadStats();
+        loadTickets();
+        loadZnunySyncStatus();
+
+    } catch (error) {
+        console.error('Error syncing Znuny details:', error);
+        alert('Error syncing Znuny details');
     } finally {
         showLoading(false);
     }
