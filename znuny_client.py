@@ -108,6 +108,10 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
         raw_time = time_match.group(1).strip().lower()
         if raw_time in ("now", "nnow") and article.created_at:
             scheduled_time = article.created_at.strftime("%H:%M")
+        elif re.match(r'^\d{4}$', time_match.group(1).strip()):
+            # Convert HHMM to HH:MM (e.g., 1130 -> 11:30)
+            t = time_match.group(1).strip()
+            scheduled_time = f"{t[:2]}:{t[2:]}"
         else:
             scheduled_time = time_match.group(1).strip()
 
