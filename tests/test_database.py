@@ -67,7 +67,7 @@ class TestTicketOperations:
         """Test retrieving a ticket by ID."""
         ticket_id, _, _ = temp_db.upsert_ticket(sample_ticket)
 
-        retrieved = temp_db.get_ticket(ticket_id)
+        retrieved = temp_db.get_ticket_by_id(ticket_id)
 
         assert retrieved is not None
         assert retrieved.ticket_id == sample_ticket.ticket_id
@@ -75,27 +75,30 @@ class TestTicketOperations:
 
     def test_get_tickets_with_filters(self, temp_db, sample_tickets):
         """Test retrieving tickets with filters."""
-        # Insert all tickets
-        for ticket in sample_tickets:
-            temp_db.upsert_ticket(ticket)
+        # Insert all tickets and set Znuny status for some
+        for i, ticket in enumerate(sample_tickets):
+            ticket_id, _, _ = temp_db.upsert_ticket(ticket)
+            # Set in_znuny for tickets 0 and 2 (matching sample_tickets fixture)
+            if i % 2 == 0:
+                temp_db.update_znuny_status(ticket_id, in_znuny=True, znuny_ticket_id=f"ZNY{i+1}")
 
         # Filter by portal
-        result = temp_db.get_tickets(portal="dhiraagu")
-        assert result['total'] == 1
+        tickets, total = temp_db.get_tickets_filtered(portal="dhiraagu", include_completed=True)
+        assert total == 1
 
         # Filter by in_znuny
-        result = temp_db.get_tickets(in_znuny=True)
-        assert result['total'] == 2  # Tickets 0 and 2
+        tickets, total = temp_db.get_tickets_filtered(in_znuny=True, include_completed=True)
+        assert total == 2  # Tickets 0 and 2
 
     def test_get_tickets_pagination(self, temp_db, sample_tickets):
         """Test ticket pagination."""
         for ticket in sample_tickets:
             temp_db.upsert_ticket(ticket)
 
-        result = temp_db.get_tickets(page=1, page_size=2)
+        tickets, total = temp_db.get_tickets_filtered(limit=2, offset=0, include_completed=True)
 
-        assert len(result['tickets']) == 2
-        assert result['total'] == 4
+        assert len(tickets) == 2
+        assert total == 4
 
 
 class TestStatsOperations:
@@ -128,16 +131,23 @@ class TestZnunyOperations:
         """Test updating Znuny information."""
         ticket_id, _, _ = temp_db.upsert_ticket(sample_ticket)
 
-        temp_db.update_znuny_info(
+        # First set znuny status
+        temp_db.update_znuny_status(
             ticket_id=ticket_id,
-            znuny_ticket_id="ZNY12345",
+            in_znuny=True,
+            znuny_ticket_id="ZNY12345"
+        )
+
+        # Then set details
+        temp_db.update_znuny_details(
+            ticket_id=ticket_id,
             znuny_created_at=now_maldives(),
             znuny_created_by="Test Staff",
             znuny_address="Znuny Address",
             znuny_url="https://znuny.example.com/ticket/12345"
         )
 
-        ticket = temp_db.get_ticket(ticket_id)
+        ticket = temp_db.get_ticket_by_id(ticket_id)
         assert ticket.in_znuny is True
         assert ticket.znuny_ticket_id == "ZNY12345"
         assert ticket.znuny_created_by == "Test Staff"
@@ -189,9 +199,9 @@ class TestExtractionLogs:
         temp_db.log_extraction("dhiraagu", "success", 5, 2, 3)
         temp_db.log_extraction("ooredoo", "success", 3, 1, 2)
 
-        last = temp_db.get_last_extraction("dhiraagu")
-        assert last is not None
-        assert last['portal'] == "dhiraagu"
+        last_per_portal = temp_db.get_last_extraction_per_portal()
+        assert "dhiraagu" in last_per_portal
+        assert last_per_portal["dhiraagu"]["status"] == "success"
 
 
 class TestSystemLogs:

@@ -14,6 +14,7 @@ from typing import Optional, List, Dict, Any
 
 from database import Database
 from services import StatsService, ZnunyService, ConfigService
+from config import Config, APP_VERSION
 from utils.logger import get_logger
 from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams
 
@@ -77,12 +78,11 @@ async def health_check():
     """
     import os
     from datetime import datetime
-    from config import Config
 
     health = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": Config.APP_VERSION,
+        "version": APP_VERSION,
         "checks": {}
     }
 

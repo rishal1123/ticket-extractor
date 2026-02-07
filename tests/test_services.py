@@ -82,8 +82,8 @@ class TestConfigService:
         result = service.validate_config()
 
         assert 'valid' in result
-        assert 'missing' in result
-        assert 'errors' in result
+        assert 'issues' in result
+        assert isinstance(result['issues'], list)
 
     def test_get_all_keys(self):
         """Test getting all config keys."""
