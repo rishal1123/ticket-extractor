@@ -939,7 +939,7 @@ class Database:
 
             cursor.execute("""
                 SELECT COUNT(*) as count FROM site_visits
-                WHERE status = 'completed' AND DATE(updated_at) = ?
+                WHERE status = 'completed' AND DATE(visit_date) = ?
             """, (today,))
             today_site_visits_completed = cursor.fetchone()["count"]
 

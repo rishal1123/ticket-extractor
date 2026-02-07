@@ -81,7 +81,7 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     Assigned to: @maah
     """
     # Check if this is a site visit article
-    if "OAN Site Visit Arranged" not in article.subject:
+    if "OAN Site Visit Arranged" not in article.subject and "Preventative Maintenance - Site Visit" not in article.subject:
         return None
 
     body = article.body or ""
@@ -102,10 +102,14 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     if provider_match:
         service_provider = provider_match.group(1).strip()
 
-    # Time - can be HHMM format or "now"
+    # Time - can be HHMM format or "now" (now = article creation time)
     time_match = re.search(r"Time:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
     if time_match:
-        scheduled_time = time_match.group(1).strip()
+        raw_time = time_match.group(1).strip().lower()
+        if raw_time in ("now", "nnow") and article.created_at:
+            scheduled_time = article.created_at.strftime("%H:%M")
+        else:
+            scheduled_time = time_match.group(1).strip()
 
     # Assigned to - usually starts with @
     assigned_match = re.search(r"Assigned to:\s*@?(.+?)(?:\n|$)", body, re.IGNORECASE)
@@ -467,7 +471,7 @@ class ZnunyClient:
                             "created_str": cells[6].text.strip(),
                             "row": row,
                             # Only need body for site visit articles or Phone articles (for address)
-                            "needs_body": "site visit" in subject.lower() or cells[4].text.strip() == "Phone"
+                            "needs_body": "site visit" in subject.lower() or "preventative maintenance" in subject.lower() or cells[4].text.strip() == "Phone"
                         })
                 except:
                     continue
