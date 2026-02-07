@@ -159,6 +159,22 @@
             </div>
         </div>
     </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <a href="/field-visits" class="text-decoration-none">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #f39c12;" title="View site visits">
+                <div class="card-body text-center py-3">
+                    <div class="stat-value" style="color: #f39c12;" id="pendingSiteVisits">0</div>
+                    <div class="fw-semibold mb-1" style="color: #f39c12;">Pending Visits</div>
+                    <div class="extraction-info">
+                        <small class="text-muted">Today: <span id="todaySiteVisitsCreated">0</span> new</small>
+                    </div>
+                    <div class="today-count mt-1">
+                        <small class="badge bg-success">Completed: <span id="todaySiteVisitsCompleted">0</span></small>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
 </div>
 
 
@@ -501,6 +517,11 @@ async function loadStats() {
         document.getElementById('todayOoredoo').textContent = todayExtracted['ooredoo'] || 0;
         document.getElementById('todayRol').textContent = todayExtracted['rol'] || 0;
         document.getElementById('todayMedianet').textContent = todayExtracted['medianet'] || 0;
+
+        // Site visits stats
+        document.getElementById('pendingSiteVisits').textContent = stats.pending_site_visits || 0;
+        document.getElementById('todaySiteVisitsCreated').textContent = stats.today_site_visits_created || 0;
+        document.getElementById('todaySiteVisitsCompleted').textContent = stats.today_site_visits_completed || 0;
 
         document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
 

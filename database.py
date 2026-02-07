@@ -896,6 +896,25 @@ class Database:
             """)
             open_in_znuny = cursor.fetchone()["count"]
 
+            # Site visits stats
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM site_visits
+                WHERE DATE(created_at) = ?
+            """, (today,))
+            today_site_visits_created = cursor.fetchone()["count"]
+
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM site_visits
+                WHERE status = 'completed' AND DATE(updated_at) = ?
+            """, (today,))
+            today_site_visits_completed = cursor.fetchone()["count"]
+
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM site_visits
+                WHERE status = 'pending'
+            """)
+            pending_site_visits = cursor.fetchone()["count"]
+
             return {
                 "total": total,
                 "completed": completed,
@@ -908,7 +927,10 @@ class Database:
                 "today_extracted": today_extracted,
                 "today_extracted_total": today_extracted_total,
                 "today_znuny_entries": today_znuny_entries,
-                "today_znuny_by_portal": today_znuny_by_portal
+                "today_znuny_by_portal": today_znuny_by_portal,
+                "today_site_visits_created": today_site_visits_created,
+                "today_site_visits_completed": today_site_visits_completed,
+                "pending_site_visits": pending_site_visits
             }
 
     def log_login_event(self, portal: str, event_type: str, session_id: str = None,
