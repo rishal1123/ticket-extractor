@@ -785,14 +785,25 @@ class Database:
             count = cursor.rowcount
 
             # Also complete any pending site visits for these tickets
+            # Duration = completion_time - (visit_date + scheduled_time)
             for znuny_id in znuny_ids:
                 cursor.execute("""
                     UPDATE site_visits
                     SET ticket_completed_at = ?,
                         status = 'completed',
-                        time_taken_minutes = CAST(
-                            (julianday(?) - julianday(article_created_at)) * 24 * 60 AS INTEGER
-                        ),
+                        time_taken_minutes = CASE
+                            WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
+                            THEN CAST(
+                                (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
+                                    CASE
+                                        WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
+                                        WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
+                                        ELSE SUBSTR(scheduled_time, 1, 8)
+                                    END
+                                )) * 24 * 60 AS INTEGER
+                            )
+                            ELSE NULL
+                        END,
                         updated_at = ?
                     WHERE znuny_ticket_id = ? AND status = 'pending'
                 """, (now, now, now, znuny_id))
@@ -1457,13 +1468,25 @@ class Database:
         """Update site visits when ticket is completed."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Calculate duration from scheduled visit time to completion time
+            # Duration = completed_at - (visit_date + scheduled_time)
             cursor.execute("""
                 UPDATE site_visits
                 SET ticket_completed_at = ?,
                     status = 'completed',
-                    time_taken_minutes = CAST(
-                        (julianday(?) - julianday(article_created_at)) * 24 * 60 AS INTEGER
-                    ),
+                    time_taken_minutes = CASE
+                        WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
+                        THEN CAST(
+                            (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
+                                CASE
+                                    WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
+                                    WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
+                                    ELSE SUBSTR(scheduled_time, 1, 8)
+                                END
+                            )) * 24 * 60 AS INTEGER
+                        )
+                        ELSE NULL
+                    END,
                     updated_at = ?
                 WHERE znuny_ticket_id = ? AND status = 'pending'
             """, (completed_at, completed_at, now_maldives(), znuny_ticket_id))
@@ -1473,15 +1496,25 @@ class Database:
         """Mark a site visit as completed when a follow-up article is found."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Only complete if there's a pending site visit with this article_id
-            # and the followup article is after the site visit article
+            # Calculate duration from scheduled visit time to followup article time
+            # Duration = followup_time - (visit_date + scheduled_time)
             cursor.execute("""
                 UPDATE site_visits
                 SET ticket_completed_at = ?,
                     status = 'completed',
-                    time_taken_minutes = CAST(
-                        (julianday(?) - julianday(article_created_at)) * 24 * 60 AS INTEGER
-                    ),
+                    time_taken_minutes = CASE
+                        WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
+                        THEN CAST(
+                            (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
+                                CASE
+                                    WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
+                                    WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
+                                    ELSE SUBSTR(scheduled_time, 1, 8)
+                                END
+                            )) * 24 * 60 AS INTEGER
+                        )
+                        ELSE NULL
+                    END,
                     updated_at = ?
                 WHERE znuny_ticket_id = ? AND article_id = ? AND status = 'pending'
             """, (followup_article_time, followup_article_time, now_maldives(),
@@ -1509,6 +1542,56 @@ class Database:
                 LIMIT 1
             """, (znuny_ticket_id,))
             return cursor.fetchone() is not None
+
+    def get_znuny_ids_with_pending_visits(self) -> set:
+        """Get set of Znuny ticket IDs that have pending site visits."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT znuny_ticket_id FROM site_visits
+                WHERE znuny_ticket_id IS NOT NULL AND status = 'pending'
+            """)
+            return {row[0] for row in cursor.fetchall()}
+
+    def complete_site_visits_for_closed_ticket(self, znuny_ticket_id: str,
+                                                completed_at: datetime = None) -> int:
+        """Mark all pending site visits as completed when Znuny ticket is closed.
+
+        Args:
+            znuny_ticket_id: The Znuny ticket ID
+            completed_at: Optional completion time (e.g., last article time).
+                         If not provided, uses current time.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            complete_time = completed_at if completed_at else now_maldives()
+            now = now_maldives()
+            # Calculate duration from scheduled visit time to completion time
+            # Duration = complete_time - (visit_date + scheduled_time)
+            cursor.execute("""
+                UPDATE site_visits
+                SET status = 'completed',
+                    ticket_completed_at = ?,
+                    time_taken_minutes = CASE
+                        WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
+                        THEN CAST(
+                            (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
+                                CASE
+                                    WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
+                                    WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
+                                    ELSE SUBSTR(scheduled_time, 1, 8)
+                                END
+                            )) * 24 * 60 AS INTEGER
+                        )
+                        ELSE NULL
+                    END,
+                    updated_at = ?
+                WHERE znuny_ticket_id = ? AND status = 'pending'
+            """, (complete_time, complete_time, now, znuny_ticket_id))
+            count = cursor.rowcount
+            if count > 0:
+                logger.info(f"Marked {count} site visits as completed for closed ticket {znuny_ticket_id}")
+            return count
 
     def get_synced_znuny_ticket_ids(self) -> set:
         """

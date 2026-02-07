@@ -685,6 +685,7 @@ The application tracks site visits extracted from Znuny "OAN Site Visit Arranged
 |--------|------|-------------|
 | id | INTEGER | Primary key |
 | znuny_ticket_id | TEXT | Parent Znuny ticket number |
+| article_id | INTEGER | Article number containing site visit info |
 | portal_ticket_id | TEXT | Linked ISP portal ticket ID |
 | visit_date | TEXT | Scheduled visit date (YYYY-MM-DD) |
 | scheduled_time | TEXT | Scheduled time slot |
@@ -692,7 +693,8 @@ The application tracks site visits extracted from Znuny "OAN Site Visit Arranged
 | service_provider | TEXT | ISP provider name |
 | site_type | TEXT | Type of site |
 | status | TEXT | pending / completed |
-| time_taken_minutes | REAL | Duration (for completed visits) |
+| ticket_completed_at | DATETIME | When ticket was closed/completed (from Znuny) |
+| time_taken_minutes | REAL | Duration in minutes (completed_at - scheduled_time) |
 | znuny_url | TEXT | Direct URL to Znuny ticket |
 | created_at | DATETIME | When first extracted (MVT timezone) |
 | updated_at | DATETIME | Last update time |
@@ -710,6 +712,32 @@ Site visits are extracted from Znuny articles with subject containing "OAN Site 
 - Assigned staff name
 - Service provider
 - Site type
+
+### Site Visit Completion & Duration
+
+A site visit is marked as **completed** when any of these occur:
+1. **Znuny ticket closed** - ticket disappears from open tickets list
+2. **Follow-up article added** - a new article is added after the site visit article
+3. **ISP ticket completed** - the linked ISP portal ticket disappears
+
+**Duration Calculation:**
+```
+Duration = Completion Time - Scheduled Visit Time
+```
+
+Where:
+- **Completion Time** = Last article's `created_at` time from Znuny (or follow-up article time)
+- **Scheduled Visit Time** = `visit_date` + `scheduled_time` (e.g., "2026-02-07 14:00:00")
+
+**Scheduled Time Formats Supported:**
+| Format | Example | Parsed As |
+|--------|---------|-----------|
+| HH:MM | 14:00 | 14:00:00 |
+| HHMM | 1400 | 14:00:00 |
+| HH:MM:SS | 14:00:00 | 14:00:00 |
+| Invalid | "now" | NULL (no duration) |
+
+**Note:** Duration is calculated from the scheduled visit time, not when the site visit article was created. This measures how long the actual field work took from the scheduled appointment time.
 
 ### API Endpoints
 | Endpoint | Method | Description |

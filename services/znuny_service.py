@@ -265,20 +265,28 @@ class ZnunyService:
 
         # Sort articles by article_number ascending
         sorted_articles = sorted(articles, key=lambda a: a.article_number)
+        max_article_num = max(a.article_number for a in sorted_articles) if sorted_articles else 0
 
         for visit in pending_visits:
             visit_article_id = visit["article_id"]
 
-            # Find the first article after the site visit article
-            for article in sorted_articles:
-                if article.article_number > visit_article_id and article.created_at:
-                    # Found a follow-up article - complete the site visit
-                    if self.db.complete_site_visit_by_followup(
-                        znuny_ticket_id, visit_article_id, article.created_at
-                    ):
-                        completed_count += 1
-                        logger.info(f"Site visit {visit_article_id} completed by follow-up article {article.article_number}")
-                    break
+            # Check if there's ANY article with a higher article_number
+            if max_article_num > visit_article_id:
+                # Find the first article after the site visit article
+                followup_time = None
+                for article in sorted_articles:
+                    if article.article_number > visit_article_id:
+                        followup_time = article.created_at
+                        break
+
+                # Use followup article time, or current time if not available
+                complete_time = followup_time or now_maldives()
+
+                if self.db.complete_site_visit_by_followup(
+                    znuny_ticket_id, visit_article_id, complete_time
+                ):
+                    completed_count += 1
+                    logger.info(f"Site visit {visit_article_id} completed by follow-up article (max article: {max_article_num})")
 
         return completed_count
 
@@ -322,6 +330,7 @@ class ZnunyService:
             "site_visits_extracted": 0,
             "site_visits_linked": 0,
             "site_visits_completed": 0,
+            "site_visits_closed": 0,
             "isp_tickets_synced": 0,
             "isp_details_synced": 0,
             "errors": 0
@@ -385,6 +394,39 @@ class ZnunyService:
             all_tickets = self.znuny_client.get_open_tickets(force_refresh=force_refresh)
             results["znuny_tickets_found"] = len(all_tickets)
             logger.info(f"Found {len(all_tickets)} open tickets in Znuny")
+
+            # Step 1.5: Check for closed tickets with pending site visits
+            # If a Znuny ticket with pending visits is no longer in open list, it's closed
+            open_znuny_ids = {t["ticket_number"] for t in all_tickets}
+            pending_visit_ids = self.db.get_znuny_ids_with_pending_visits()
+            closed_with_pending = pending_visit_ids - open_znuny_ids
+
+            if closed_with_pending:
+                logger.info(f"Found {len(closed_with_pending)} closed tickets with pending visits")
+                for closed_id in closed_with_pending:
+                    # Fetch ticket details to get the last article time
+                    try:
+                        details = self.znuny_client.get_ticket_details(closed_id, skip_body_fetch=True)
+                        if details and details.articles:
+                            # Use the last article's created_at as completion time
+                            last_article = max(details.articles, key=lambda a: a.article_number)
+                            if last_article.created_at:
+                                logger.info(f"Using last article time {last_article.created_at} for closed ticket {closed_id}")
+                                count = self.db.complete_site_visits_for_closed_ticket(
+                                    closed_id, completed_at=last_article.created_at
+                                )
+                            else:
+                                # Fallback to now if article time not available
+                                count = self.db.complete_site_visits_for_closed_ticket(closed_id)
+                        else:
+                            # No articles found, use current time
+                            count = self.db.complete_site_visits_for_closed_ticket(closed_id)
+                        results["site_visits_closed"] += count
+                    except Exception as e:
+                        logger.error(f"Error fetching details for closed ticket {closed_id}: {e}")
+                        # Still complete with current time on error
+                        count = self.db.complete_site_visits_for_closed_ticket(closed_id)
+                        results["site_visits_closed"] += count
 
             # Step 2: Get set of Znuny ticket IDs we've already fully synced
             # (have site visits extracted and no pending visits needing completion)

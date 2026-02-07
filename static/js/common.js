@@ -343,8 +343,8 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                         </div>
                         <div class="col-6">
                             <div class="info-card">
-                                <div class="label">Znuny Created</div>
-                                <div class="value small">${formatMaldivesDateTimeFull(ticket.znuny_created_at)}</div>
+                                <div class="label">Last Updated</div>
+                                <div class="value small">${formatMaldivesDateTimeFull(ticket.updated_at)}</div>
                             </div>
                         </div>
                         <div class="col-6">
@@ -355,8 +355,8 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                         </div>
                         <div class="col-6">
                             <div class="info-card">
-                                <div class="label">Last Updated</div>
-                                <div class="value small">${formatMaldivesDateTimeFull(ticket.updated_at)}</div>
+                                <div class="label">Znuny Created</div>
+                                <div class="value small">${formatMaldivesDateTimeFull(ticket.znuny_created_at)}</div>
                             </div>
                         </div>
                         <div class="col-6">
