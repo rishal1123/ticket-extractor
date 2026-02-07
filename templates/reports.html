@@ -148,6 +148,74 @@
         </table>
     </div>
 </div>
+
+<!-- Detail Sections: Tickets, Articles, Site Visits -->
+<div class="row g-3 mt-1">
+    <!-- Tickets Section -->
+    <div class="col-12 col-lg-4">
+        <div class="table-container">
+            <h6 class="mb-3"><i class="bi bi-ticket-detailed me-2"></i>Tickets <span class="badge bg-success" id="ticketsCount">0</span></h6>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>Portal</th>
+                            <th>Ticket</th>
+                            <th>Address</th>
+                            <th class="d-none d-md-table-cell">Znuny</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportTicketsTable">
+                        <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Articles Section -->
+    <div class="col-12 col-lg-4">
+        <div class="table-container">
+            <h6 class="mb-3"><i class="bi bi-chat-left-text me-2"></i>Articles <span class="badge bg-info" id="articlesCount">0</span></h6>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>Staff</th>
+                            <th>Subject</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportArticlesTable">
+                        <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Site Visits Section -->
+    <div class="col-12 col-lg-4">
+        <div class="table-container">
+            <h6 class="mb-3"><i class="bi bi-geo-alt me-2"></i>Site Visits <span class="badge bg-warning text-dark" id="visitsCount">0</span></h6>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th>Staff</th>
+                            <th>Time</th>
+                            <th>Provider</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportVisitsTable">
+                        <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block script %}
@@ -222,9 +290,109 @@ async function loadReportData() {
         renderReportPortalTable(reportData.portal);
         renderReportPerfTable(reportData.staff);
         renderReportStaffTable(reportData.staff.staff || []);
+
+        // Load detail sections
+        loadDetailSections(dateFrom, dateTo);
     } catch (error) {
         console.error('Error loading report data:', error);
     }
+}
+
+async function loadDetailSections(dateFrom, dateTo) {
+    const params = new URLSearchParams();
+    params.append('date_from', dateFrom);
+    params.append('date_to', dateTo);
+    params.append('include_completed', 'true');
+    params.append('limit', '200');
+
+    try {
+        const [ticketsRes, articlesRes, visitsRes] = await Promise.all([
+            fetch(`/api/tickets?${params.toString()}`),
+            fetch(`/api/articles?date_from=${dateFrom}&date_to=${dateTo}&limit=200`),
+            fetch(`/api/field-visits?date_from=${dateFrom}&date_to=${dateTo}&limit=200`)
+        ]);
+
+        const ticketsData = await ticketsRes.json();
+        const articlesData = await articlesRes.json();
+        const visitsData = await visitsRes.json();
+
+        renderReportTickets(ticketsData);
+        renderReportArticles(articlesData);
+        renderReportVisits(visitsData);
+    } catch (error) {
+        console.error('Error loading detail sections:', error);
+    }
+}
+
+function renderReportTickets(data) {
+    const tbody = document.getElementById('reportTicketsTable');
+    const tickets = data.tickets || [];
+    document.getElementById('ticketsCount').textContent = data.total || tickets.length;
+
+    if (tickets.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No tickets</td></tr>';
+        return;
+    }
+
+    const portalColors = { dhiraagu: '#e65100', ooredoo: '#9b59b6', rol: '#3498db', medianet: '#1abc9c' };
+
+    tbody.innerHTML = tickets.map(t => `
+        <tr style="cursor:pointer;" onclick="showTicketDetail(${t.id})">
+            <td><span class="badge" style="background-color:${portalColors[t.portal]||'#6c757d'}">${t.portal}</span></td>
+            <td class="small">${escapeHtml(t.ticket_id || '')}</td>
+            <td class="small text-truncate" style="max-width:120px;">${escapeHtml(t.address || '')}</td>
+            <td class="d-none d-md-table-cell">${t.in_znuny ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle text-danger"></i>'}</td>
+        </tr>
+    `).join('');
+}
+
+function renderReportArticles(data) {
+    const tbody = document.getElementById('reportArticlesTable');
+    const articles = data.articles || [];
+    document.getElementById('articlesCount').textContent = data.total || articles.length;
+
+    if (articles.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">No articles</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = articles.map(a => {
+        const time = a.created_at ? formatMaldivesDateTime(a.created_at) : (a.created_at_str || '');
+        const subject = a.subject || '';
+        const shortSubject = subject.length > 30 ? subject.substring(0, 30) + '...' : subject;
+        return `
+            <tr>
+                <td class="small">${escapeHtml(a.created_by || '')}</td>
+                <td class="small text-truncate" style="max-width:150px;" title="${escapeHtml(subject)}">${escapeHtml(shortSubject)}</td>
+                <td class="small text-nowrap">${time}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderReportVisits(data) {
+    const tbody = document.getElementById('reportVisitsTable');
+    const visits = data.visits || [];
+    document.getElementById('visitsCount').textContent = data.total || visits.length;
+
+    if (visits.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No site visits</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = visits.map(v => {
+        const statusBadge = v.status === 'completed'
+            ? '<span class="badge bg-success">Done</span>'
+            : '<span class="badge bg-warning text-dark">Pending</span>';
+        return `
+            <tr>
+                <td class="small">${escapeHtml(v.assigned_to || '')}</td>
+                <td class="small text-nowrap">${v.scheduled_time || ''}</td>
+                <td class="small">${escapeHtml(v.service_provider || '')}</td>
+                <td>${statusBadge}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 function updateReportSummary(data) {

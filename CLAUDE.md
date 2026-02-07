@@ -48,7 +48,7 @@ Extractor/
 │   ├── staff_stats.html # Staff performance stats (extends base.html)
 │   ├── staff_detail.html# Individual staff performance detail
 │   ├── reports.html     # Reports page with date-filtered statistics
-│   └── admin.html       # Admin panel with Status, Reports, Staff & Config tabs
+│   └── admin.html       # Admin panel with Status, Staff & Config tabs
 │
 ├── static/              # Static assets
 │   ├── js/common.js     # Shared JavaScript functions
@@ -240,17 +240,18 @@ HTTP route handlers (MVC app only):
 - `/field-visits` - Site visits/field visits management
 - `/znuny-tickets` - Znuny-only tickets (orphan tickets not linked to ISP portals)
 - `/reports` - Reports with date-filtered statistics (Today, Yesterday, 7 Days, 30 Days)
-- `/admin` - Admin panel with Status, Reports, Staff Management & Config tabs
+- `/admin` - Admin panel with Status, Staff Management & Config tabs
 
 **Key API Endpoints:**
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/stats` | GET | Dashboard statistics |
-| `/api/tickets` | GET | List tickets (with filters including staff) |
+| `/api/tickets` | GET | List tickets (with filters: staff, date_from, date_to) |
 | `/api/tickets/{id}` | GET | Single ticket details |
 | `/api/tickets/{id}/check-znuny` | POST | Check if ticket exists in Znuny |
 | `/api/tickets/{id}/sync-znuny` | POST | Fetch Znuny details for ticket |
 | `/api/tickets/{id}/znuny-articles` | GET | Get Znuny articles |
+| `/api/articles` | GET | List articles (supports date_from, date_to, staff) |
 | `/api/staff-stats` | GET | Basic staff stats (supports date_from, date_to) |
 | `/api/staff-stats-detailed` | GET | Detailed staff stats with on-time metrics |
 | `/api/staff/{name}/tickets` | GET | Get tickets created by specific staff |
@@ -583,6 +584,9 @@ Standalone reports page accessible from the main navigation bar with date-filter
 2. **Tickets by Portal**: Breakdown by ISP with total, in Znuny, and pending counts
 3. **Performance Breakdown**: Within 5min, 5-10min, Over 10min counts with percentages
 4. **Staff Performance Table**: Ranked staff list with metrics (clickable rows to view staff detail)
+5. **Tickets**: List of ISP tickets extracted in the period (clickable for detail)
+6. **Articles**: List of Znuny articles created in the period with staff and subject
+7. **Site Visits**: List of site visits in the period with staff, time, provider, status
 
 ### Export
 - **Export CSV** button downloads staff statistics for the selected period
@@ -707,7 +711,7 @@ The application tracks site visits extracted from Znuny "OAN Site Visit Arranged
 - **Edit Modal**: Update assigned staff, status, time taken
 
 ### Site Visit Extraction
-Site visits are extracted from Znuny articles with subject containing "OAN Site Visit Arranged". The article body is parsed for:
+Site visits are extracted from Znuny articles with subject containing "OAN Site Visit Arranged" or "Preventative Maintenance - Site Visit". The article body is parsed for:
 - Visit date and time
 - Assigned staff name
 - Service provider

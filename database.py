@@ -477,19 +477,19 @@ class Database:
             if portal:
                 if include_completed:
                     cursor.execute(
-                        "SELECT * FROM tickets WHERE portal = ? ORDER BY updated_at DESC",
+                        "SELECT * FROM tickets WHERE portal = ? ORDER BY created_at DESC",
                         (portal,)
                     )
                 else:
                     cursor.execute(
-                        "SELECT * FROM tickets WHERE portal = ? AND completed_at IS NULL ORDER BY updated_at DESC",
+                        "SELECT * FROM tickets WHERE portal = ? AND completed_at IS NULL ORDER BY created_at DESC",
                         (portal,)
                     )
             else:
                 if include_completed:
-                    cursor.execute("SELECT * FROM tickets ORDER BY updated_at DESC")
+                    cursor.execute("SELECT * FROM tickets ORDER BY created_at DESC")
                 else:
-                    cursor.execute("SELECT * FROM tickets WHERE completed_at IS NULL ORDER BY updated_at DESC")
+                    cursor.execute("SELECT * FROM tickets WHERE completed_at IS NULL ORDER BY created_at DESC")
 
             rows = cursor.fetchall()
             return [self._row_to_ticket(row) for row in rows]
@@ -504,6 +504,8 @@ class Database:
         search: str = None,
         include_completed: bool = False,
         completed_only: bool = False,
+        date_from: str = None,
+        date_to: str = None,
         limit: int = 100,
         offset: int = 0
     ) -> tuple[list[Ticket], int]:
@@ -548,6 +550,14 @@ class Database:
                 search_param = f"%{search}%"
                 params.extend([search_param, search_param, search_param, search_param])
 
+            if date_from:
+                conditions.append("DATE(created_at) >= ?")
+                params.append(date_from)
+
+            if date_to:
+                conditions.append("DATE(created_at) <= ?")
+                params.append(date_to)
+
             # Build query
             where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -560,7 +570,7 @@ class Database:
             query = f"""
                 SELECT * FROM tickets
                 WHERE {where_clause}
-                ORDER BY updated_at DESC
+                ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
             """
             cursor.execute(query, params + [limit, offset])
@@ -664,6 +674,43 @@ class Database:
             else:
                 return []
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_articles_filtered(self, date_from: str = None, date_to: str = None,
+                              staff: str = None, limit: int = 100, offset: int = 0) -> dict:
+        """Get articles with optional date and staff filters."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            conditions = []
+            params = []
+
+            if date_from:
+                conditions.append("DATE(za.created_at) >= ?")
+                params.append(date_from)
+            if date_to:
+                conditions.append("DATE(za.created_at) <= ?")
+                params.append(date_to)
+            if staff:
+                conditions.append("LOWER(za.created_by) = LOWER(?)")
+                params.append(staff)
+
+            where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+            # Count
+            cursor.execute(f"SELECT COUNT(*) FROM znuny_articles za WHERE {where_clause}", params)
+            total = cursor.fetchone()[0]
+
+            # Get articles with ticket info
+            cursor.execute(f"""
+                SELECT za.*, t.portal, t.ticket_id as portal_ticket_id, t.address, t.customer_name
+                FROM znuny_articles za
+                LEFT JOIN tickets t ON za.ticket_id = t.id
+                WHERE {where_clause}
+                ORDER BY za.created_at DESC
+                LIMIT ? OFFSET ?
+            """, params + [limit, offset])
+
+            articles = [dict(row) for row in cursor.fetchall()]
+            return {"total": total, "articles": articles}
 
     def get_staff_stats(self, date_from: str = None, date_to: str = None) -> dict:
         """Get statistics about staff activity in Znuny.

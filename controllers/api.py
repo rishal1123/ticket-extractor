@@ -204,6 +204,8 @@ async def get_tickets(
     include_completed: bool = False,
     completed_only: bool = False,
     staff: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     limit: int = Query(default=50, le=1000),
     offset: int = 0,
     db: Database = Depends(get_db)
@@ -219,6 +221,8 @@ async def get_tickets(
         search=search,
         include_completed=include_completed or completed_only,
         completed_only=completed_only,
+        date_from=date_from,
+        date_to=date_to,
         limit=limit,
         offset=offset
     )
@@ -277,6 +281,24 @@ async def get_ticket_znuny_articles(ticket_id: int, db: Database = Depends(get_d
         **time_info,
         "articles": articles
     })
+
+
+@router.get("/articles")
+@handle_errors("get articles")
+async def get_articles(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    staff: Optional[str] = None,
+    limit: int = Query(default=50, le=500),
+    offset: int = 0,
+    db: Database = Depends(get_db)
+):
+    """Get articles with optional date and staff filters."""
+    result = db.get_articles_filtered(
+        date_from=date_from, date_to=date_to,
+        staff=staff, limit=limit, offset=offset
+    )
+    return JSONResponse(content=result)
 
 
 @router.get("/tickets/{ticket_id}/site-visits")
