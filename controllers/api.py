@@ -34,6 +34,73 @@ def get_config_service():
     return ConfigService()
 
 
+# Health endpoint
+@router.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring.
+    Returns system status, database connectivity, and service health.
+    """
+    import os
+    from datetime import datetime
+    from config import Config
+
+    health = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "version": Config.APP_VERSION,
+        "checks": {}
+    }
+
+    # Check database
+    try:
+        db = get_db()
+        stats = db.get_stats()
+        health["checks"]["database"] = {
+            "status": "healthy",
+            "tickets_count": stats.get("total", 0)
+        }
+    except Exception as e:
+        health["checks"]["database"] = {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+        health["status"] = "degraded"
+
+    # Check scheduler
+    try:
+        from services import SchedulerService
+        scheduler = SchedulerService()
+        scheduler_status = scheduler.get_status()
+        health["checks"]["scheduler"] = {
+            "status": "healthy" if scheduler_status.get("running") else "stopped",
+            "running": scheduler_status.get("running", False),
+            "jobs_count": scheduler_status.get("jobs_count", 0)
+        }
+    except Exception as e:
+        health["checks"]["scheduler"] = {
+            "status": "unknown",
+            "error": str(e)
+        }
+
+    # Check disk space (for database)
+    try:
+        db_path = Config.DATABASE_PATH
+        if os.path.exists(db_path):
+            db_size = os.path.getsize(db_path)
+            health["checks"]["storage"] = {
+                "status": "healthy",
+                "database_size_mb": round(db_size / (1024 * 1024), 2)
+            }
+    except Exception as e:
+        health["checks"]["storage"] = {
+            "status": "unknown",
+            "error": str(e)
+        }
+
+    return JSONResponse(content=health)
+
+
 # Stats endpoints
 @router.get("/stats")
 async def get_stats():

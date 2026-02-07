@@ -337,6 +337,29 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_by ON znuny_tickets(created_by)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_at ON znuny_tickets(created_at)")
 
+            # Performance indexes for tickets table
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal ON tickets(portal)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_created_at ON tickets(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_completed_at ON tickets(completed_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_in_znuny ON tickets(in_znuny)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_created_by ON tickets(znuny_created_by)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal_ticket ON tickets(portal, ticket_id)")
+
+            # Indexes for znuny_articles
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_ticket ON znuny_articles(ticket_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_created_by ON znuny_articles(created_by)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_created_at ON znuny_articles(created_at)")
+
+            # Indexes for site_visits
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_status ON site_visits(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_assigned_to ON site_visits(assigned_to)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_visit_date ON site_visits(visit_date)")
+
+            # Indexes for extraction_logs
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_portal ON extraction_logs(portal)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_extracted_at ON extraction_logs(extracted_at)")
+
             logger.info("Database initialized successfully")
 
     def upsert_ticket(self, ticket: Ticket) -> tuple[int, bool, bool]:

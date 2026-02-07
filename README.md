@@ -165,6 +165,25 @@ DASHBOARD_PORT=8000
 - `GET /api/admin/scheduler-status` - Scheduler status
 - `POST /api/admin/staff-merge` - Merge staff names
 
+### Health Check
+- `GET /api/health` - System health status (database, scheduler, storage)
+
+## Backup & Restore
+
+```bash
+# Create backup
+python scripts/backup.py
+
+# Create backup and keep only last 7
+python scripts/backup.py --keep 7
+
+# List existing backups
+python scripts/backup.py --list
+
+# Restore from backup
+python scripts/backup.py --restore backups/tickets_backup_20260207_120000.db
+```
+
 ## Docker Deployment
 
 ```bash
