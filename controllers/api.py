@@ -1,16 +1,29 @@
 """
 API Controller - Handles JSON API routes.
+
+This module provides RESTful API endpoints for:
+- Dashboard statistics
+- Ticket management
+- Staff performance metrics
+- Znuny integration
 """
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from database import Database
 from services import StatsService, ZnunyService, ConfigService
 from utils.logger import get_logger
 
-router = APIRouter(prefix="/api")
+# API Router with OpenAPI tags
+router = APIRouter(
+    prefix="/api",
+    tags=["API"],
+    responses={
+        500: {"description": "Internal server error"},
+    }
+)
 logger = get_logger("api_controller")
 
 
@@ -35,7 +48,32 @@ def get_config_service():
 
 
 # Health endpoint
-@router.get("/health")
+@router.get(
+    "/health",
+    tags=["Health"],
+    summary="Health Check",
+    description="Check system health including database, scheduler, and storage status.",
+    response_description="Health status with component checks",
+    responses={
+        200: {
+            "description": "Health check successful",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "healthy",
+                        "timestamp": "2026-02-07T12:00:00",
+                        "version": "1.0.0",
+                        "checks": {
+                            "database": {"status": "healthy", "tickets_count": 10},
+                            "scheduler": {"status": "healthy", "running": True},
+                            "storage": {"status": "healthy", "database_size_mb": 0.5}
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
 async def health_check():
     """
     Health check endpoint for monitoring.
@@ -102,9 +140,30 @@ async def health_check():
 
 
 # Stats endpoints
-@router.get("/stats")
+@router.get(
+    "/stats",
+    tags=["Statistics"],
+    summary="Dashboard Statistics",
+    description="Get comprehensive dashboard statistics including ticket counts, portal breakdown, and extraction status.",
+    responses={
+        200: {
+            "description": "Dashboard statistics",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "total": 25,
+                        "completed": 10,
+                        "by_portal": {"dhiraagu": 5, "ooredoo": 10, "rol": 5, "medianet": 5},
+                        "not_in_znuny": 3,
+                        "today_extracted": {"dhiraagu": 2, "ooredoo": 3}
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_stats():
-    """Get dashboard statistics."""
+    """Get dashboard statistics including ticket counts, portal breakdown, and sync status."""
     try:
         service = get_stats_service()
         stats = service.get_dashboard_stats()
@@ -115,9 +174,35 @@ async def get_stats():
 
 
 # Tickets endpoints
-@router.get("/tickets")
+@router.get(
+    "/tickets",
+    tags=["Tickets"],
+    summary="List Tickets",
+    description="Retrieve tickets with optional filtering by portal, status, type, and more.",
+    responses={
+        200: {
+            "description": "List of tickets with pagination",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "total": 100,
+                        "tickets": [
+                            {
+                                "id": 1,
+                                "portal": "dhiraagu",
+                                "ticket_id": "0125858440",
+                                "customer_name": "Test Customer",
+                                "status": "Open"
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_tickets(
-    portal: Optional[str] = None,
+    portal: Optional[str] = Query(None, description="Filter by portal (dhiraagu, ooredoo, rol, medianet)"),
     status: Optional[str] = None,
     ticket_type: Optional[str] = None,
     search: Optional[str] = None,

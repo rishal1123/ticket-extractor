@@ -27,6 +27,7 @@ from controllers import (
 )
 from services.scheduler_service import get_scheduler
 from utils.logger import setup_logger, get_logger
+from middleware.security import SecurityMiddleware
 
 logger = get_logger("app")
 
@@ -61,6 +62,9 @@ def create_app() -> FastAPI:
         version="1.0.0",
         lifespan=lifespan
     )
+
+    # Add security middleware (rate limiting, security headers)
+    app.add_middleware(SecurityMiddleware)
 
     # Mount static files
     static_dir = os.path.join(os.path.dirname(__file__), "static")
