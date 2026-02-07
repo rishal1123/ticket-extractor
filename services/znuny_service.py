@@ -43,9 +43,7 @@ class ZnunyService:
         search_term = ticket.account if ticket.portal == "rol" and ticket.account else ticket.ticket_id
 
         try:
-            exists, znuny_id = self.znuny_client.check_ticket_sync(
-                search_term, ticket.customer_name
-            )
+            exists, znuny_id = self.znuny_client.check_ticket_sync(search_term)
             self.db.update_znuny_status(ticket_id, exists, znuny_id)
 
             return {
@@ -167,9 +165,7 @@ class ZnunyService:
             search_term = ticket.account if ticket.portal == "rol" and ticket.account else ticket.ticket_id
 
             try:
-                exists, znuny_id = self.znuny_client.check_ticket_sync(
-                    search_term, ticket.customer_name
-                )
+                exists, znuny_id = self.znuny_client.check_ticket_sync(search_term)
                 self.db.update_znuny_status(ticket.id, exists, znuny_id)
                 results["checked"] += 1
 
