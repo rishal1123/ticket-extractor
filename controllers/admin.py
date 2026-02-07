@@ -2,7 +2,7 @@
 Admin Controller - Handles admin panel routes.
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import JSONResponse
 from typing import Optional
 import threading
@@ -12,17 +12,19 @@ from services import ExtractionService, StatsService, ZnunyService
 from services.scheduler_service import get_scheduler
 from config import Config
 from utils.logger import get_logger
+from .dependencies import (
+    get_db,
+    handle_errors,
+    get_date_filter,
+    DateFilterParams,
+    success_response
+)
 
-router = APIRouter(prefix="/api/admin")
+router = APIRouter(prefix="/api/admin", tags=["Admin"])
 logger = get_logger("admin_controller")
 
 # Global for extraction status
 _extraction_running = False
-
-
-def get_db():
-    """Get database instance."""
-    return Database()
 
 
 @router.get("/scheduler-status")
@@ -79,141 +81,112 @@ async def trigger_extraction():
 
 
 @router.get("/login-summary")
+@handle_errors("get login summary")
 async def get_login_summary():
     """Get login statistics summary."""
-    try:
-        service = StatsService()
-        return JSONResponse(content=service.get_login_summary())
-    except Exception as e:
-        logger.error(f"Error getting login summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = StatsService()
+    return JSONResponse(content=service.get_login_summary())
 
 
 @router.get("/login-stats")
+@handle_errors("get login stats")
 async def get_login_stats(
-    limit: int = Query(default=100, le=500)
+    limit: int = Query(default=100, le=500),
+    db: Database = Depends(get_db)
 ):
     """Get login event history."""
-    try:
-        db = get_db()
-        logs = db.get_login_stats(limit=limit)
-        return JSONResponse(content={"logs": logs})
-    except Exception as e:
-        logger.error(f"Error getting login stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    logs = db.get_login_stats(limit=limit)
+    return JSONResponse(content={"logs": logs})
 
 
 @router.get("/system-logs")
+@handle_errors("get system logs")
 async def get_system_logs(
     level: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = Query(default=50, le=500),
-    offset: int = 0
+    offset: int = 0,
+    db: Database = Depends(get_db)
 ):
     """Get system logs."""
-    try:
-        db = get_db()
-        result = db.get_system_logs(
-            level=level,
-            search=search,
-            limit=limit,
-            offset=offset
-        )
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error getting system logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    result = db.get_system_logs(
+        level=level,
+        search=search,
+        limit=limit,
+        offset=offset
+    )
+    return JSONResponse(content=result)
 
 
 @router.get("/log-stats")
-async def get_log_stats():
+@handle_errors("get log stats")
+async def get_log_stats(db: Database = Depends(get_db)):
     """Get log statistics."""
-    try:
-        db = get_db()
-        stats = db.get_log_stats()
-        return JSONResponse(content=stats)
-    except Exception as e:
-        logger.error(f"Error getting log stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    stats = db.get_log_stats()
+    return JSONResponse(content=stats)
 
 
 @router.post("/clear-old-logs")
-async def clear_old_logs(days: int = 30):
+@handle_errors("clear old logs")
+async def clear_old_logs(days: int = 30, db: Database = Depends(get_db)):
     """Clear logs older than specified days."""
-    try:
-        db = get_db()
-        deleted = db.clear_old_logs(days=days)
-        return JSONResponse(content={
-            "success": True,
-            "deleted": deleted
-        })
-    except Exception as e:
-        logger.error(f"Error clearing old logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    deleted = db.clear_old_logs(days=days)
+    return JSONResponse(content=success_response(
+        f"Cleared {deleted} old logs",
+        {"deleted": deleted}
+    ))
 
 
 @router.get("/delayed-tickets")
+@handle_errors("get delayed tickets")
 async def get_delayed_tickets(
     min_delay: int = Query(default=5, description="Minimum delay in minutes"),
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None
+    date_filter: DateFilterParams = Depends(get_date_filter)
 ):
     """Get analysis of delayed tickets."""
-    try:
-        service = StatsService()
-        data = service.get_delayed_tickets_analysis(
-            min_delay_minutes=min_delay,
-            date_from=date_from,
-            date_to=date_to
-        )
-        return JSONResponse(content=data)
-    except Exception as e:
-        logger.error(f"Error getting delayed tickets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = StatsService()
+    data = service.get_delayed_tickets_analysis(
+        min_delay_minutes=min_delay,
+        date_from=date_filter.date_from,
+        date_to=date_filter.date_to
+    )
+    return JSONResponse(content=data)
 
 
 @router.post("/login")
-async def admin_login(request: Request):
+@handle_errors("admin login")
+async def admin_login(request: Request, db: Database = Depends(get_db)):
     """Authenticate admin user."""
-    try:
-        data = await request.json()
-        password = data.get("password", "").strip()
+    data = await request.json()
+    password = data.get("password", "").strip()
 
-        db = get_db()
-        stored_password = db.get_setting("admin_password", "admin123")
+    stored_password = db.get_setting("admin_password", "admin123")
 
-        if password == stored_password:
-            return JSONResponse(content={"success": True, "message": "Login successful"})
-        else:
-            return JSONResponse(content={"success": False, "message": "Invalid password"})
-    except Exception as e:
-        logger.error(f"Error in admin login: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    if password == stored_password:
+        return JSONResponse(content=success_response("Login successful"))
+    else:
+        return JSONResponse(content={"success": False, "message": "Invalid password"})
 
 
 @router.post("/change-password")
-async def change_admin_password(request: Request):
+@handle_errors("change admin password")
+async def change_admin_password(request: Request, db: Database = Depends(get_db)):
     """Change admin password."""
-    try:
-        data = await request.json()
-        current_password = data.get("current_password", "")
-        new_password = data.get("new_password", "")
+    data = await request.json()
+    current_password = data.get("current_password", "")
+    new_password = data.get("new_password", "")
 
-        db = get_db()
-        stored_password = db.get_setting("admin_password", "admin123")
+    stored_password = db.get_setting("admin_password", "admin123")
 
-        if current_password != stored_password:
-            return JSONResponse(content={"success": False, "message": "Current password is incorrect"})
+    if current_password != stored_password:
+        return JSONResponse(content={"success": False, "message": "Current password is incorrect"})
 
-        if len(new_password) < 4:
-            return JSONResponse(content={"success": False, "message": "Password must be at least 4 characters"})
+    if len(new_password) < 4:
+        return JSONResponse(content={"success": False, "message": "Password must be at least 4 characters"})
 
-        db.set_setting("admin_password", new_password, "Password for admin panel access")
-        logger.info("Admin password changed")
-        return JSONResponse(content={"success": True, "message": "Password changed successfully"})
-    except Exception as e:
-        logger.error(f"Error changing admin password: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    db.set_setting("admin_password", new_password, "Password for admin panel access")
+    logger.info("Admin password changed")
+    return JSONResponse(content=success_response("Password changed successfully"))
 
 
 # Settings router (separate prefix for /api/settings routes)
@@ -221,130 +194,103 @@ settings_router = APIRouter(prefix="/api/settings")
 
 
 @settings_router.get("/performance-thresholds")
-async def get_performance_thresholds():
+@handle_errors("get performance thresholds")
+async def get_performance_thresholds(db: Database = Depends(get_db)):
     """Get performance threshold settings."""
-    try:
-        db = get_db()
-        thresholds = db.get_performance_thresholds()
-        return JSONResponse(content={"success": True, "thresholds": thresholds})
-    except Exception as e:
-        logger.error(f"Error getting performance thresholds: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    thresholds = db.get_performance_thresholds()
+    return JSONResponse(content={"success": True, "thresholds": thresholds})
 
 
 @settings_router.post("/performance-thresholds")
-async def update_performance_thresholds(request: Request):
+@handle_errors("update performance thresholds")
+async def update_performance_thresholds(request: Request, db: Database = Depends(get_db)):
     """Update performance threshold settings."""
-    try:
-        data = await request.json()
-        db = get_db()
-        db.set_performance_thresholds(
-            good=int(data.get("good", 5)),
-            warning=int(data.get("warning", 10)),
-            bad=int(data.get("bad", 30)),
-            critical=int(data.get("critical", 60))
-        )
-        logger.info(f"Performance thresholds updated: {data}")
-        return JSONResponse(content={"success": True, "message": "Thresholds saved"})
-    except Exception as e:
-        logger.error(f"Error updating performance thresholds: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    data = await request.json()
+    db.set_performance_thresholds(
+        good=int(data.get("good", 5)),
+        warning=int(data.get("warning", 10)),
+        bad=int(data.get("bad", 30)),
+        critical=int(data.get("critical", 60))
+    )
+    logger.info(f"Performance thresholds updated: {data}")
+    return JSONResponse(content=success_response("Thresholds saved"))
 
 
 @settings_router.get("")
-async def get_all_settings():
+@handle_errors("get all settings")
+async def get_all_settings(db: Database = Depends(get_db)):
     """Get all app settings."""
-    try:
-        db = get_db()
-        settings = db.get_all_settings()
-        return JSONResponse(content={"success": True, "settings": settings})
-    except Exception as e:
-        logger.error(f"Error getting settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    settings = db.get_all_settings()
+    return JSONResponse(content={"success": True, "settings": settings})
 
 
 # ==================== Staff Management ====================
 
 @router.get("/staff-list")
-async def get_staff_list():
+@handle_errors("get staff list")
+async def get_staff_list(db: Database = Depends(get_db)):
     """Get all unique staff names with counts from all tables."""
-    try:
-        db = get_db()
-        staff = db.get_all_staff_names_with_counts()
-        return JSONResponse(content={"success": True, "staff": staff})
-    except Exception as e:
-        logger.error(f"Error getting staff list: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    staff = db.get_all_staff_names_with_counts()
+    return JSONResponse(content={"success": True, "staff": staff})
 
 
 @router.get("/staff-merge-preview")
+@handle_errors("get staff merge preview")
 async def get_staff_merge_preview(
     source: str = Query(..., description="Staff name to merge from"),
-    target: str = Query(..., description="Staff name to merge into")
+    target: str = Query(..., description="Staff name to merge into"),
+    db: Database = Depends(get_db)
 ):
     """Preview the effect of merging one staff name into another."""
-    try:
-        if source == target:
-            return JSONResponse(content={
-                "success": False,
-                "message": "Source and target cannot be the same"
-            })
+    if source == target:
+        return JSONResponse(content={
+            "success": False,
+            "message": "Source and target cannot be the same"
+        })
 
-        db = get_db()
-        preview = db.get_staff_merge_preview(source, target)
-        return JSONResponse(content={"success": True, "preview": preview})
-    except Exception as e:
-        logger.error(f"Error getting staff merge preview: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    preview = db.get_staff_merge_preview(source, target)
+    return JSONResponse(content={"success": True, "preview": preview})
 
 
 @router.post("/staff-merge")
-async def merge_staff(request: Request):
+@handle_errors("merge staff")
+async def merge_staff(request: Request, db: Database = Depends(get_db)):
     """Merge one staff name into another across all tables."""
-    try:
-        data = await request.json()
-        source = data.get("source", "").strip()
-        target = data.get("target", "").strip()
+    data = await request.json()
+    source = data.get("source", "").strip()
+    target = data.get("target", "").strip()
 
-        if not source or not target:
-            return JSONResponse(content={
-                "success": False,
-                "message": "Both source and target names are required"
-            })
-
-        if source == target:
-            return JSONResponse(content={
-                "success": False,
-                "message": "Source and target cannot be the same"
-            })
-
-        db = get_db()
-        result = db.merge_staff_names(source, target)
-
-        logger.info(f"Staff merge completed: '{source}' -> '{target}', {result['total_updated']} records updated")
-
+    if not source or not target:
         return JSONResponse(content={
-            "success": True,
-            "message": f"Merged '{source}' into '{target}'",
-            "result": result
+            "success": False,
+            "message": "Both source and target names are required"
         })
-    except Exception as e:
-        logger.error(f"Error merging staff: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+    if source == target:
+        return JSONResponse(content={
+            "success": False,
+            "message": "Source and target cannot be the same"
+        })
+
+    result = db.merge_staff_names(source, target)
+
+    logger.info(f"Staff merge completed: '{source}' -> '{target}', {result['total_updated']} records updated")
+
+    return JSONResponse(content={
+        "success": True,
+        "message": f"Merged '{source}' into '{target}'",
+        "result": result
+    })
 
 
 # ==================== Reports ====================
 
 @router.get("/report-portal-stats")
+@handle_errors("get portal stats")
 async def get_report_portal_stats(
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None
+    date_filter: DateFilterParams = Depends(get_date_filter),
+    db: Database = Depends(get_db)
 ):
     """Get ticket statistics by portal for reporting."""
-    try:
-        db = get_db()
-        stats = db.get_report_portal_stats(date_from, date_to)
-        return JSONResponse(content=stats)
-    except Exception as e:
-        logger.error(f"Error getting portal stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    stats = db.get_report_portal_stats(date_filter.date_from, date_filter.date_to)
+    return JSONResponse(content=stats)

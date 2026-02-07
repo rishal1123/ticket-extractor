@@ -8,13 +8,14 @@ This module provides RESTful API endpoints for:
 - Znuny integration
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 
 from database import Database
 from services import StatsService, ZnunyService, ConfigService
 from utils.logger import get_logger
+from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams
 
 # API Router with OpenAPI tags
 router = APIRouter(
@@ -25,11 +26,6 @@ router = APIRouter(
     }
 )
 logger = get_logger("api_controller")
-
-
-def get_db():
-    """Get database instance."""
-    return Database()
 
 
 def get_stats_service():
@@ -162,15 +158,12 @@ async def health_check():
         }
     }
 )
+@handle_errors("get stats")
 async def get_stats():
     """Get dashboard statistics including ticket counts, portal breakdown, and sync status."""
-    try:
-        service = get_stats_service()
-        stats = service.get_dashboard_stats()
-        return JSONResponse(content=stats)
-    except Exception as e:
-        logger.error(f"Error getting stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    stats = service.get_dashboard_stats()
+    return JSONResponse(content=stats)
 
 
 # Tickets endpoints
@@ -201,6 +194,7 @@ async def get_stats():
         }
     }
 )
+@handle_errors("get tickets")
 async def get_tickets(
     portal: Optional[str] = Query(None, description="Filter by portal (dhiraagu, ooredoo, rol, medianet)"),
     status: Optional[str] = None,
@@ -211,176 +205,133 @@ async def get_tickets(
     completed_only: bool = False,
     staff: Optional[str] = None,
     limit: int = Query(default=50, le=1000),
-    offset: int = 0
+    offset: int = 0,
+    db: Database = Depends(get_db)
 ):
     """Get tickets with optional filters (SQL-level filtering)."""
-    try:
-        db = get_db()
-        # Use database-level filtering for efficiency
-        tickets, total = db.get_tickets_filtered(
-            portal=portal,
-            status=status,
-            ticket_type=ticket_type,
-            in_znuny=in_znuny,
-            staff=staff,
-            search=search,
-            include_completed=include_completed or completed_only,
-            completed_only=completed_only,
-            limit=limit,
-            offset=offset
-        )
+    # Use database-level filtering for efficiency
+    tickets, total = db.get_tickets_filtered(
+        portal=portal,
+        status=status,
+        ticket_type=ticket_type,
+        in_znuny=in_znuny,
+        staff=staff,
+        search=search,
+        include_completed=include_completed or completed_only,
+        completed_only=completed_only,
+        limit=limit,
+        offset=offset
+    )
 
-        return JSONResponse(content={
-            "total": total,
-            "tickets": [_ticket_to_dict(t) for t in tickets]
-        })
-    except Exception as e:
-        logger.error(f"Error getting tickets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return JSONResponse(content={
+        "total": total,
+        "tickets": [_ticket_to_dict(t) for t in tickets]
+    })
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket(ticket_id: int):
+@handle_errors("get ticket")
+async def get_ticket(ticket_id: int, db: Database = Depends(get_db)):
     """Get a single ticket by ID."""
-    try:
-        db = get_db()
-        ticket = db.get_ticket_by_id(ticket_id)
-        if not ticket:
-            raise HTTPException(status_code=404, detail="Ticket not found")
-        return JSONResponse(content=_ticket_to_dict(ticket))
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting ticket: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    ticket = db.get_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return JSONResponse(content=_ticket_to_dict(ticket))
 
 
 @router.post("/tickets/{ticket_id}/check-znuny")
+@handle_errors("check Znuny")
 async def check_ticket_znuny(ticket_id: int):
     """Check if a ticket exists in Znuny."""
-    try:
-        service = get_znuny_service()
-        result = service.check_ticket_in_znuny(ticket_id)
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error checking Znuny: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_znuny_service()
+    result = service.check_ticket_in_znuny(ticket_id)
+    return JSONResponse(content=result)
 
 
 @router.post("/tickets/{ticket_id}/sync-znuny")
+@handle_errors("sync Znuny")
 async def sync_ticket_znuny(ticket_id: int):
     """Sync Znuny details for a ticket."""
-    try:
-        service = get_znuny_service()
-        result = service.sync_ticket_details(ticket_id)
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error syncing Znuny: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_znuny_service()
+    result = service.sync_ticket_details(ticket_id)
+    return JSONResponse(content=result)
 
 
 @router.get("/tickets/{ticket_id}/znuny-articles")
-async def get_ticket_znuny_articles(ticket_id: int):
+@handle_errors("get Znuny articles")
+async def get_ticket_znuny_articles(ticket_id: int, db: Database = Depends(get_db)):
     """Get Znuny articles for a ticket."""
-    try:
-        db = get_db()
-        ticket = db.get_ticket_by_id(ticket_id)
-        if not ticket:
-            raise HTTPException(status_code=404, detail="Ticket not found")
+    ticket = db.get_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
 
-        articles = db.get_znuny_articles(ticket_id=ticket_id)
-        service = get_stats_service()
-        time_info = service.calculate_time_to_create(ticket.created_at, ticket.znuny_created_at)
+    articles = db.get_znuny_articles(ticket_id=ticket_id)
+    service = get_stats_service()
+    time_info = service.calculate_time_to_create(ticket.created_at, ticket.znuny_created_at)
 
-        return JSONResponse(content={
-            "znuny_ticket_id": ticket.znuny_ticket_id,
-            "znuny_created_at": ticket.znuny_created_at.isoformat() if ticket.znuny_created_at else None,
-            "znuny_created_by": ticket.znuny_created_by,
-            "portal_created_at": ticket.portal_created_at.isoformat() if ticket.portal_created_at else None,
-            **time_info,
-            "articles": articles
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting Znuny articles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return JSONResponse(content={
+        "znuny_ticket_id": ticket.znuny_ticket_id,
+        "znuny_created_at": ticket.znuny_created_at.isoformat() if ticket.znuny_created_at else None,
+        "znuny_created_by": ticket.znuny_created_by,
+        "portal_created_at": ticket.portal_created_at.isoformat() if ticket.portal_created_at else None,
+        **time_info,
+        "articles": articles
+    })
 
 
 @router.get("/tickets/{ticket_id}/site-visits")
-async def get_ticket_site_visits(ticket_id: int):
+@handle_errors("get site visits")
+async def get_ticket_site_visits(ticket_id: int, db: Database = Depends(get_db)):
     """Get site visits for a ticket."""
-    try:
-        db = get_db()
-        ticket = db.get_ticket_by_id(ticket_id)
-        if not ticket:
-            raise HTTPException(status_code=404, detail="Ticket not found")
+    ticket = db.get_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
 
-        visits = db.get_site_visits_for_ticket(ticket_id)
-        return JSONResponse(content={"visits": visits})
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting site visits for ticket {ticket_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    visits = db.get_site_visits_for_ticket(ticket_id)
+    return JSONResponse(content={"visits": visits})
 
 
 @router.post("/tickets/check-all-znuny")
+@handle_errors("check all Znuny status")
 async def check_all_znuny_status():
     """Check Znuny status for all tickets not yet marked as in Znuny."""
-    try:
-        service = get_znuny_service()
-        result = service.check_all_tickets_in_znuny()
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error checking all Znuny status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_znuny_service()
+    result = service.check_all_tickets_in_znuny()
+    return JSONResponse(content=result)
 
 
 # Znuny sync endpoints
 @router.get("/znuny-sync-status")
+@handle_errors("get Znuny sync status")
 async def get_znuny_sync_status():
     """Get Znuny sync status."""
-    try:
-        service = get_znuny_service()
-        return JSONResponse(content=service.get_sync_status())
-    except Exception as e:
-        logger.error(f"Error getting Znuny sync status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_znuny_service()
+    return JSONResponse(content=service.get_sync_status())
 
 
 @router.post("/sync-znuny-details")
+@handle_errors("sync Znuny details")
 async def sync_all_znuny_details():
     """Sync Znuny details for all tickets needing sync."""
-    try:
-        service = get_znuny_service()
-        result = service.sync_all_znuny_details()
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error syncing Znuny details: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_znuny_service()
+    result = service.sync_all_znuny_details()
+    return JSONResponse(content=result)
 
 
 # Staff endpoints
 @router.get("/staff-stats")
-async def get_staff_stats(
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None
-):
+@handle_errors("get staff stats")
+async def get_staff_stats(date_filter: DateFilterParams = Depends(get_date_filter)):
     """Get basic staff statistics."""
-    try:
-        service = get_stats_service()
-        stats = service.get_staff_stats(date_from=date_from, date_to=date_to)
-        return JSONResponse(content={"stats": stats})
-    except Exception as e:
-        logger.error(f"Error getting staff stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    stats = service.get_staff_stats(date_from=date_filter.date_from, date_to=date_filter.date_to)
+    return JSONResponse(content={"stats": stats})
 
 
 @router.get("/staff-stats-detailed")
+@handle_errors("get detailed staff stats")
 async def get_staff_stats_detailed(
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
+    date_filter: DateFilterParams = Depends(get_date_filter),
     exclude_negative: bool = True
 ):
     """Get detailed staff statistics with on-time metrics.
@@ -391,121 +342,95 @@ async def get_staff_stats_detailed(
         exclude_negative: If True (default), exclude tickets with negative time differences
                           (historical tickets where Znuny existed before extractor)
     """
-    try:
-        service = get_stats_service()
-        stats = service.get_staff_stats_detailed(
-            date_from=date_from, date_to=date_to, exclude_negative=exclude_negative
-        )
-        return JSONResponse(content={"stats": stats})
-    except Exception as e:
-        logger.error(f"Error getting detailed staff stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    stats = service.get_staff_stats_detailed(
+        date_from=date_filter.date_from, date_to=date_filter.date_to, exclude_negative=exclude_negative
+    )
+    return JSONResponse(content={"stats": stats})
 
 
 @router.get("/staff/{name}/tickets")
+@handle_errors("get staff tickets")
 async def get_staff_tickets(
     name: str,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
+    date_filter: DateFilterParams = Depends(get_date_filter),
     limit: int = Query(default=50, le=500),
     offset: int = 0
 ):
     """Get tickets created by a specific staff member."""
-    try:
-        service = get_stats_service()
-        result = service.get_staff_tickets(
-            name, date_from=date_from, date_to=date_to,
-            limit=limit, offset=offset
-        )
-        return JSONResponse(content={
-            "total": result["total"],
-            "tickets": [_ticket_to_dict(t) for t in result["tickets"]]
-        })
-    except Exception as e:
-        logger.error(f"Error getting staff tickets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    result = service.get_staff_tickets(
+        name, date_from=date_filter.date_from, date_to=date_filter.date_to,
+        limit=limit, offset=offset
+    )
+    return JSONResponse(content={
+        "total": result["total"],
+        "tickets": [_ticket_to_dict(t) for t in result["tickets"]]
+    })
 
 
 @router.get("/staff/{name}/performance")
+@handle_errors("get staff performance")
 async def get_staff_performance(name: str, days: int = 14):
     """Get daily performance trend for a staff member."""
-    try:
-        service = get_stats_service()
-        data = service.get_staff_performance(name, days=days)
-        return JSONResponse(content={"performance": data})
-    except Exception as e:
-        logger.error(f"Error getting staff performance: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    data = service.get_staff_performance(name, days=days)
+    return JSONResponse(content={"performance": data})
 
 
 @router.get("/staff-names")
+@handle_errors("get staff names")
 async def get_staff_names():
     """Get list of all staff names."""
-    try:
-        service = get_stats_service()
-        names = service.get_staff_names()
-        return JSONResponse(content={"staff": names})
-    except Exception as e:
-        logger.error(f"Error getting staff names: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    names = service.get_staff_names()
+    return JSONResponse(content={"staff": names})
 
 
 @router.get("/staff/{name}/znuny-tickets")
+@handle_errors("get staff znuny tickets")
 async def get_staff_znuny_tickets(
     name: str,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
+    date_filter: DateFilterParams = Depends(get_date_filter),
     limit: int = Query(default=50, le=500),
-    offset: int = 0
+    offset: int = 0,
+    db: Database = Depends(get_db)
 ):
     """Get Znuny-only tickets created by a specific staff member."""
-    try:
-        db = get_db()
-        result = db.get_staff_znuny_tickets(
-            name, date_from=date_from, date_to=date_to,
-            limit=limit, offset=offset
-        )
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error getting staff znuny tickets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    result = db.get_staff_znuny_tickets(
+        name, date_from=date_filter.date_from, date_to=date_filter.date_to,
+        limit=limit, offset=offset
+    )
+    return JSONResponse(content=result)
 
 
 @router.get("/staff/{name}/articles")
+@handle_errors("get staff articles")
 async def get_staff_articles(
     name: str,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
+    date_filter: DateFilterParams = Depends(get_date_filter),
     limit: int = Query(default=50, le=500),
-    offset: int = 0
+    offset: int = 0,
+    db: Database = Depends(get_db)
 ):
     """Get articles created by a specific staff member."""
-    try:
-        db = get_db()
-        result = db.get_staff_articles(
-            name, date_from=date_from, date_to=date_to,
-            limit=limit, offset=offset
-        )
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error getting staff articles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    result = db.get_staff_articles(
+        name, date_from=date_filter.date_from, date_to=date_filter.date_to,
+        limit=limit, offset=offset
+    )
+    return JSONResponse(content=result)
 
 
 @router.get("/staff-delays")
+@handle_errors("get staff delays")
 async def get_staff_delays(
     min_delay: int = Query(5, ge=1),
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None
+    date_filter: DateFilterParams = Depends(get_date_filter),
+    db: Database = Depends(get_db)
 ):
     """Get delayed tickets grouped by staff."""
-    try:
-        db = get_db()
-        delays = db.get_delayed_tickets_by_staff(min_delay, date_from, date_to)
-        return JSONResponse(content={"delays": delays})
-    except Exception as e:
-        logger.error(f"Error getting staff delays: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    delays = db.get_delayed_tickets_by_staff(min_delay, date_filter.date_from, date_filter.date_to)
+    return JSONResponse(content={"delays": delays})
 
 
 @router.get("/portals")
@@ -522,97 +447,75 @@ async def get_portals():
 
 # Export endpoints
 @router.get("/reports/staff-csv")
-async def export_staff_csv(
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None
-):
+@handle_errors("export staff CSV")
+async def export_staff_csv(date_filter: DateFilterParams = Depends(get_date_filter)):
     """Export staff statistics as CSV."""
-    try:
-        service = get_stats_service()
-        csv_content = service.export_staff_csv(date_from=date_from, date_to=date_to)
-        filename = f"staff_report_{date_from or 'all'}_{date_to or 'all'}.csv"
-        return StreamingResponse(
-            iter([csv_content]),
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
-    except Exception as e:
-        logger.error(f"Error exporting staff CSV: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    csv_content = service.export_staff_csv(date_from=date_filter.date_from, date_to=date_filter.date_to)
+    filename = f"staff_report_{date_filter.date_from or 'all'}_{date_filter.date_to or 'all'}.csv"
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @router.get("/tickets-csv")
+@handle_errors("export tickets CSV")
 async def export_tickets_csv(
     staff: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None
+    date_filter: DateFilterParams = Depends(get_date_filter)
 ):
     """Export tickets as CSV."""
-    try:
-        service = get_stats_service()
-        csv_content = service.export_tickets_csv(
-            staff=staff, date_from=date_from, date_to=date_to
-        )
-        filename = f"tickets_export_{date_from or 'all'}_{date_to or 'all'}.csv"
-        return StreamingResponse(
-            iter([csv_content]),
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
-    except Exception as e:
-        logger.error(f"Error exporting tickets CSV: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    csv_content = service.export_tickets_csv(
+        staff=staff, date_from=date_filter.date_from, date_to=date_filter.date_to
+    )
+    filename = f"tickets_export_{date_filter.date_from or 'all'}_{date_filter.date_to or 'all'}.csv"
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 # Extraction logs endpoint
 @router.get("/extraction-logs")
+@handle_errors("get extraction logs")
 async def get_extraction_logs(limit: int = 100):
     """Get extraction logs."""
-    try:
-        service = get_stats_service()
-        logs = service.get_extraction_logs(limit=limit)
-        return JSONResponse(content={"logs": logs})
-    except Exception as e:
-        logger.error(f"Error getting extraction logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_stats_service()
+    logs = service.get_extraction_logs(limit=limit)
+    return JSONResponse(content={"logs": logs})
 
 
 # Config endpoints
 @router.get("/config")
+@handle_errors("get config")
 async def get_config():
     """Get current configuration (passwords masked)."""
-    try:
-        service = get_config_service()
-        config = service.get_config(mask_passwords=True)
-        return JSONResponse(content={"config": config})
-    except Exception as e:
-        logger.error(f"Error getting config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_config_service()
+    config = service.get_config(mask_passwords=True)
+    return JSONResponse(content={"config": config})
 
 
 @router.get("/config/raw")
+@handle_errors("get raw config")
 async def get_config_raw():
     """Get raw configuration including passwords."""
-    try:
-        service = get_config_service()
-        config = service.get_config(mask_passwords=False)
-        return JSONResponse(content={"config": config})
-    except Exception as e:
-        logger.error(f"Error getting raw config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_config_service()
+    config = service.get_config(mask_passwords=False)
+    return JSONResponse(content={"config": config})
 
 
 @router.post("/config")
+@handle_errors("update config")
 async def update_config(request: Request):
     """Update configuration."""
-    try:
-        data = await request.json()
-        service = get_config_service()
-        result = service.update_config(data.get('config', {}))
-        return JSONResponse(content=result)
-    except Exception as e:
-        logger.error(f"Error updating config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    data = await request.json()
+    service = get_config_service()
+    result = service.update_config(data.get('config', {}))
+    return JSONResponse(content=result)
 
 
 # Portal URL patterns for generating links
