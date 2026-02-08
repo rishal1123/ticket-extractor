@@ -149,12 +149,12 @@
             </div>
         </div>
         <div class="col-4 col-md-2">
-            <div class="small opacity-75">Interval</div>
+            <div class="small opacity-75">Extraction</div>
             <div class="fw-bold" id="schedulerInterval">--</div>
         </div>
-        <div class="col-4 col-md-3">
-            <div class="small opacity-75">Next Run</div>
-            <div class="small" id="schedulerNextRun">--</div>
+        <div class="col-4 col-md-2">
+            <div class="small opacity-75">Znuny Sync</div>
+            <div class="fw-bold" id="schedulerZnunyInterval">--</div>
         </div>
         <div class="col-12 col-md-3 text-end">
             <button class="btn btn-warning btn-sm me-1" onclick="triggerExtraction()" id="triggerBtn">
@@ -832,8 +832,8 @@ async function loadSchedulerStatus() {
             statusEl.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Stopped</span>';
         }
 
-        document.getElementById('schedulerInterval').textContent = data.interval_minutes + ' min';
-        document.getElementById('schedulerNextRun').textContent = data.next_run ? formatTime(data.next_run) : 'Not scheduled';
+        document.getElementById('schedulerInterval').textContent = (data.extraction_interval_minutes || data.interval_minutes) + ' min';
+        document.getElementById('schedulerZnunyInterval').textContent = (data.znuny_sync_interval_minutes || 1) + ' min';
     } catch (error) {
         console.error('Error loading scheduler status:', error);
     }

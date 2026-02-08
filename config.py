@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Application version - update this when deploying changes to bust cache
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 
 
 class PortalConfig:
@@ -52,6 +52,7 @@ class Config:
 
     # Scheduler settings
     EXTRACTION_INTERVAL_MINUTES = int(os.getenv("EXTRACTION_INTERVAL_MINUTES", "5"))
+    ZNUNY_SYNC_INTERVAL_MINUTES = int(os.getenv("ZNUNY_SYNC_INTERVAL_MINUTES", "1"))
 
     # Dashboard settings
     DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")

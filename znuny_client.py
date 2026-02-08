@@ -19,6 +19,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import WebDriverException, NoSuchElementException, StaleElementReferenceException
 from webdriver_manager.chrome import ChromeDriverManager
 
 from config import Config
@@ -198,7 +199,7 @@ class ZnunyClient:
                 self.driver.current_url
                 logger.info("Reusing existing Znuny browser session")
                 return
-            except:
+            except WebDriverException:
                 logger.info("Znuny browser session died, creating new one")
                 self.driver = None
                 self._logged_in = False
@@ -229,7 +230,7 @@ class ZnunyClient:
                 if "Dashboard" in self.driver.title:
                     logger.info("Znuny session still active, skipping login")
                     return True
-            except:
+            except WebDriverException:
                 pass
             self._logged_in = False
             logger.info("Znuny session expired, re-logging in...")
@@ -324,7 +325,7 @@ class ZnunyClient:
                                 "title": title,
                                 "href": href
                             })
-                    except:
+                    except (NoSuchElementException, StaleElementReferenceException):
                         continue
 
                 # Check for next page
@@ -477,7 +478,7 @@ class ZnunyClient:
                             # Only need body for site visit articles or Phone articles (for address)
                             "needs_body": "site visit" in subject.lower() or "preventative maintenance" in subject.lower() or cells[4].text.strip() == "Phone"
                         })
-                except:
+                except (NoSuchElementException, StaleElementReferenceException, IndexError):
                     continue
 
             # Process articles - only click ones that need body content
@@ -571,7 +572,7 @@ class ZnunyClient:
                         logger.debug(f"Error extracting article body: {e}")
                         try:
                             self.driver.switch_to.default_content()
-                        except:
+                        except WebDriverException:
                             pass
 
                     article_created = None
@@ -775,7 +776,7 @@ class ZnunyClient:
         if self.driver:
             try:
                 self.driver.quit()
-            except:
+            except WebDriverException:
                 pass
             ZnunyClient._shared_driver = None
             ZnunyClient._shared_logged_in = False
@@ -787,7 +788,7 @@ class ZnunyClient:
         if cls._shared_driver:
             try:
                 cls._shared_driver.quit()
-            except:
+            except WebDriverException:
                 pass
             cls._shared_driver = None
             cls._shared_logged_in = False

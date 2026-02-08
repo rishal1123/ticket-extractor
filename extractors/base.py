@@ -3,6 +3,7 @@ from typing import Optional
 import time
 
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import WebDriverException
 
 from config import PortalConfig
 from models.ticket import Ticket
@@ -79,7 +80,7 @@ class BaseExtractor(ABC):
                 browser.driver.current_url
                 self.logger.info("Reusing existing browser session")
                 return browser
-            except:
+            except WebDriverException:
                 self.logger.info("Browser session died, creating new one")
                 del BaseExtractor._browsers[portal_name]
 
@@ -169,7 +170,7 @@ class BaseExtractor(ABC):
                 if self.config.name in BaseExtractor._browsers:
                     try:
                         BaseExtractor._browsers[self.config.name].stop()
-                    except:
+                    except Exception:
                         pass
                     del BaseExtractor._browsers[self.config.name]
                 self.browser = None

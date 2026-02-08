@@ -228,7 +228,7 @@ class OoredooExtractor(BaseExtractor):
                         self.navigate_to(self.TICKETS_URL)
                         time.sleep(2)
                         self._wait_for_datatable()
-                    except:
+                    except Exception:
                         pass
                     continue
 
@@ -362,7 +362,7 @@ class OoredooExtractor(BaseExtractor):
                                 # Skip if it's a duplicate of a comment we already have
                                 if "Commented:" not in text:
                                     notes_list.append(text)
-                    except:
+                    except Exception:
                         continue
 
         except Exception as e:
@@ -417,7 +417,7 @@ class OoredooExtractor(BaseExtractor):
             if index < len(cells):
                 text = cells[index].text.strip()
                 return text if text and text != "-" else None
-        except:
+        except Exception:
             pass
         return None
 

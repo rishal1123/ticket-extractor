@@ -2,8 +2,8 @@
 Scheduler Service - Handles background extraction and sync jobs.
 
 This service encapsulates all scheduler-related logic including:
-- Running portal extractions
-- Running Znuny sync
+- Running portal extractions (every N minutes, default 5)
+- Running Znuny sync (every M minutes, default 1) as a separate job
 - Managing the background scheduler thread
 """
 
@@ -16,21 +16,10 @@ import schedule
 from database import Database
 from config import Config
 from services.znuny_service import ZnunyService
-from extractors import DhiraaguExtractor, OoredooExtractor, ROLExtractor, MedianetExtractor
+from services.extraction_service import ExtractionService
 from utils.logger import get_logger
 
 logger = get_logger("scheduler")
-
-
-def get_extractor_class(portal_name: str):
-    """Get the extractor class for a portal name."""
-    extractors = {
-        "dhiraagu": DhiraaguExtractor,
-        "ooredoo": OoredooExtractor,
-        "rol": ROLExtractor,
-        "medianet": MedianetExtractor
-    }
-    return extractors.get(portal_name.lower())
 
 
 class SchedulerService:
@@ -39,7 +28,9 @@ class SchedulerService:
     def __init__(self):
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._interval_minutes = Config.EXTRACTION_INTERVAL_MINUTES
+        self._extraction_interval = Config.EXTRACTION_INTERVAL_MINUTES
+        self._znuny_sync_interval = Config.ZNUNY_SYNC_INTERVAL_MINUTES
+        self._znuny_sync_lock = threading.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -59,7 +50,7 @@ class SchedulerService:
                 db.log_system("warning", f"extractor.{config.name}", "Portal not configured, skipping")
                 continue
 
-            extractor_class = get_extractor_class(config.name)
+            extractor_class = ExtractionService.PORTAL_EXTRACTORS.get(config.name.lower())
             if not extractor_class:
                 logger.warning(f"No extractor for {config.name}, skipping")
                 continue
@@ -139,8 +130,8 @@ class SchedulerService:
             db.log_system("error", "znuny", f"Znuny sync failed: {e}")
             raise
 
-    def _scheduled_job(self):
-        """Combined job that runs portal extraction and comprehensive Znuny sync."""
+    def _extraction_job(self):
+        """Scheduled job for portal extraction."""
         db = Database()
         try:
             self.run_portal_extraction()
@@ -148,24 +139,44 @@ class SchedulerService:
             logger.error(f"Portal extraction failed: {e}")
             db.log_system("error", "scheduler", f"Portal extraction crashed: {e}")
 
+    def _znuny_sync_job(self):
+        """Scheduled job for Znuny sync (with lock to prevent overlap)."""
+        if not self._znuny_sync_lock.acquire(blocking=False):
+            logger.debug("Znuny sync still running, skipping this cycle")
+            return
+
         try:
-            self.run_znuny_sync()
-        except Exception as e:
-            logger.error(f"Znuny sync failed: {e}")
-            db.log_system("error", "scheduler", f"Znuny sync crashed: {e}")
+            db = Database()
+            try:
+                self.run_znuny_sync()
+            except Exception as e:
+                logger.error(f"Znuny sync failed: {e}")
+                db.log_system("error", "scheduler", f"Znuny sync crashed: {e}")
+        finally:
+            self._znuny_sync_lock.release()
 
     def _scheduler_loop(self):
-        """Background scheduler loop."""
-        logger.info(f"Scheduler started with {self._interval_minutes} minute interval")
+        """Background scheduler loop with separate extraction and sync jobs."""
+        logger.info(
+            f"Scheduler started: extraction every {self._extraction_interval}min, "
+            f"Znuny sync every {self._znuny_sync_interval}min"
+        )
 
         db = Database()
-        db.log_system("info", "scheduler", f"Scheduler started with {self._interval_minutes} minute interval")
+        db.log_system(
+            "info", "scheduler",
+            f"Scheduler started: extraction every {self._extraction_interval}min, "
+            f"Znuny sync every {self._znuny_sync_interval}min"
+        )
 
-        # Schedule the job
-        schedule.every(self._interval_minutes).minutes.do(self._scheduled_job)
+        # Schedule separate jobs
+        schedule.every(self._extraction_interval).minutes.do(self._extraction_job)
+        schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
 
-        # Run immediately on start
-        self._scheduled_job()
+        # Run extraction immediately on start
+        self._extraction_job()
+        # Run first Znuny sync after extraction completes
+        self._znuny_sync_job()
 
         while self._running:
             schedule.run_pending()
@@ -198,7 +209,8 @@ class SchedulerService:
         """Get scheduler status."""
         return {
             "running": self.is_running,
-            "interval_minutes": self._interval_minutes,
+            "extraction_interval_minutes": self._extraction_interval,
+            "znuny_sync_interval_minutes": self._znuny_sync_interval,
             "thread_alive": self._thread.is_alive() if self._thread else False
         }
 

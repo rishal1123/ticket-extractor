@@ -283,7 +283,7 @@ class MedianetExtractor(BaseExtractor):
                 current_value = self.browser.driver.find_element(By.CSS_SELECTOR, self.TICKET_TYPE_CURRENT_VALUE_SELECTOR)
                 if current_value and current_value.text.strip():
                     options.append(current_value.text.strip())
-            except:
+            except Exception:
                 pass
 
         return options if options else ["Customer Inquiry"]  # Default fallback

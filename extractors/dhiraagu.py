@@ -234,7 +234,7 @@ class DhiraaguExtractor(BaseExtractor):
                     try:
                         self.navigate_to(self.ORDERS_PAGE_URL)
                         time.sleep(2)
-                    except:
+                    except Exception:
                         pass
                     continue
 
@@ -418,7 +418,7 @@ class DhiraaguExtractor(BaseExtractor):
                         text = row.text.strip()
                         if text and len(text) > 5:
                             notes_list.append(text)
-                    except:
+                    except Exception:
                         continue
 
             if notes_list:
@@ -435,7 +435,7 @@ class DhiraaguExtractor(BaseExtractor):
         try:
             text = cell.text.strip()
             return text if text else None
-        except:
+        except Exception:
             return None
 
     def _go_to_next_page(self) -> bool:

@@ -149,9 +149,8 @@ class ZnunyService:
         Returns:
             Dict with sync statistics
         """
-        # Get all active tickets and filter for those not in Znuny
-        all_tickets = self.db.get_all_tickets(include_completed=False)
-        tickets = [t for t in all_tickets if not t.in_znuny]
+        # Direct query for unchecked tickets (no full table scan)
+        tickets = self.db.get_unchecked_tickets()
 
         results = {"checked": 0, "found": 0, "not_found": 0, "errors": 0}
 
@@ -188,9 +187,8 @@ class ZnunyService:
         Returns:
             Dict with sync statistics
         """
-        # Get all tickets that are in Znuny but missing znuny_created_by
-        all_tickets = self.db.get_all_tickets(include_completed=True)
-        tickets = [t for t in all_tickets if t.in_znuny and t.znuny_ticket_id and not t.znuny_created_by]
+        # Direct query for active unsynced tickets (no full table scan)
+        tickets = self.db.get_tickets_needing_znuny_details()
 
         results = {"synced": 0, "errors": 0}
 
@@ -211,26 +209,8 @@ class ZnunyService:
         Returns:
             Dict with sync statistics
         """
-        stats = self.db.get_stats()
-        all_tickets = self.db.get_all_tickets(include_completed=False)
-
-        in_znuny = sum(1 for t in all_tickets if t.in_znuny)
-        with_details = sum(1 for t in all_tickets if t.in_znuny and t.znuny_created_by)
-
-        # Get last sync time (most recent updated_at for tickets with Znuny details)
-        last_sync_time = None
-        synced_tickets = [t for t in all_tickets if t.in_znuny and t.znuny_created_by and t.updated_at]
-        if synced_tickets:
-            last_sync_time = max(t.updated_at for t in synced_tickets).isoformat()
-
-        return {
-            "total_active": stats.get("total", 0),
-            "in_znuny": in_znuny,
-            "not_in_znuny": stats.get("not_in_znuny", 0),
-            "with_details": with_details,
-            "needing_sync": in_znuny - with_details,
-            "last_sync_time": last_sync_time
-        }
+        # Single optimized query instead of loading all tickets into memory
+        return self.db.get_sync_status_counts()
 
     def get_ticket_articles(self, ticket_id: int) -> List[Dict]:
         """Get Znuny articles for a ticket."""
@@ -338,6 +318,9 @@ class ZnunyService:
 
         logger.info("Starting optimized Znuny sync")
 
+        # Track Znuny ticket IDs processed in Step 0 to avoid re-fetching in main loop
+        step0_processed_ids = set()
+
         try:
             # Step 0: Sync details for ISP tickets that were just linked to Znuny
             # (have znuny_ticket_id but no znuny_created_by)
@@ -348,6 +331,7 @@ class ZnunyService:
                     try:
                         details = self.znuny_client.get_ticket_details(ticket.znuny_ticket_id)
                         if details:
+                            step0_processed_ids.add(ticket.znuny_ticket_id)
                             self.db.update_znuny_details(
                                 ticket.id,
                                 znuny_created_at=details.created_at,
@@ -432,6 +416,10 @@ class ZnunyService:
             # (have site visits extracted and no pending visits needing completion)
             synced_znuny_ids = self.db.get_synced_znuny_ticket_ids()
 
+            # Derive remaining pending visit IDs from Step 1.5 (no extra DB query needed)
+            # Step 1.5 completed visits for closed_with_pending, so remove those
+            all_pending_visit_ids = pending_visit_ids - closed_with_pending
+
             # Step 3: Prioritize tickets - process those needing work first
             priority_tickets = []
             low_priority_tickets = []
@@ -471,10 +459,15 @@ class ZnunyService:
                                 )
                             results["isp_tickets_synced"] += 1
 
+                    # Skip if already processed in Step 0 (avoid duplicate Selenium calls)
+                    if znuny_ticket_id in step0_processed_ids:
+                        results["znuny_tickets_skipped"] += 1
+                        continue
+
                     # Check if we can skip detail fetching for this ticket
                     # NEVER skip tickets with "site visit" in title - always check for new articles
                     has_site_visit_in_title = "site visit" in title.lower()
-                    has_pending_visits = self.db.has_pending_site_visits(znuny_ticket_id)
+                    has_pending_visits = znuny_ticket_id in all_pending_visit_ids
 
                     # Only skip if:
                     # - No "site visit" in title (tickets with site visits need full processing)

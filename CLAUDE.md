@@ -303,6 +303,7 @@ ZNUNY_PASSWORD=xxx
 
 # Settings
 EXTRACTION_INTERVAL_MINUTES=5
+ZNUNY_SYNC_INTERVAL_MINUTES=1
 DASHBOARD_HOST=0.0.0.0
 DASHBOARD_PORT=8000
 ```
@@ -431,13 +432,17 @@ To update credentials or settings:
 
 ## Scheduler
 
-The background scheduler (managed by `SchedulerService` in `services/scheduler_service.py`):
-1. Runs every 5 minutes (configurable via `EXTRACTION_INTERVAL_MINUTES`)
-2. Extracts tickets from all configured portals
-3. Syncs Znuny status for unchecked tickets
-4. Logs all extraction results
+The background scheduler (managed by `SchedulerService` in `services/scheduler_service.py`) runs two independent jobs:
 
-The scheduler is started automatically via the FastAPI lifespan in `app.py`.
+| Job | Default Interval | Config Variable | Description |
+|-----|-----------------|-----------------|-------------|
+| **Portal Extraction** | 5 min | `EXTRACTION_INTERVAL_MINUTES` | Extracts tickets from all configured ISP portals |
+| **Znuny Sync** | 1 min | `ZNUNY_SYNC_INTERVAL_MINUTES` | Checks ISP tickets in Znuny, syncs details & site visits |
+
+- Jobs run on independent schedules (Znuny sync runs more frequently for faster ticket linking)
+- Znuny sync uses a threading lock to prevent overlap (if sync takes >1 min, next cycle is skipped)
+- Both jobs run immediately on startup, then repeat at their configured intervals
+- The scheduler is started automatically via the FastAPI lifespan in `app.py`
 
 ## Portal-Specific Notes
 
@@ -836,6 +841,13 @@ The Znuny integration uses several optimization strategies:
 - Skips tickets that are already fully synced
 - Prioritizes tickets with "site visit" in title
 - Skips tickets without pending site visits
+- Skips tickets already processed in Step 0 (ISP detail sync) to avoid duplicate Selenium calls
+
+### Duplicate Call Prevention
+- Step 0 processed ticket IDs are tracked in `step0_processed_ids` set
+- Main loop skips any ticket already fetched in Step 0
+- Pending visit IDs derived via set arithmetic instead of re-querying DB
+- Single `get_tickets_needing_znuny_details()` method replaces duplicate DB queries
 
 ### Key Methods
 - `_is_cache_valid()` - Check if cache is within TTL

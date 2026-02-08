@@ -12,6 +12,27 @@ logger = get_logger("database")
 # Maldives timezone (UTC+5)
 MVT = timezone(timedelta(hours=5))
 
+# Reusable SQL fragment for calculating site visit duration in minutes.
+# Computes: completion_time - (visit_date + scheduled_time)
+# The completion time parameter must be bound twice (once for the CASE, once for julianday).
+# Usage: Pass the completion time as a parameter, referenced by {completion_param}.
+# The fragment expects the site_visits columns: scheduled_time, visit_date.
+_DURATION_SQL = """
+    CASE
+        WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
+        THEN CAST(
+            (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
+                CASE
+                    WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
+                    WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
+                    ELSE SUBSTR(scheduled_time, 1, 8)
+                END
+            )) * 24 * 60 AS INTEGER
+        )
+        ELSE NULL
+    END
+""".strip()
+
 
 def now_maldives() -> datetime:
     """Get current time in Maldives timezone."""
@@ -95,49 +116,49 @@ class Database:
             # Add completed_at column if it doesn't exist (migration for existing DBs)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN completed_at DATETIME")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Rename time to portal_created_at if needed (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN portal_created_at DATETIME")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Add account column if it doesn't exist (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN account TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Add znuny_created_at column (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN znuny_created_at DATETIME")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Add znuny_created_by column (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN znuny_created_by TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Add znuny_address column (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN znuny_address TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Add portal_url column (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN portal_url TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Add znuny_url column (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN znuny_url TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Znuny articles table - stores article/note history from Znuny
@@ -162,13 +183,13 @@ class Database:
             # Add created_by column to znuny_articles if it doesn't exist (migration)
             try:
                 cursor.execute("ALTER TABLE znuny_articles ADD COLUMN created_by TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Add body column to znuny_articles if it doesn't exist (migration)
             try:
                 cursor.execute("ALTER TABLE znuny_articles ADD COLUMN body TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Notes history table
@@ -286,28 +307,12 @@ class Database:
                     VALUES (?, ?, ?)
                 """, (key, value, desc))
 
-            # Performance indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal ON tickets(portal)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_completed ON tickets(completed_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_in_znuny ON tickets(in_znuny)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal_created ON tickets(portal_created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_created_by ON tickets(znuny_created_by)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_portal ON extraction_logs(portal)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_extracted_at ON extraction_logs(extracted_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_stats_portal ON login_stats(portal)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_stats_created_at ON login_stats(created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_staff_performance_daily ON staff_performance_daily(staff_name, date)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_source ON system_logs(source)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_assigned ON site_visits(assigned_to)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_date ON site_visits(visit_date)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_status ON site_visits(status)")
+            # Performance indexes (consolidated - all indexes defined here)
 
             # Migration: Add znuny_url to site_visits
             try:
                 cursor.execute("ALTER TABLE site_visits ADD COLUMN znuny_url TEXT")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
 
             # Znuny-only tickets table (tickets not linked to any ISP portal)
@@ -337,28 +342,53 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_by ON znuny_tickets(created_by)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_at ON znuny_tickets(created_at)")
 
-            # Performance indexes for tickets table
+            # --- All performance indexes (single consolidated block) ---
+
+            # tickets table
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal ON tickets(portal)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_created_at ON tickets(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_completed_at ON tickets(completed_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_in_znuny ON tickets(in_znuny)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_created_by ON tickets(znuny_created_by)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_created_at ON tickets(znuny_created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_portal_ticket ON tickets(portal, ticket_id)")
+            # Composite index for sync queries (active + not in znuny)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_active_sync ON tickets(completed_at, in_znuny)")
+            # Composite index for detail sync queries
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_details ON tickets(in_znuny, znuny_ticket_id, znuny_created_by)")
+            # Composite index for znuny_ticket_id lookups
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_ticket_id ON tickets(znuny_ticket_id)")
 
-            # Indexes for znuny_articles
+            # znuny_articles table
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_ticket ON znuny_articles(ticket_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_created_by ON znuny_articles(created_by)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_created_at ON znuny_articles(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_znuny_ticket ON znuny_articles(znuny_ticket_id)")
 
-            # Indexes for site_visits
+            # site_visits table
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_status ON site_visits(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_assigned_to ON site_visits(assigned_to)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_visit_date ON site_visits(visit_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_znuny_ticket ON site_visits(znuny_ticket_id)")
+            # Composite for pending visit lookups
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_site_visits_pending ON site_visits(znuny_ticket_id, status)")
 
-            # Indexes for extraction_logs
+            # extraction_logs table
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_portal ON extraction_logs(portal)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_extraction_logs_extracted_at ON extraction_logs(extracted_at)")
+
+            # login_stats table
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_stats_portal ON login_stats(portal)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_stats_created_at ON login_stats(created_at)")
+
+            # staff_performance_daily table
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_staff_performance_daily ON staff_performance_daily(staff_name, date)")
+
+            # system_logs table
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_source ON system_logs(source)")
 
             logger.info("Database initialized successfully")
 
@@ -596,6 +626,41 @@ class Database:
             row = cursor.fetchone()
             return self._row_to_ticket(row) if row else None
 
+    def get_unchecked_tickets(self) -> list[Ticket]:
+        """Get active tickets that haven't been checked in Znuny yet (in_znuny=0, not completed)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM tickets
+                WHERE in_znuny = 0 AND completed_at IS NULL
+                ORDER BY created_at DESC
+            """)
+            return [self._row_to_ticket(row) for row in cursor.fetchall()]
+
+    def get_sync_status_counts(self) -> dict:
+        """Get Znuny sync status counts in a single query."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total_active,
+                    SUM(CASE WHEN in_znuny = 1 THEN 1 ELSE 0 END) as in_znuny,
+                    SUM(CASE WHEN in_znuny = 0 THEN 1 ELSE 0 END) as not_in_znuny,
+                    SUM(CASE WHEN in_znuny = 1 AND znuny_created_by IS NOT NULL AND znuny_created_by != '' THEN 1 ELSE 0 END) as with_details,
+                    MAX(CASE WHEN in_znuny = 1 AND znuny_created_by IS NOT NULL THEN updated_at ELSE NULL END) as last_sync_time
+                FROM tickets
+                WHERE completed_at IS NULL
+            """)
+            row = cursor.fetchone()
+            return {
+                "total_active": row["total_active"] or 0,
+                "in_znuny": row["in_znuny"] or 0,
+                "not_in_znuny": row["not_in_znuny"] or 0,
+                "with_details": row["with_details"] or 0,
+                "needing_sync": (row["in_znuny"] or 0) - (row["with_details"] or 0),
+                "last_sync_time": row["last_sync_time"]
+            }
+
     def get_tickets_needing_znuny_details(self) -> list[Ticket]:
         """Get tickets that have znuny_ticket_id but no znuny_created_by (need detail sync)."""
         with self._get_connection() as conn:
@@ -750,27 +815,21 @@ class Database:
             """, params_tickets)
             tickets_created = {row["staff"]: row["tickets_created"] for row in cursor.fetchall()}
 
-            # Articles/updates count by staff (using created_by field)
+            # Combined articles query: get both articles_count and tickets_updated in one query
             cursor.execute(f"""
-                SELECT created_by as staff, COUNT(*) as articles_count
+                SELECT created_by as staff,
+                       COUNT(*) as articles_count,
+                       COUNT(DISTINCT znuny_ticket_id) as tickets_updated
                 FROM znuny_articles
                 WHERE created_by IS NOT NULL AND created_by != ''
                 {date_filter_articles}
                 GROUP BY created_by
-                ORDER BY articles_count DESC
             """, params_articles)
-            articles_by_staff = {row["staff"]: row["articles_count"] for row in cursor.fetchall()}
-
-            # Unique tickets updated by staff
-            cursor.execute(f"""
-                SELECT created_by as staff, COUNT(DISTINCT znuny_ticket_id) as tickets_updated
-                FROM znuny_articles
-                WHERE created_by IS NOT NULL AND created_by != ''
-                {date_filter_articles}
-                GROUP BY created_by
-                ORDER BY tickets_updated DESC
-            """, params_articles)
-            tickets_updated = {row["staff"]: row["tickets_updated"] for row in cursor.fetchall()}
+            articles_by_staff = {}
+            tickets_updated = {}
+            for row in cursor.fetchall():
+                articles_by_staff[row["staff"]] = row["articles_count"]
+                tickets_updated[row["staff"]] = row["tickets_updated"]
 
             # Combine all staff names
             all_staff = set(tickets_created.keys()) | set(articles_by_staff.keys())
@@ -834,23 +893,11 @@ class Database:
             # Also complete any pending site visits for these tickets
             # Duration = completion_time - (visit_date + scheduled_time)
             for znuny_id in znuny_ids:
-                cursor.execute("""
+                cursor.execute(f"""
                     UPDATE site_visits
                     SET ticket_completed_at = ?,
                         status = 'completed',
-                        time_taken_minutes = CASE
-                            WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
-                            THEN CAST(
-                                (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
-                                    CASE
-                                        WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
-                                        WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
-                                        ELSE SUBSTR(scheduled_time, 1, 8)
-                                    END
-                                )) * 24 * 60 AS INTEGER
-                            )
-                            ELSE NULL
-                        END,
+                        time_taken_minutes = {_DURATION_SQL},
                         updated_at = ?
                     WHERE znuny_ticket_id = ? AND status = 'pending'
                 """, (now, now, now, znuny_id))
@@ -909,99 +956,89 @@ class Database:
     def get_stats(self) -> dict:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-
-            # Active tickets by portal (not completed)
-            cursor.execute("""
-                SELECT portal, COUNT(*) as count FROM tickets WHERE completed_at IS NULL GROUP BY portal
-            """)
-            by_portal = {row["portal"]: row["count"] for row in cursor.fetchall()}
-
-            # Total active tickets
-            cursor.execute("SELECT COUNT(*) as total FROM tickets WHERE completed_at IS NULL")
-            total = cursor.fetchone()["total"]
-
-            # Total completed tickets
-            cursor.execute("SELECT COUNT(*) as total FROM tickets WHERE completed_at IS NOT NULL")
-            completed = cursor.fetchone()["total"]
-
-            # Not in Znuny (active only)
-            cursor.execute("SELECT COUNT(*) as count FROM tickets WHERE in_znuny = 0 AND completed_at IS NULL")
-            not_in_znuny = cursor.fetchone()["count"]
-
-            # By status (active only)
-            cursor.execute("""
-                SELECT status, COUNT(*) as count FROM tickets WHERE completed_at IS NULL GROUP BY status
-            """)
-            by_status = {row["status"] or "Unknown": row["count"] for row in cursor.fetchall()}
-
-            # By ticket type (active only)
-            cursor.execute("""
-                SELECT ticket_type, COUNT(*) as count FROM tickets WHERE completed_at IS NULL GROUP BY ticket_type
-            """)
-            by_type = {row["ticket_type"] or "Unknown": row["count"] for row in cursor.fetchall()}
-
-            # Last extraction per portal
-            last_extraction = self.get_last_extraction_per_portal()
-
-            # Get today's date in MVT
             today = now_maldives().date().isoformat()
 
-            # Today's extractions per portal (tickets first seen today)
+            # Single query to get all ticket stats at once
+            # Combines: by_portal, total, completed, not_in_znuny, by_status, by_type,
+            # today_extracted, today_znuny, open_in_znuny
             cursor.execute("""
-                SELECT portal, COUNT(*) as count FROM tickets
-                WHERE DATE(created_at) = ?
-                GROUP BY portal
-            """, (today,))
-            today_extracted = {row["portal"]: row["count"] for row in cursor.fetchall()}
-            today_extracted_total = sum(today_extracted.values())
+                SELECT
+                    portal,
+                    status,
+                    ticket_type,
+                    in_znuny,
+                    completed_at IS NOT NULL as is_completed,
+                    DATE(created_at) = ? as is_today_extracted,
+                    DATE(znuny_created_at) = ? as is_today_znuny,
+                    COUNT(*) as cnt
+                FROM tickets
+                GROUP BY portal, status, ticket_type, in_znuny, is_completed,
+                         is_today_extracted, is_today_znuny
+            """, (today, today))
 
-            # Today's Znuny entries (tickets entered to Znuny today)
+            by_portal = {}
+            by_status = {}
+            by_type = {}
+            total = 0
+            completed = 0
+            not_in_znuny = 0
+            open_in_znuny = 0
+            today_extracted = {}
+            today_extracted_total = 0
+            today_znuny_entries = 0
+            today_znuny_by_portal = {}
+
+            for row in cursor.fetchall():
+                cnt = row["cnt"]
+                portal = row["portal"]
+                is_completed = row["is_completed"]
+                status = row["status"] or "Unknown"
+                ticket_type = row["ticket_type"] or "Unknown"
+                in_znuny = row["in_znuny"]
+
+                if is_completed:
+                    completed += cnt
+                else:
+                    # Active ticket stats
+                    total += cnt
+                    by_portal[portal] = by_portal.get(portal, 0) + cnt
+                    by_status[status] = by_status.get(status, 0) + cnt
+                    by_type[ticket_type] = by_type.get(ticket_type, 0) + cnt
+                    if not in_znuny:
+                        not_in_znuny += cnt
+                    else:
+                        open_in_znuny += cnt
+
+                # Today stats (apply to both active and completed)
+                if row["is_today_extracted"]:
+                    today_extracted[portal] = today_extracted.get(portal, 0) + cnt
+                    today_extracted_total += cnt
+                if row["is_today_znuny"]:
+                    today_znuny_entries += cnt
+                    today_znuny_by_portal[portal] = today_znuny_by_portal.get(portal, 0) + cnt
+
+            # Single query for all site visit stats
             cursor.execute("""
-                SELECT COUNT(*) as count FROM tickets
-                WHERE DATE(znuny_created_at) = ?
-            """, (today,))
-            today_znuny_entries = cursor.fetchone()["count"]
+                SELECT
+                    SUM(CASE WHEN DATE(created_at) = ? THEN 1 ELSE 0 END) as today_created,
+                    SUM(CASE WHEN status = 'completed' AND DATE(visit_date) = ? THEN 1 ELSE 0 END) as today_completed,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
+                FROM site_visits
+            """, (today, today))
+            sv_row = cursor.fetchone()
+            today_site_visits_created = sv_row["today_created"] or 0
+            today_site_visits_completed = sv_row["today_completed"] or 0
+            pending_site_visits = sv_row["pending"] or 0
 
-            # Znuny entries per portal today
-            cursor.execute("""
-                SELECT portal, COUNT(*) as count FROM tickets
-                WHERE DATE(znuny_created_at) = ?
-                GROUP BY portal
-            """, (today,))
-            today_znuny_by_portal = {row["portal"]: row["count"] for row in cursor.fetchall()}
-
-            # Total open tickets in Znuny (active tickets that are in Znuny)
-            cursor.execute("""
-                SELECT COUNT(*) as count FROM tickets
-                WHERE in_znuny = 1 AND completed_at IS NULL
-            """)
-            open_in_znuny = cursor.fetchone()["count"]
-
-            # Site visits stats
-            cursor.execute("""
-                SELECT COUNT(*) as count FROM site_visits
-                WHERE DATE(created_at) = ?
-            """, (today,))
-            today_site_visits_created = cursor.fetchone()["count"]
-
-            cursor.execute("""
-                SELECT COUNT(*) as count FROM site_visits
-                WHERE status = 'completed' AND DATE(visit_date) = ?
-            """, (today,))
-            today_site_visits_completed = cursor.fetchone()["count"]
-
-            cursor.execute("""
-                SELECT COUNT(*) as count FROM site_visits
-                WHERE status = 'pending'
-            """)
-            pending_site_visits = cursor.fetchone()["count"]
-
-            # Today's articles created in Znuny
+            # Today's articles
             cursor.execute("""
                 SELECT COUNT(*) as count FROM znuny_articles
                 WHERE DATE(created_at) = ?
             """, (today,))
             today_articles_created = cursor.fetchone()["count"]
+
+            # Last extraction per portal
+            last_extraction = self.get_last_extraction_per_portal()
 
             return {
                 "total": total,
@@ -1517,23 +1554,11 @@ class Database:
             cursor = conn.cursor()
             # Calculate duration from scheduled visit time to completion time
             # Duration = completed_at - (visit_date + scheduled_time)
-            cursor.execute("""
+            cursor.execute(f"""
                 UPDATE site_visits
                 SET ticket_completed_at = ?,
                     status = 'completed',
-                    time_taken_minutes = CASE
-                        WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
-                        THEN CAST(
-                            (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
-                                CASE
-                                    WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
-                                    WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
-                                    ELSE SUBSTR(scheduled_time, 1, 8)
-                                END
-                            )) * 24 * 60 AS INTEGER
-                        )
-                        ELSE NULL
-                    END,
+                    time_taken_minutes = {_DURATION_SQL},
                     updated_at = ?
                 WHERE znuny_ticket_id = ? AND status = 'pending'
             """, (completed_at, completed_at, now_maldives(), znuny_ticket_id))
@@ -1545,23 +1570,11 @@ class Database:
             cursor = conn.cursor()
             # Calculate duration from scheduled visit time to followup article time
             # Duration = followup_time - (visit_date + scheduled_time)
-            cursor.execute("""
+            cursor.execute(f"""
                 UPDATE site_visits
                 SET ticket_completed_at = ?,
                     status = 'completed',
-                    time_taken_minutes = CASE
-                        WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
-                        THEN CAST(
-                            (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
-                                CASE
-                                    WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
-                                    WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
-                                    ELSE SUBSTR(scheduled_time, 1, 8)
-                                END
-                            )) * 24 * 60 AS INTEGER
-                        )
-                        ELSE NULL
-                    END,
+                    time_taken_minutes = {_DURATION_SQL},
                     updated_at = ?
                 WHERE znuny_ticket_id = ? AND article_id = ? AND status = 'pending'
             """, (followup_article_time, followup_article_time, now_maldives(),
@@ -1615,23 +1628,11 @@ class Database:
             now = now_maldives()
             # Calculate duration from scheduled visit time to completion time
             # Duration = complete_time - (visit_date + scheduled_time)
-            cursor.execute("""
+            cursor.execute(f"""
                 UPDATE site_visits
                 SET status = 'completed',
                     ticket_completed_at = ?,
-                    time_taken_minutes = CASE
-                        WHEN scheduled_time GLOB '[0-9][0-9]:[0-9][0-9]*' OR scheduled_time GLOB '[0-9][0-9][0-9][0-9]'
-                        THEN CAST(
-                            (julianday(SUBSTR(?, 1, 19)) - julianday(visit_date || ' ' ||
-                                CASE
-                                    WHEN LENGTH(scheduled_time) = 4 THEN SUBSTR(scheduled_time, 1, 2) || ':' || SUBSTR(scheduled_time, 3, 2) || ':00'
-                                    WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
-                                    ELSE SUBSTR(scheduled_time, 1, 8)
-                                END
-                            )) * 24 * 60 AS INTEGER
-                        )
-                        ELSE NULL
-                    END,
+                    time_taken_minutes = {_DURATION_SQL},
                     updated_at = ?
                 WHERE znuny_ticket_id = ? AND status = 'pending'
             """, (complete_time, complete_time, now, znuny_ticket_id))

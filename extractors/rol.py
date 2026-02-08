@@ -89,7 +89,7 @@ class ROLExtractor(BaseExtractor):
         try:
             logout_elements = self.browser.driver.find_elements(By.CSS_SELECTOR, self.LOGOUT_SELECTOR)
             return len(logout_elements) > 0
-        except:
+        except Exception:
             return False
 
     def extract_tickets(self) -> list[Ticket]:
@@ -162,7 +162,7 @@ class ROLExtractor(BaseExtractor):
             try:
                 link = cells[6].find_element(By.TAG_NAME, "a")
                 display_id = link.text.strip()
-            except:
+            except Exception:
                 display_id = cells[6].text.strip() if len(cells) > 6 else ""
 
             if not display_id:
