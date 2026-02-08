@@ -1643,17 +1643,43 @@ class Database:
 
     def get_synced_znuny_ticket_ids(self) -> set:
         """
-        Get set of Znuny ticket IDs that have been fully synced.
-        A ticket is considered synced if it has at least one site visit extracted.
+        Get set of ALL Znuny ticket IDs that have been processed.
+        Includes tickets with site visits, stored articles, or captured as znuny-only.
         This is used to skip re-processing tickets during sync.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Combine all sources of processed Znuny tickets
             cursor.execute("""
                 SELECT DISTINCT znuny_ticket_id FROM site_visits
                 WHERE znuny_ticket_id IS NOT NULL
+                UNION
+                SELECT DISTINCT znuny_ticket_id FROM znuny_articles
+                WHERE znuny_ticket_id IS NOT NULL
+                UNION
+                SELECT DISTINCT znuny_ticket_id FROM znuny_tickets
+                WHERE znuny_ticket_id IS NOT NULL
+                UNION
+                SELECT DISTINCT znuny_ticket_id FROM tickets
+                WHERE znuny_ticket_id IS NOT NULL AND znuny_created_by IS NOT NULL
             """)
             return {row[0] for row in cursor.fetchall()}
+
+    def get_known_article_counts(self) -> dict:
+        """
+        Get known article counts per Znuny ticket for change detection.
+        Returns {znuny_ticket_id: max_article_number} from znuny_articles table.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT znuny_ticket_id, COUNT(*) as cnt, MAX(article_number) as max_num
+                FROM znuny_articles
+                WHERE znuny_ticket_id IS NOT NULL
+                GROUP BY znuny_ticket_id
+            """)
+            return {row["znuny_ticket_id"]: {"count": row["cnt"], "max_num": row["max_num"]}
+                    for row in cursor.fetchall()}
 
     def get_site_visits_for_ticket(self, ticket_id: int) -> list:
         """Get all site visits for a ticket (by internal ticket_id)."""

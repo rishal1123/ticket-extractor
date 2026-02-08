@@ -290,15 +290,21 @@ class ZnunyService:
 
     def sync_all_site_visits(self, force_refresh: bool = False) -> Dict:
         """
-        OPTIMIZED comprehensive site visit sync:
-        1. Sync details for ISP tickets that have znuny_ticket_id but no details yet
-        2. Get open tickets from Znuny (uses TTL cache unless force_refresh)
-        3. Prioritize tickets that:
-           - Have "site visit" in title (need site visit extraction)
-           - Are linked to unsynced ISP tickets
-           - Have pending site visits needing completion check
-        4. Skip fully-synced tickets that don't need updates
-        5. Extract site visits from articles with "OAN Site Visit Arranged"
+        OPTIMIZED comprehensive site visit sync with 3-layer caching:
+
+        Layer 1 (TTL cache): Non-critical tickets return cached details instantly (5 min TTL)
+        Layer 2 (Article count): Navigate to page but skip parsing if article count unchanged
+        Layer 3 (New articles only): When articles change, only process NEW articles
+
+        Flow:
+        0. Sync ISP tickets just linked to Znuny (new tickets needing initial details)
+        1. Get open tickets from Znuny dashboard (5-min cache)
+        1.5. Handle closed tickets with pending site visits
+        2. For each open ticket:
+           a. Link to ISP tickets if applicable
+           b. Get details (uses cache layers - instant for most tickets)
+           c. Only process NEW articles (article_number > max known)
+           d. Extract site visits, store articles, capture orphan tickets
 
         Returns sync statistics.
         """
@@ -322,6 +328,9 @@ class ZnunyService:
         step0_processed_ids = set()
 
         try:
+            # Load known article counts for new-article detection
+            known_article_counts = self.db.get_known_article_counts()
+
             # Step 0: Sync details for ISP tickets that were just linked to Znuny
             # (have znuny_ticket_id but no znuny_created_by)
             unsynced_isp = self.db.get_tickets_needing_znuny_details()
@@ -400,90 +409,73 @@ class ZnunyService:
                                     closed_id, completed_at=last_article.created_at
                                 )
                             else:
-                                # Fallback to now if article time not available
                                 count = self.db.complete_site_visits_for_closed_ticket(closed_id)
                         else:
-                            # No articles found, use current time
                             count = self.db.complete_site_visits_for_closed_ticket(closed_id)
                         results["site_visits_closed"] += count
                     except Exception as e:
                         logger.error(f"Error fetching details for closed ticket {closed_id}: {e}")
-                        # Still complete with current time on error
                         count = self.db.complete_site_visits_for_closed_ticket(closed_id)
                         results["site_visits_closed"] += count
 
-            # Step 2: Get set of Znuny ticket IDs we've already fully synced
-            # (have site visits extracted and no pending visits needing completion)
-            synced_znuny_ids = self.db.get_synced_znuny_ticket_ids()
-
             # Derive remaining pending visit IDs from Step 1.5 (no extra DB query needed)
-            # Step 1.5 completed visits for closed_with_pending, so remove those
             all_pending_visit_ids = pending_visit_ids - closed_with_pending
 
-            # Step 3: Prioritize tickets - process those needing work first
-            priority_tickets = []
-            low_priority_tickets = []
-
+            # Step 2: Process all open tickets
             for ticket_info in all_tickets:
-                znuny_id = ticket_info["ticket_number"]
-                title = ticket_info.get("title", "").lower()
-
-                # High priority: has "site visit" in title or not yet synced
-                if "site visit" in title or znuny_id not in synced_znuny_ids:
-                    priority_tickets.append(ticket_info)
-                else:
-                    low_priority_tickets.append(ticket_info)
-
-            # Process high priority tickets first, then low priority
-            ordered_tickets = priority_tickets + low_priority_tickets
-
-            for ticket_info in ordered_tickets:
                 try:
                     znuny_ticket_id = ticket_info["ticket_number"]
                     title = ticket_info.get("title", "")
 
-                    # Try to extract ISP ticket ID from title
+                    # Try to extract ISP ticket ID from title and link
                     isp_info = self.znuny_client.extract_isp_ticket_id_from_title(title)
                     isp_ticket = None
 
-                    # If we found an ISP ticket reference, try to link it
                     if isp_info["portal"] and isp_info["ticket_id"]:
                         isp_ticket = self.db.get_ticket_by_portal_id(
                             isp_info["portal"], isp_info["ticket_id"]
                         )
                         if isp_ticket:
-                            # Update ISP ticket with Znuny link if not already linked
                             if not isp_ticket.znuny_ticket_id:
                                 self.db.update_znuny_status(
                                     isp_ticket.id, True, znuny_ticket_id
                                 )
                             results["isp_tickets_synced"] += 1
 
-                    # Skip if already processed in Step 0 (avoid duplicate Selenium calls)
+                    # Skip if already processed in Step 0
                     if znuny_ticket_id in step0_processed_ids:
                         results["znuny_tickets_skipped"] += 1
                         continue
 
-                    # Check if we can skip detail fetching for this ticket
-                    # NEVER skip tickets with "site visit" in title - always check for new articles
+                    # Determine if this ticket needs frequent checking
                     has_site_visit_in_title = "site visit" in title.lower()
                     has_pending_visits = znuny_ticket_id in all_pending_visit_ids
+                    needs_frequent_check = has_site_visit_in_title or has_pending_visits
 
-                    # Only skip if:
-                    # - No "site visit" in title (tickets with site visits need full processing)
-                    # - Already synced (has site visits extracted before)
-                    # - No pending visits needing completion
-                    # - ISP ticket (if any) already has details synced
-                    if (not has_site_visit_in_title and
-                        znuny_ticket_id in synced_znuny_ids and
-                        not has_pending_visits and
-                        (not isp_ticket or isp_ticket.znuny_created_by)):
-                        results["znuny_tickets_skipped"] += 1
+                    # Get ticket details with appropriate cache strategy:
+                    # - Frequent-check tickets: bypass TTL cache (but article-count check still works)
+                    # - Other tickets: use TTL cache (instant return within 5 min)
+                    details = self.znuny_client.get_ticket_details(
+                        znuny_ticket_id,
+                        bypass_cache=needs_frequent_check
+                    )
+                    if not details:
                         continue
 
-                    # Get detailed ticket info including articles
-                    details = self.znuny_client.get_ticket_details(znuny_ticket_id)
-                    if not details:
+                    # Determine which articles are NEW (not yet in our DB)
+                    known = known_article_counts.get(znuny_ticket_id, {})
+                    max_known_num = known.get("max_num", 0) or 0
+                    is_first_time = max_known_num == 0
+
+                    new_articles = [
+                        a for a in details.articles
+                        if a.article_number > max_known_num
+                    ] if not is_first_time else details.articles
+
+                    # If no new articles and ISP details already synced → skip
+                    if (not new_articles and not is_first_time and
+                            (not isp_ticket or isp_ticket.znuny_created_by)):
+                        results["znuny_tickets_skipped"] += 1
                         continue
 
                     results["znuny_tickets_processed"] += 1
@@ -498,8 +490,13 @@ class ZnunyService:
                             znuny_url=details.znuny_url
                         )
 
-                    # Extract site visits from articles
-                    for article in details.articles:
+                    # Process only NEW articles (or all if first time)
+                    articles_to_process = new_articles if not is_first_time else details.articles
+                    if new_articles and not is_first_time:
+                        logger.info(f"Ticket {znuny_ticket_id}: {len(new_articles)} new articles (max known: {max_known_num})")
+
+                    for article in articles_to_process:
+                        # Extract site visits
                         site_visit = parse_site_visit_article(article, znuny_ticket_id)
                         if site_visit:
                             self.db.upsert_site_visit(
@@ -524,28 +521,28 @@ class ZnunyService:
                                 f"{site_visit.assigned_to} at {site_visit.scheduled_time}"
                             )
 
-                        # Also store articles if linked to ISP ticket
-                        if isp_ticket:
-                            self.db.upsert_znuny_article(
-                                ticket_id=isp_ticket.id,
-                                znuny_ticket_id=znuny_ticket_id,
-                                article_number=article.article_number,
-                                sender=article.sender,
-                                via=article.via,
-                                subject=article.subject,
-                                created_at=article.created_at,
-                                created_at_str=article.created_at_str,
-                                created_by=article.created_by,
-                                body=article.body
-                            )
+                        # Store articles for ALL tickets (not just ISP-linked)
+                        # This enables article-count tracking for change detection
+                        self.db.upsert_znuny_article(
+                            ticket_id=isp_ticket.id if isp_ticket else None,
+                            znuny_ticket_id=znuny_ticket_id,
+                            article_number=article.article_number,
+                            sender=article.sender,
+                            via=article.via,
+                            subject=article.subject,
+                            created_at=article.created_at,
+                            created_at_str=article.created_at_str,
+                            created_by=article.created_by,
+                            body=article.body
+                        )
 
                     # Check for follow-up articles to complete site visits
-                    completed = self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
-                    results["site_visits_completed"] += completed
+                    if has_pending_visits or new_articles:
+                        completed = self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
+                        results["site_visits_completed"] += completed
 
                     # Capture Znuny-only tickets (not linked to any ISP portal)
                     if not isp_ticket and not self.db.is_ticket_linked_to_isp(znuny_ticket_id):
-                        # Get last article info for tracking
                         last_article = details.articles[-1] if details.articles else None
 
                         self.db.upsert_znuny_only_ticket({

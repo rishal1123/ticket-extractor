@@ -52,7 +52,7 @@ class Config:
 
     # Scheduler settings
     EXTRACTION_INTERVAL_MINUTES = int(os.getenv("EXTRACTION_INTERVAL_MINUTES", "5"))
-    ZNUNY_SYNC_INTERVAL_MINUTES = int(os.getenv("ZNUNY_SYNC_INTERVAL_MINUTES", "1"))
+    ZNUNY_SYNC_INTERVAL_MINUTES = int(os.getenv("ZNUNY_SYNC_INTERVAL_MINUTES", "3"))
 
     # Dashboard settings
     DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")

@@ -31,6 +31,7 @@ class SchedulerService:
         self._extraction_interval = Config.EXTRACTION_INTERVAL_MINUTES
         self._znuny_sync_interval = Config.ZNUNY_SYNC_INTERVAL_MINUTES
         self._znuny_sync_lock = threading.Lock()
+        self._extraction_lock = threading.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -130,17 +131,24 @@ class SchedulerService:
             db.log_system("error", "znuny", f"Znuny sync failed: {e}")
             raise
 
-    def _extraction_job(self):
-        """Scheduled job for portal extraction."""
-        db = Database()
-        try:
-            self.run_portal_extraction()
-        except Exception as e:
-            logger.error(f"Portal extraction failed: {e}")
-            db.log_system("error", "scheduler", f"Portal extraction crashed: {e}")
+    def _extraction_worker(self):
+        """Run portal extraction with lock to prevent overlap."""
+        if not self._extraction_lock.acquire(blocking=False):
+            logger.debug("Portal extraction still running, skipping this cycle")
+            return
 
-    def _znuny_sync_job(self):
-        """Scheduled job for Znuny sync (with lock to prevent overlap)."""
+        try:
+            db = Database()
+            try:
+                self.run_portal_extraction()
+            except Exception as e:
+                logger.error(f"Portal extraction failed: {e}")
+                db.log_system("error", "scheduler", f"Portal extraction crashed: {e}")
+        finally:
+            self._extraction_lock.release()
+
+    def _znuny_sync_worker(self):
+        """Run Znuny sync with lock to prevent overlap."""
         if not self._znuny_sync_lock.acquire(blocking=False):
             logger.debug("Znuny sync still running, skipping this cycle")
             return
@@ -154,6 +162,22 @@ class SchedulerService:
                 db.log_system("error", "scheduler", f"Znuny sync crashed: {e}")
         finally:
             self._znuny_sync_lock.release()
+
+    def _extraction_job(self):
+        """Launch portal extraction in its own thread (non-blocking)."""
+        threading.Thread(
+            target=self._extraction_worker,
+            daemon=True,
+            name="ExtractionWorker"
+        ).start()
+
+    def _znuny_sync_job(self):
+        """Launch Znuny sync in its own thread (non-blocking)."""
+        threading.Thread(
+            target=self._znuny_sync_worker,
+            daemon=True,
+            name="ZnunySyncWorker"
+        ).start()
 
     def _scheduler_loop(self):
         """Background scheduler loop with separate extraction and sync jobs."""
@@ -169,13 +193,12 @@ class SchedulerService:
             f"Znuny sync every {self._znuny_sync_interval}min"
         )
 
-        # Schedule separate jobs
+        # Schedule separate jobs (each runs in its own thread)
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
 
-        # Run extraction immediately on start
+        # Run both immediately on start (in parallel threads)
         self._extraction_job()
-        # Run first Znuny sync after extraction completes
         self._znuny_sync_job()
 
         while self._running:

@@ -160,16 +160,18 @@ class ZnunyClient:
     TICKET_LINK_SELECTOR = "a[href*='AgentTicketZoom']"
     TICKET_TITLE_SELECTOR = ".MasterActionLink"
 
-    # Class-level browser instance for session persistence
+    # Class-level state (persists across instances for session reuse)
     _shared_driver = None
     _shared_logged_in = False
+    _shared_last_login_check = 0  # Timestamp of last successful login verification
+    # Class-level caches (persist across instances so sync cycles reuse cached data)
+    _shared_open_tickets_cache = None
+    _shared_cache_timestamp = None
+    _shared_details_cache = {}  # {ticket_number: (ZnunyTicketDetails, timestamp)}
 
     def __init__(self):
         self.username = Config.ZNUNY_USERNAME
         self.password = Config.ZNUNY_PASSWORD
-        self._open_tickets_cache = None  # Cache for open tickets
-        self._cache_timestamp = None  # When cache was last refreshed
-        self._ticket_details_cache = {}  # Cache for ticket details {ticket_number: (details, timestamp)}
 
     @property
     def driver(self):
@@ -190,6 +192,36 @@ class ZnunyClient:
     def _logged_in(self, value):
         """Set shared login state."""
         ZnunyClient._shared_logged_in = value
+
+    @property
+    def _open_tickets_cache(self):
+        """Get shared open tickets cache."""
+        return ZnunyClient._shared_open_tickets_cache
+
+    @_open_tickets_cache.setter
+    def _open_tickets_cache(self, value):
+        """Set shared open tickets cache."""
+        ZnunyClient._shared_open_tickets_cache = value
+
+    @property
+    def _cache_timestamp(self):
+        """Get shared cache timestamp."""
+        return ZnunyClient._shared_cache_timestamp
+
+    @_cache_timestamp.setter
+    def _cache_timestamp(self, value):
+        """Set shared cache timestamp."""
+        ZnunyClient._shared_cache_timestamp = value
+
+    @property
+    def _ticket_details_cache(self):
+        """Get shared ticket details cache."""
+        return ZnunyClient._shared_details_cache
+
+    @_ticket_details_cache.setter
+    def _ticket_details_cache(self, value):
+        """Set shared ticket details cache."""
+        ZnunyClient._shared_details_cache = value
 
     def _setup_browser(self):
         """Setup Chrome browser with options, reusing existing session if available."""
@@ -223,11 +255,15 @@ class ZnunyClient:
         self._setup_browser()
 
         if self._logged_in:
-            # Check if still logged in
+            # Skip full dashboard verification if checked within last 60 seconds
+            if time.time() - ZnunyClient._shared_last_login_check < 60:
+                return True
+            # Full verification: navigate to dashboard
             try:
                 self.driver.get(self.DASHBOARD_URL)
                 time.sleep(2)
                 if "Dashboard" in self.driver.title:
+                    ZnunyClient._shared_last_login_check = time.time()
                     logger.info("Znuny session still active, skipping login")
                     return True
             except WebDriverException:
@@ -351,10 +387,11 @@ class ZnunyClient:
             return []
 
     def clear_cache(self):
-        """Clear all caches."""
-        self._open_tickets_cache = None
-        self._cache_timestamp = None
-        self._ticket_details_cache = {}
+        """Clear all caches (class-level)."""
+        ZnunyClient._shared_open_tickets_cache = None
+        ZnunyClient._shared_cache_timestamp = None
+        ZnunyClient._shared_details_cache = {}
+        ZnunyClient._shared_last_login_check = 0
 
     def search_by_title(self, search_term: str) -> list[dict]:
         """
@@ -379,24 +416,31 @@ class ZnunyClient:
         logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
         return matching
 
-    def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False) -> ZnunyTicketDetails | None:
+    def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False,
+                           bypass_cache: bool = False) -> ZnunyTicketDetails | None:
         """
         Fetch detailed information about a Znuny ticket.
         Returns ticket details including creation time, creator, and all articles.
 
-        OPTIMIZED: Only clicks articles that need body content (site visit articles with
-        "OAN Site Visit" in subject). Other articles use basic info from table.
+        OPTIMIZED with 3 layers:
+        1. TTL cache: returns cached details within 5 min (no navigation)
+        2. Article count check: navigates but skips parsing if article count unchanged
+        3. Full parse: only when new articles detected
 
         Args:
             ticket_number: The Znuny ticket number
             skip_body_fetch: If True, skip fetching article bodies entirely (fastest mode)
+            bypass_cache: If True, skip TTL cache (still uses article-count check)
         """
-        # Check details cache first
+        # Layer 1: TTL cache (fastest - no navigation needed)
+        cached_details = None
+        cached_article_count = -1
         if ticket_number in self._ticket_details_cache:
-            details, cache_time = self._ticket_details_cache[ticket_number]
-            if time.time() - cache_time < CACHE_TTL_SECONDS:
+            cached_details, cache_time = self._ticket_details_cache[ticket_number]
+            cached_article_count = len(cached_details.articles)
+            if not bypass_cache and time.time() - cache_time < CACHE_TTL_SECONDS:
                 logger.debug(f"Using cached details for ticket {ticket_number}")
-                return details
+                return cached_details
 
         if not self._login():
             return None
@@ -481,6 +525,17 @@ class ZnunyClient:
                 except (NoSuchElementException, StaleElementReferenceException, IndexError):
                     continue
 
+            # Layer 2: Article count check (skip parsing if unchanged)
+            if cached_details and len(article_data) == cached_article_count:
+                logger.debug(f"Ticket {ticket_number}: {len(article_data)} articles (unchanged), using cache")
+                # Refresh cache timestamp
+                self._ticket_details_cache[ticket_number] = (cached_details, time.time())
+                return cached_details
+
+            if cached_article_count >= 0:
+                logger.info(f"Ticket {ticket_number}: articles changed ({cached_article_count} -> {len(article_data)}), re-processing")
+
+            # Layer 3: Full article parse (only when article count changed or first time)
             # Process articles - only click ones that need body content
             articles_needing_body = [d for d in article_data if d["needs_body"] and not skip_body_fetch]
             articles_skipped = [d for d in article_data if not d["needs_body"] or skip_body_fetch]
@@ -792,6 +847,7 @@ class ZnunyClient:
                 pass
             cls._shared_driver = None
             cls._shared_logged_in = False
+            cls._shared_last_login_check = 0
             logger.info("Znuny shared browser session closed")
 
     def __del__(self):
