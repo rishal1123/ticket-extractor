@@ -6,7 +6,7 @@ services:
       - "8003:8000"
     volumes:
       - extractor_data:/app/data
-      - ./.env:/app/.env:ro
+      - ./.env:/app/.env
     env_file:
       - .env
     environment:
