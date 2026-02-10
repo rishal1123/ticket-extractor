@@ -8,7 +8,7 @@ This module provides RESTful API endpoints for:
 - Znuny integration
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 
@@ -537,6 +537,30 @@ async def update_config(request: Request):
     data = await request.json()
     service = get_config_service()
     result = service.update_config(data.get('config', {}))
+    return JSONResponse(content=result)
+
+
+@router.post("/config/upload")
+@handle_errors("upload env file")
+async def upload_env_file(file: UploadFile = File(...)):
+    """Upload a .env file to replace current configuration."""
+    content = await file.read()
+    text = content.decode('utf-8')
+
+    # Parse the uploaded .env content
+    new_config = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            key, value = line.split('=', 1)
+            new_config[key.strip()] = value.strip()
+
+    if not new_config:
+        return JSONResponse(content={"success": False, "message": "No valid key=value pairs found in file"})
+
+    service = get_config_service()
+    result = service.update_config(new_config)
+    result["keys_count"] = len(new_config)
     return JSONResponse(content=result)
 
 
