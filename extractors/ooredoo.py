@@ -138,7 +138,15 @@ class OoredooExtractor(BaseExtractor):
             # Wait for DataTable to load
             self._wait_for_datatable()
 
+            # Try to show all entries to avoid missing tickets
+            self._set_datatable_show_all()
+
             # Extract tickets from all pages
+            # Log total entries info
+            info_els = self.find_elements(By.CSS_SELECTOR, self.PAGINATION_INFO_SELECTOR)
+            if info_els:
+                self.logger.info(f"DataTable pagination: {info_els[0].text}")
+
             page_num = 1
             while True:
                 self.logger.info(f"Extracting tickets from page {page_num}")
@@ -168,6 +176,32 @@ class OoredooExtractor(BaseExtractor):
                 time.sleep(1)
         except Exception as e:
             self.logger.warning(f"Error waiting for DataTable: {e}")
+
+    def _set_datatable_show_all(self):
+        """Set DataTable to show all entries (or maximum) to avoid pagination issues."""
+        try:
+            # Try to change "Show entries" dropdown to max value
+            length_select = self.find_elements(By.CSS_SELECTOR, "#datatable_length select, select[name='datatable_length']")
+            if length_select:
+                from selenium.webdriver.support.ui import Select
+                select = Select(length_select[0])
+                # Try common "show all" values: -1 (All), 100, 50
+                for value in ["-1", "100", "50"]:
+                    try:
+                        select.select_by_value(value)
+                        self.logger.info(f"Set DataTable page size to {value}")
+                        time.sleep(3)
+                        self._wait_for_datatable()
+                        return
+                    except Exception:
+                        continue
+
+            # Log pagination info for diagnostics
+            info_els = self.find_elements(By.CSS_SELECTOR, self.PAGINATION_INFO_SELECTOR)
+            if info_els:
+                self.logger.info(f"DataTable info: {info_els[0].text}")
+        except Exception as e:
+            self.logger.debug(f"Could not set DataTable page size: {e}")
 
     def _extract_tickets_from_page(self) -> list[Ticket]:
         tickets = []

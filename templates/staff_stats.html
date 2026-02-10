@@ -265,6 +265,7 @@ let currentFilter = 'today';
 document.addEventListener('DOMContentLoaded', function() {
     setDateFilter('today', false);
     loadStaffStats();
+    setInterval(loadStaffStats, 30000);
 });
 
 function setDateFilter(filter, autoLoad = true) {

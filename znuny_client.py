@@ -28,7 +28,7 @@ from utils.logger import get_logger
 logger = get_logger("znuny")
 
 # Cache TTL in seconds (5 minutes)
-CACHE_TTL_SECONDS = 300
+CACHE_TTL_SECONDS = 360
 
 
 @dataclass
@@ -81,8 +81,15 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     Time: 1130
     Assigned to: @maah
     """
-    # Check if this is a site visit article
-    if "OAN Site Visit Arranged" not in article.subject and "Preventative Maintenance - Site Visit" not in article.subject:
+    # Check if this is a site visit article (Arranged, Pending, or Preventative Maintenance)
+    subject_lower = article.subject.lower() if article.subject else ""
+    is_site_visit = (
+        "oan site visit arranged" in subject_lower
+        or "oan site visit pending" in subject_lower
+        or "preventative maintenance - site visit" in subject_lower
+        or "preventative maintenance -" in subject_lower  # fallback for variations
+    )
+    if not is_site_visit:
         return None
 
     body = article.body or ""
@@ -93,15 +100,21 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     scheduled_time = ""
     assigned_to = ""
 
-    # Site Type
-    site_match = re.search(r"Site Type:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+    # Site Type (handles "Site Type:", "Site Type :", and "Type:" variations)
+    site_match = re.search(r"(?:Site\s*)?Type\s*:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
     if site_match:
         site_type = site_match.group(1).strip()
 
-    # Service Provider
+    # Service Provider (from body, or infer from subject for Pending articles)
     provider_match = re.search(r"Service Provider:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
     if provider_match:
         service_provider = provider_match.group(1).strip()
+    elif not service_provider:
+        # Try to infer from subject (e.g., "*Dhiraagu OAN Site Visit Pending" or "Ooredoo OAN...")
+        for provider in ("dhiraagu", "ooredoo", "rol", "medianet"):
+            if provider in subject_lower:
+                service_provider = provider.capitalize()
+                break
 
     # Time - can be HHMM format or "now" (now = article creation time)
     time_match = re.search(r"Time:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
@@ -233,6 +246,11 @@ class ZnunyClient:
                 return
             except WebDriverException:
                 logger.info("Znuny browser session died, creating new one")
+                # Try to quit the dead browser to avoid orphaned Chrome processes
+                try:
+                    self.driver.quit()
+                except Exception:
+                    pass
                 self.driver = None
                 self._logged_in = False
 
@@ -767,8 +785,11 @@ class ZnunyClient:
 
         elif "ooredoo" in title_lower:
             result["portal"] = "ooredoo"
-            # Extract ticket number (usually at the end or after /)
-            ooredoo_match = re.search(r"/\s*(\d{5,})", title)
+            # Extract ticket number from "Ticket ID: XXXXXX" or after /
+            ooredoo_match = re.search(r"Ticket\s*ID\W*(\d{5,})", title, re.IGNORECASE)
+            if not ooredoo_match:
+                # Fallback: number directly after / (old format)
+                ooredoo_match = re.search(r"/\s*(\d{5,})", title)
             if ooredoo_match:
                 result["ticket_id"] = ooredoo_match.group(1)
 
@@ -781,10 +802,12 @@ class ZnunyClient:
 
         elif "medianet" in title_lower:
             result["portal"] = "medianet"
-            # Extract Medianet ticket ID
-            medianet_match = re.search(r"(SR-\d+|#\s*\d+)", title, re.IGNORECASE)
+            # Extract Medianet ticket ID (formats: "Ticket #: S34851", "SR-12345", "S34851")
+            medianet_match = re.search(r"Ticket\s*#[:\s]*(\S+)", title, re.IGNORECASE)
+            if not medianet_match:
+                medianet_match = re.search(r"(SR-\d+|S\d{4,})", title, re.IGNORECASE)
             if medianet_match:
-                result["ticket_id"] = medianet_match.group(1).replace("#", "").strip()
+                result["ticket_id"] = medianet_match.group(1).strip()
 
         # Try to extract address (usually between - and / or after specific patterns)
         addr_match = re.search(r"-\s+([A-Z0-9]+-[A-Z0-9]+(?:-\d+)?)\s*[/|]", title)

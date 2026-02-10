@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+models/__pycache__
+extractors/__pycache__
+services/__pycache__
+controllers/__pycache__
+utils/__pycache__
+middleware/__pycache__
+
+# Environment and secrets
+.env
+*.db
+
+# IDE and OS
+.vscode
+.idea
+*.swp
+nul
+Thumbs.db
+.DS_Store
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Docs
+CLAUDE.md
+*.md
+
+# Screenshots
+screenshots/

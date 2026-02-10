@@ -27,17 +27,19 @@ async def get_znuny_only_stats(db: Database = Depends(get_db)):
 async def get_znuny_only_tickets(
     state: Optional[str] = Query(None, description="Filter by state (open/closed)"),
     created_by: Optional[str] = Query(None, description="Filter by creator"),
+    linked: Optional[str] = Query(None, description="Filter by ISP link (yes/no)"),
     date_filter: DateFilterParams = Depends(get_date_filter),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Database = Depends(get_db)
 ):
-    """Get Znuny-only tickets with optional filters."""
+    """Get Znuny tickets with optional filters."""
     result = db.get_znuny_only_tickets(
         state=state,
         created_by=created_by,
         date_from=date_filter.date_from,
         date_to=date_filter.date_to,
+        linked=linked,
         limit=limit,
         offset=offset
     )

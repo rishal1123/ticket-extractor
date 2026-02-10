@@ -301,6 +301,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadAssignedStaff();
     loadPendingVisits();
     setDateFilter('today');
+    setInterval(refreshData, 30000);
 });
 
 // Pending Section Functions

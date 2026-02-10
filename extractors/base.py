@@ -15,8 +15,10 @@ from utils.logger import get_logger
 class BaseExtractor(ABC):
     """Base class for all portal extractors."""
 
-    # Class-level browser instances for session persistence
-    _browsers: dict = {}
+    # Single shared browser for all ISP portals (minimizes Chrome memory)
+    _shared_browser: Optional[BrowserManager] = None
+    # Track consecutive 0-ticket extraction cycles per portal
+    _consecutive_zero_counts: dict = {}
 
     def __init__(self, config: PortalConfig, db: Database, headless: bool = False):
         self.config = config
@@ -71,23 +73,23 @@ class BaseExtractor(ABC):
         return success
 
     def _get_or_create_browser(self) -> BrowserManager:
-        """Get existing browser or create new one for session persistence."""
-        portal_name = self.config.name
-        if portal_name in BaseExtractor._browsers:
-            browser = BaseExtractor._browsers[portal_name]
-            # Check if browser is still alive
+        """Get or create the shared ISP browser (1 Chrome for all portals)."""
+        if BaseExtractor._shared_browser is not None:
             try:
-                browser.driver.current_url
-                self.logger.info("Reusing existing browser session")
-                return browser
+                BaseExtractor._shared_browser.driver.current_url
+                self.logger.info("Reusing shared ISP browser")
+                return BaseExtractor._shared_browser
             except WebDriverException:
-                self.logger.info("Browser session died, creating new one")
-                del BaseExtractor._browsers[portal_name]
+                self.logger.info("Shared browser died, creating new one")
+                try:
+                    BaseExtractor._shared_browser.stop()
+                except Exception:
+                    pass
+                BaseExtractor._shared_browser = None
 
-        # Create new browser
         browser = BrowserManager(headless=self.headless)
         browser.start()
-        BaseExtractor._browsers[portal_name] = browser
+        BaseExtractor._shared_browser = browser
         return browser
 
     def run(self, max_retries: int = 3, keep_session: bool = True) -> dict:
@@ -140,13 +142,40 @@ class BaseExtractor(ABC):
                         result["tickets_updated"] += 1
 
                 # Mark missing tickets as complete
-                missing_ticket_ids = existing_ticket_ids - found_ticket_ids
-                if missing_ticket_ids:
-                    completed_count = self.db.mark_tickets_complete(
-                        self.config.name, list(missing_ticket_ids)
-                    )
-                    result["tickets_completed"] = completed_count
-                    self.logger.info(f"Marked {completed_count} tickets as complete (disappeared from portal)")
+                portal_name = self.config.name
+                if found_ticket_ids:
+                    # Tickets found - reset consecutive zero counter
+                    BaseExtractor._consecutive_zero_counts[portal_name] = 0
+                    missing_ticket_ids = existing_ticket_ids - found_ticket_ids
+                    if missing_ticket_ids:
+                        completed_count = self.db.mark_tickets_complete(
+                            self.config.name, list(missing_ticket_ids)
+                        )
+                        result["tickets_completed"] = completed_count
+                        self.logger.info(f"Marked {completed_count} tickets as complete (disappeared from portal)")
+                elif existing_ticket_ids:
+                    # 0 tickets found but active tickets exist
+                    # Track consecutive zero-ticket cycles to avoid false completions
+                    zero_count = BaseExtractor._consecutive_zero_counts.get(portal_name, 0) + 1
+                    BaseExtractor._consecutive_zero_counts[portal_name] = zero_count
+                    required_cycles = 3
+
+                    if zero_count >= required_cycles:
+                        # 3+ consecutive cycles with 0 tickets - safe to mark complete
+                        completed_count = self.db.mark_tickets_complete(
+                            self.config.name, list(existing_ticket_ids)
+                        )
+                        result["tickets_completed"] = completed_count
+                        BaseExtractor._consecutive_zero_counts[portal_name] = 0
+                        self.logger.info(
+                            f"Marked {completed_count} tickets as complete after "
+                            f"{zero_count} consecutive zero-ticket cycles"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"Extraction returned 0 tickets but {len(existing_ticket_ids)} active - "
+                            f"zero-ticket cycle {zero_count}/{required_cycles}, skipping completion"
+                        )
 
                 # Don't logout if keeping session active
                 if not keep_session:
@@ -166,13 +195,13 @@ class BaseExtractor(ABC):
             except Exception as e:
                 self.logger.error(f"Extraction failed: {e}")
                 result["error"] = str(e)
-                # Kill browser on error so next attempt starts fresh
-                if self.config.name in BaseExtractor._browsers:
+                # Kill shared browser on error so next attempt starts fresh
+                if BaseExtractor._shared_browser is not None:
                     try:
-                        BaseExtractor._browsers[self.config.name].stop()
+                        BaseExtractor._shared_browser.stop()
                     except Exception:
                         pass
-                    del BaseExtractor._browsers[self.config.name]
+                    BaseExtractor._shared_browser = None
                 self.browser = None
                 if attempt < max_retries - 1:
                     self.logger.info(f"Retrying in 5 seconds...")

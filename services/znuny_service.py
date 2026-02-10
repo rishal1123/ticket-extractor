@@ -290,7 +290,7 @@ class ZnunyService:
 
     def sync_all_site_visits(self, force_refresh: bool = False) -> Dict:
         """
-        OPTIMIZED comprehensive site visit sync with 3-layer caching:
+        UNIFIED comprehensive Znuny sync with 3-layer caching:
 
         Layer 1 (TTL cache): Non-critical tickets return cached details instantly (5 min TTL)
         Layer 2 (Article count): Navigate to page but skip parsing if article count unchanged
@@ -299,7 +299,8 @@ class ZnunyService:
         Flow:
         0. Sync ISP tickets just linked to Znuny (new tickets needing initial details)
         1. Get open tickets from Znuny dashboard (5-min cache)
-        1.5. Handle closed tickets with pending site visits
+        1.5. Check unchecked ISP tickets against open tickets list
+        1.6. Handle closed tickets with pending site visits
         2. For each open ticket:
            a. Link to ISP tickets if applicable
            b. Get details (uses cache layers - instant for most tickets)
@@ -318,11 +319,14 @@ class ZnunyService:
             "site_visits_completed": 0,
             "site_visits_closed": 0,
             "isp_tickets_synced": 0,
+            "isp_checked": 0,
+            "isp_found": 0,
             "isp_details_synced": 0,
+            "znuny_tickets_closed": 0,
             "errors": 0
         }
 
-        logger.info("Starting optimized Znuny sync")
+        logger.info("Starting unified Znuny sync")
 
         # Track Znuny ticket IDs processed in Step 0 to avoid re-fetching in main loop
         step0_processed_ids = set()
@@ -378,6 +382,20 @@ class ZnunyService:
                                         znuny_url=details.znuny_url
                                     )
                                     results["site_visits_extracted"] += 1
+                            # Also store in znuny_tickets table
+                            last_art = details.articles[-1] if details.articles else None
+                            self.db.upsert_znuny_only_ticket({
+                                "znuny_ticket_id": ticket.znuny_ticket_id,
+                                "title": next((t.get("title") for t in self.znuny_client.get_open_tickets()
+                                               if t["ticket_number"] == ticket.znuny_ticket_id), None),
+                                "created_at": details.created_at,
+                                "created_by": details.created_by,
+                                "article_count": len(details.articles),
+                                "last_article_by": last_art.created_by if last_art else None,
+                                "last_article_at": last_art.created_at if last_art else None,
+                                "znuny_url": details.znuny_url,
+                                "isp_ticket_id": ticket.id
+                            })
                             results["isp_details_synced"] += 1
                     except Exception as e:
                         logger.error(f"Error syncing details for ticket {ticket.id}: {e}")
@@ -388,10 +406,33 @@ class ZnunyService:
             results["znuny_tickets_found"] = len(all_tickets)
             logger.info(f"Found {len(all_tickets)} open tickets in Znuny")
 
-            # Step 1.5: Check for closed tickets with pending site visits
+            # Step 1.5: Check unchecked ISP tickets against open tickets list
+            # Uses the already-loaded open tickets (no extra Selenium calls)
+            unchecked_tickets = self.db.get_unchecked_tickets()
+            if unchecked_tickets:
+                logger.info(f"Checking {len(unchecked_tickets)} ISP tickets against Znuny open list")
+                for ticket in unchecked_tickets:
+                    search_term = ticket.account if ticket.portal == "rol" and ticket.account else ticket.ticket_id
+                    try:
+                        # search_by_title uses cached open tickets - no navigation
+                        exists, znuny_id = self.znuny_client.check_ticket_sync(search_term)
+                        self.db.update_znuny_status(ticket.id, exists, znuny_id)
+                        results["isp_checked"] += 1
+                        if exists:
+                            results["isp_found"] += 1
+                            logger.info(f"Found {ticket.portal}/{ticket.ticket_id} in Znuny as {znuny_id}")
+                    except Exception as e:
+                        logger.error(f"Error checking ticket {ticket.id}: {e}")
+                        results["errors"] += 1
+
+            # Step 1.6: Check for closed tickets with pending site visits
             # If a Znuny ticket with pending visits is no longer in open list, it's closed
+            # Safety: Only run if we actually got open tickets (0 = likely page load failure)
             open_znuny_ids = {t["ticket_number"] for t in all_tickets}
-            pending_visit_ids = self.db.get_znuny_ids_with_pending_visits()
+            if not open_znuny_ids:
+                logger.warning("No open tickets found - skipping closed ticket check (possible page load failure)")
+
+            pending_visit_ids = self.db.get_znuny_ids_with_pending_visits() if open_znuny_ids else set()
             closed_with_pending = pending_visit_ids - open_znuny_ids
 
             if closed_with_pending:
@@ -418,7 +459,7 @@ class ZnunyService:
                         count = self.db.complete_site_visits_for_closed_ticket(closed_id)
                         results["site_visits_closed"] += count
 
-            # Derive remaining pending visit IDs from Step 1.5 (no extra DB query needed)
+            # Derive remaining pending visit IDs from Step 1.6 (no extra DB query needed)
             all_pending_visit_ids = pending_visit_ids - closed_with_pending
 
             # Step 2: Process all open tickets
@@ -462,6 +503,26 @@ class ZnunyService:
                     if not details:
                         continue
 
+                    # Always store/update in znuny_tickets (before any skip checks)
+                    # This ensures ALL open tickets are catalogued with ISP link status
+                    last_article = details.articles[-1] if details.articles else None
+                    self.db.upsert_znuny_only_ticket({
+                        "znuny_ticket_id": znuny_ticket_id,
+                        "title": title,
+                        "state": ticket_info.get("state"),
+                        "queue": ticket_info.get("queue"),
+                        "priority": ticket_info.get("priority"),
+                        "created_at": details.created_at,
+                        "created_by": details.created_by,
+                        "closed_at": None,  # Open ticket
+                        "article_count": len(details.articles),
+                        "last_article_by": last_article.created_by if last_article else None,
+                        "last_article_at": last_article.created_at if last_article else None,
+                        "znuny_url": details.znuny_url,
+                        "isp_ticket_id": isp_ticket.id if isp_ticket else None
+                    })
+                    results["znuny_only_captured"] += 1
+
                     # Determine which articles are NEW (not yet in our DB)
                     known = known_article_counts.get(znuny_ticket_id, {})
                     max_known_num = known.get("max_num", 0) or 0
@@ -472,9 +533,13 @@ class ZnunyService:
                         if a.article_number > max_known_num
                     ] if not is_first_time else details.articles
 
-                    # If no new articles and ISP details already synced → skip
+                    # If no new articles and ISP details already synced → skip article processing
+                    # But still check for follow-up completions on tickets with pending visits
                     if (not new_articles and not is_first_time and
                             (not isp_ticket or isp_ticket.znuny_created_by)):
+                        if has_pending_visits:
+                            completed = self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
+                            results["site_visits_completed"] += completed
                         results["znuny_tickets_skipped"] += 1
                         continue
 
@@ -541,30 +606,14 @@ class ZnunyService:
                         completed = self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
                         results["site_visits_completed"] += completed
 
-                    # Capture Znuny-only tickets (not linked to any ISP portal)
-                    if not isp_ticket and not self.db.is_ticket_linked_to_isp(znuny_ticket_id):
-                        last_article = details.articles[-1] if details.articles else None
-
-                        self.db.upsert_znuny_only_ticket({
-                            "znuny_ticket_id": znuny_ticket_id,
-                            "title": title,
-                            "state": ticket_info.get("state"),
-                            "queue": ticket_info.get("queue"),
-                            "priority": ticket_info.get("priority"),
-                            "created_at": details.created_at,
-                            "created_by": details.created_by,
-                            "closed_at": None,  # Open ticket
-                            "article_count": len(details.articles),
-                            "last_article_by": last_article.created_by if last_article else None,
-                            "last_article_at": last_article.created_at if last_article else None,
-                            "znuny_url": details.znuny_url
-                        })
-                        results["znuny_only_captured"] += 1
-                        logger.debug(f"Captured Znuny-only ticket: {znuny_ticket_id}")
-
                 except Exception as e:
                     logger.error(f"Error processing Znuny ticket {ticket_info.get('ticket_number', '?')}: {e}")
                     results["errors"] += 1
+
+            # Step 3: Mark znuny_tickets as closed if no longer in open list
+            if open_znuny_ids:
+                closed_count = self.db.mark_znuny_tickets_closed(open_znuny_ids)
+                results["znuny_tickets_closed"] = closed_count
 
         except Exception as e:
             logger.error(f"Error in comprehensive site visit sync: {e}")

@@ -337,10 +337,17 @@ class Database:
                 )
             """)
 
+            # Migration: Add isp_ticket_id to znuny_tickets (link to ISP portal ticket)
+            try:
+                cursor.execute("ALTER TABLE znuny_tickets ADD COLUMN isp_ticket_id INTEGER REFERENCES tickets(id)")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             # Indexes for znuny_tickets
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_state ON znuny_tickets(state)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_by ON znuny_tickets(created_by)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_at ON znuny_tickets(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_isp ON znuny_tickets(isp_ticket_id)")
 
             # --- All performance indexes (single consolidated block) ---
 
@@ -433,7 +440,7 @@ class Database:
                         notes = ?,
                         portal_url = COALESCE(?, portal_url),
                         updated_at = ?,
-                        completed_at = COALESCE(?, completed_at)
+                        completed_at = ?
                     WHERE id = ?
                 """, (
                     ticket.address,
@@ -874,14 +881,6 @@ class Database:
             now = now_maldives()
             placeholders = ",".join("?" * len(ticket_ids))
 
-            # First get znuny_ticket_ids for tickets being completed (for site visit completion)
-            cursor.execute(f"""
-                SELECT znuny_ticket_id FROM tickets
-                WHERE portal = ? AND ticket_id IN ({placeholders})
-                    AND status != 'Complete' AND znuny_ticket_id IS NOT NULL
-            """, [portal] + list(ticket_ids))
-            znuny_ids = [row["znuny_ticket_id"] for row in cursor.fetchall()]
-
             # Mark tickets as complete
             cursor.execute(f"""
                 UPDATE tickets
@@ -890,17 +889,8 @@ class Database:
             """, [now, now, portal] + list(ticket_ids))
             count = cursor.rowcount
 
-            # Also complete any pending site visits for these tickets
-            # Duration = completion_time - (visit_date + scheduled_time)
-            for znuny_id in znuny_ids:
-                cursor.execute(f"""
-                    UPDATE site_visits
-                    SET ticket_completed_at = ?,
-                        status = 'completed',
-                        time_taken_minutes = {_DURATION_SQL},
-                        updated_at = ?
-                    WHERE znuny_ticket_id = ? AND status = 'pending'
-                """, (now, now, now, znuny_id))
+            # Note: Site visit completion is handled by Znuny sync (Step 1.6)
+            # when the Znuny ticket itself closes, not when the ISP ticket disappears.
 
             if count > 0:
                 logger.info(f"Marked {count} tickets as complete for {portal}")
@@ -970,11 +960,12 @@ class Database:
                     completed_at IS NOT NULL as is_completed,
                     DATE(created_at) = ? as is_today_extracted,
                     DATE(znuny_created_at) = ? as is_today_znuny,
+                    DATE(completed_at) = ? as is_today_completed,
                     COUNT(*) as cnt
                 FROM tickets
                 GROUP BY portal, status, ticket_type, in_znuny, is_completed,
-                         is_today_extracted, is_today_znuny
-            """, (today, today))
+                         is_today_extracted, is_today_znuny, is_today_completed
+            """, (today, today, today))
 
             by_portal = {}
             by_status = {}
@@ -987,6 +978,7 @@ class Database:
             today_extracted_total = 0
             today_znuny_entries = 0
             today_znuny_by_portal = {}
+            today_completed = 0
 
             for row in cursor.fetchall():
                 cnt = row["cnt"]
@@ -998,6 +990,8 @@ class Database:
 
                 if is_completed:
                     completed += cnt
+                    if row["is_today_completed"]:
+                        today_completed += cnt
                 else:
                     # Active ticket stats
                     total += cnt
@@ -1056,7 +1050,8 @@ class Database:
                 "today_site_visits_created": today_site_visits_created,
                 "today_site_visits_completed": today_site_visits_completed,
                 "pending_site_visits": pending_site_visits,
-                "today_articles_created": today_articles_created
+                "today_articles_created": today_articles_created,
+                "today_completed": today_completed
             }
 
     def log_login_event(self, portal: str, event_type: str, session_id: str = None,
@@ -2055,7 +2050,7 @@ class Database:
             return cursor.fetchone() is not None
 
     def upsert_znuny_only_ticket(self, data: dict) -> int:
-        """Insert or update a Znuny-only ticket (not linked to ISP)."""
+        """Insert or update a Znuny ticket. Stores ALL Znuny tickets (ISP-linked and orphan)."""
         now = now_maldives()
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -2078,8 +2073,8 @@ class Database:
                 INSERT INTO znuny_tickets
                     (znuny_ticket_id, title, state, queue, priority, created_at, created_by,
                      closed_at, time_to_close_minutes, article_count, last_article_by,
-                     last_article_at, znuny_url, first_seen_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_article_at, znuny_url, isp_ticket_id, first_seen_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(znuny_ticket_id) DO UPDATE SET
                     title = excluded.title,
                     state = excluded.state,
@@ -2091,6 +2086,7 @@ class Database:
                     last_article_by = excluded.last_article_by,
                     last_article_at = excluded.last_article_at,
                     znuny_url = excluded.znuny_url,
+                    isp_ticket_id = COALESCE(excluded.isp_ticket_id, znuny_tickets.isp_ticket_id),
                     updated_at = excluded.updated_at
             """, (
                 data.get("znuny_ticket_id"),
@@ -2106,6 +2102,7 @@ class Database:
                 data.get("last_article_by"),
                 data.get("last_article_at"),
                 data.get("znuny_url"),
+                data.get("isp_ticket_id"),
                 now,
                 now
             ))
@@ -2113,8 +2110,9 @@ class Database:
 
     def get_znuny_only_tickets(self, state: str = None, created_by: str = None,
                                 date_from: str = None, date_to: str = None,
+                                linked: str = None,
                                 limit: int = 100, offset: int = 0) -> dict:
-        """Get Znuny-only tickets with optional filters."""
+        """Get Znuny tickets with optional filters. Use linked='yes'/'no' to filter by ISP link."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -2142,6 +2140,11 @@ class Database:
                 query += " AND DATE(created_at) <= ?"
                 params.append(date_to)
 
+            if linked == "yes":
+                query += " AND isp_ticket_id IS NOT NULL"
+            elif linked == "no":
+                query += " AND isp_ticket_id IS NULL"
+
             # Get total count
             count_query = query.replace("SELECT *", "SELECT COUNT(*)")
             cursor.execute(count_query, params)
@@ -2167,6 +2170,7 @@ class Database:
                 "last_article_by": row["last_article_by"],
                 "last_article_at": row["last_article_at"],
                 "znuny_url": row["znuny_url"],
+                "isp_ticket_id": row["isp_ticket_id"],
                 "first_seen_at": row["first_seen_at"],
                 "updated_at": row["updated_at"]
             } for row in cursor.fetchall()]
@@ -2174,27 +2178,26 @@ class Database:
             return {"total": total, "tickets": tickets}
 
     def get_znuny_only_stats(self) -> dict:
-        """Get summary statistics for Znuny-only tickets."""
+        """Get summary statistics for Znuny tickets (all + linked/unlinked breakdown)."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Total count
-            cursor.execute("SELECT COUNT(*) as total FROM znuny_tickets")
-            total = cursor.fetchone()["total"]
-
-            # Open count (not closed/resolved)
+            # All counts in one query
             cursor.execute("""
-                SELECT COUNT(*) as count FROM znuny_tickets
-                WHERE state IS NULL OR LOWER(state) NOT IN ('closed', 'resolved')
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN state IS NULL OR LOWER(state) NOT IN ('closed', 'resolved') THEN 1 ELSE 0 END) as open_count,
+                    SUM(CASE WHEN LOWER(state) IN ('closed', 'resolved') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN isp_ticket_id IS NOT NULL THEN 1 ELSE 0 END) as linked,
+                    SUM(CASE WHEN isp_ticket_id IS NULL THEN 1 ELSE 0 END) as unlinked
+                FROM znuny_tickets
             """)
-            open_count = cursor.fetchone()["count"]
-
-            # Closed count
-            cursor.execute("""
-                SELECT COUNT(*) as count FROM znuny_tickets
-                WHERE LOWER(state) IN ('closed', 'resolved')
-            """)
-            closed_count = cursor.fetchone()["count"]
+            row = cursor.fetchone()
+            total = row["total"]
+            open_count = row["open_count"]
+            closed_count = row["closed_count"]
+            linked = row["linked"]
+            unlinked = row["unlinked"]
 
             # Today's date in MVT
             today = now_maldives().date().isoformat()
@@ -2217,6 +2220,8 @@ class Database:
                 "total": total,
                 "open": open_count,
                 "closed": closed_count,
+                "linked": linked,
+                "unlinked": unlinked,
                 "today_new": today_new,
                 "avg_close_time_minutes": round(avg_close_time, 1) if avg_close_time else None
             }
@@ -2267,6 +2272,37 @@ class Database:
                 ORDER BY created_by
             """)
             return [row["created_by"] for row in cursor.fetchall()]
+
+    def mark_znuny_tickets_closed(self, open_znuny_ids: set) -> int:
+        """Mark znuny_tickets as closed if they are no longer in the open tickets list.
+        Returns count of tickets marked as closed."""
+        if not open_znuny_ids:
+            return 0
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now = now_maldives()
+
+            # Find tickets that were open but are no longer in the open list
+            placeholders = ",".join("?" * len(open_znuny_ids))
+            cursor.execute(f"""
+                UPDATE znuny_tickets
+                SET state = 'closed',
+                    closed_at = ?,
+                    time_to_close_minutes = CASE
+                        WHEN created_at IS NOT NULL THEN
+                            (julianday(?) - julianday(created_at)) * 24 * 60
+                        ELSE NULL
+                    END,
+                    updated_at = ?
+                WHERE znuny_ticket_id NOT IN ({placeholders})
+                    AND (state IS NULL OR LOWER(state) NOT IN ('closed', 'resolved'))
+            """, [now, now, now] + list(open_znuny_ids))
+
+            count = cursor.rowcount
+            if count > 0:
+                logger.info(f"Marked {count} znuny_tickets as closed")
+            return count
 
     # ==================== Staff Management ====================
 

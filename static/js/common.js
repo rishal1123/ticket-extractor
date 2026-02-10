@@ -1,3 +1,12 @@
+// Prevent browser caching of API responses
+const _originalFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+    if (typeof url === 'string' && url.startsWith('/')) {
+        options.cache = options.cache || 'no-store';
+    }
+    return _originalFetch.call(this, url, options);
+};
+
 // Maldives timezone (UTC+5)
 const MVT_OFFSET = 5 * 60;
 

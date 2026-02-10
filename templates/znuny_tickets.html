@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}Znuny-Only Tickets - Ticket Extractor{% endblock %}
+{% block title %}Znuny Tickets - Ticket Extractor{% endblock %}
 {% block nav_icon %}box{% endblock %}
-{% block nav_title %}Znuny-Only Tickets{% endblock %}
-{% block nav_title_short %}Znuny Only{% endblock %}
+{% block nav_title %}Znuny Tickets{% endblock %}
+{% block nav_title_short %}Znuny{% endblock %}
 
 {% block nav_buttons %}{% endblock %}
 
@@ -50,6 +50,14 @@
 .state-badge-closed {
     background-color: rgba(127, 140, 141, 0.15);
     color: #7f8c8d;
+}
+.link-badge-yes {
+    background-color: rgba(39, 174, 96, 0.15);
+    color: #27ae60;
+}
+.link-badge-no {
+    background-color: rgba(149, 165, 166, 0.15);
+    color: #95a5a6;
 }
 @media (max-width: 768px) {
     .stat-icon {
@@ -123,10 +131,10 @@
         <div class="row align-items-center g-2">
             <div class="col-auto">
                 <div class="btn-group" role="group">
-                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="today" onclick="setDateFilter('today')">Today</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn active" data-filter="today" onclick="setDateFilter('today')">Today</button>
                     <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="week" onclick="setDateFilter('week')">Week</button>
                     <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="month" onclick="setDateFilter('month')">Month</button>
-                    <button type="button" class="btn btn-outline-secondary quick-filter-btn active" data-filter="all" onclick="setDateFilter('all')">All</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="all" onclick="setDateFilter('all')">All</button>
                 </div>
             </div>
             <div class="col-auto">
@@ -134,6 +142,13 @@
                     <option value="">All Status</option>
                     <option value="open">Open</option>
                     <option value="closed">Closed</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <select class="form-select form-select-sm" id="linkedFilter" onchange="applyFilters()">
+                    <option value="">All Tickets</option>
+                    <option value="yes">ISP Linked</option>
+                    <option value="no">Znuny Only</option>
                 </select>
             </div>
             <div class="col-auto">
@@ -179,7 +194,7 @@
 <!-- Tickets Table -->
 <div class="card">
     <div class="card-header py-2 d-flex justify-content-between align-items-center">
-        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Znuny-Only Tickets</h6>
+        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Znuny Tickets</h6>
         <span class="badge" style="background-color: #7c3aed;" id="ticketsCount">0</span>
     </div>
     <div class="card-body p-0">
@@ -190,6 +205,7 @@
                         <th>Znuny ID</th>
                         <th>Title</th>
                         <th>State</th>
+                        <th class="text-center">ISP</th>
                         <th>Created By</th>
                         <th>Created At</th>
                         <th class="d-none d-md-table-cell">Closed At</th>
@@ -199,7 +215,7 @@
                     </tr>
                 </thead>
                 <tbody id="ticketsTableBody">
-                    <tr><td colspan="9" class="text-center text-muted py-4">Loading...</td></tr>
+                    <tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -210,14 +226,15 @@
 {% endblock %}
 
 {% block script %}
-let currentDateFilter = 'all';
+let currentDateFilter = 'today';
 let currentPage = 1;
 const pageSize = 50;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
     loadStaffNames();
-    setDateFilter('all');
+    setDateFilter('today');
+    setInterval(refreshData, 30000);
 });
 
 function setDateFilter(filter) {
@@ -326,12 +343,14 @@ async function loadTickets() {
         const dateRange = getDateRange(currentDateFilter);
         const state = document.getElementById('stateFilter').value;
         const staff = document.getElementById('staffFilter').value;
+        const linked = document.getElementById('linkedFilter').value;
 
         let url = `/api/znuny-only/tickets?limit=${pageSize}&offset=${(currentPage - 1) * pageSize}`;
         if (dateRange.from) url += `&date_from=${dateRange.from}`;
         if (dateRange.to) url += `&date_to=${dateRange.to}`;
         if (state) url += `&state=${state}`;
         if (staff) url += `&created_by=${encodeURIComponent(staff)}`;
+        if (linked) url += `&linked=${linked}`;
 
         const response = await fetch(url);
         const data = await response.json();
@@ -340,7 +359,7 @@ async function loadTickets() {
 
         const tbody = document.getElementById('ticketsTableBody');
         if (!data.tickets || data.tickets.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No tickets found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No tickets found</td></tr>';
             document.getElementById('pagination').innerHTML = '';
             return;
         }
@@ -350,12 +369,17 @@ async function loadTickets() {
             const stateClass = isOpen ? 'state-badge-open' : 'state-badge-closed';
             const stateIcon = isOpen ? 'folder2-open' : 'check2-circle';
             const timeClass = getTimeClass(t.time_to_close_minutes);
+            const isLinked = t.isp_ticket_id != null;
+            const linkBadge = isLinked
+                ? '<span class="badge link-badge-yes"><i class="bi bi-link-45deg me-1"></i>Yes</span>'
+                : '<span class="badge link-badge-no">No</span>';
 
             return `
                 <tr>
                     <td><strong>${t.znuny_ticket_id}</strong></td>
                     <td class="text-truncate" style="max-width: 200px;" title="${escapeHtml(t.title || '')}">${t.title || '--'}</td>
                     <td><span class="badge ${stateClass}"><i class="bi bi-${stateIcon} me-1"></i>${t.state || 'Open'}</span></td>
+                    <td class="text-center">${linkBadge}</td>
                     <td>${t.created_by || '--'}</td>
                     <td><small>${formatDateTime(t.created_at)}</small></td>
                     <td class="d-none d-md-table-cell"><small>${t.closed_at ? formatDateTime(t.closed_at) : '--'}</small></td>
