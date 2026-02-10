@@ -27,6 +27,8 @@ class ConfigService:
         """Initialize service with optional custom .env path."""
         if env_path:
             self.env_path = env_path
+        elif os.getenv("ENV_FILE_PATH"):
+            self.env_path = os.getenv("ENV_FILE_PATH")
         else:
             self.env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 

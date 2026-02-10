@@ -1,7 +1,12 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from ENV_FILE_PATH if set (Docker), otherwise default .env
+_env_path = os.getenv("ENV_FILE_PATH")
+if _env_path:
+    load_dotenv(_env_path)
+else:
+    load_dotenv()
 
 # Application version - update this when deploying changes to bust cache
 APP_VERSION = "1.0.8"

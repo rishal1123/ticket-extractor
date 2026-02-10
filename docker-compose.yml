@@ -6,14 +6,12 @@ services:
       - "8003:8000"
     volumes:
       - extractor_data:/app/data
-      - ./.env:/app/.env
-    env_file:
-      - .env
     environment:
       - DASHBOARD_HOST=0.0.0.0
       - DASHBOARD_PORT=8000
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/tickets.db
+      - ENV_FILE_PATH=/app/data/.env
     restart: unless-stopped
     shm_size: '2gb'
     healthcheck:
