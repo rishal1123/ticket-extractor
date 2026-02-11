@@ -1306,22 +1306,38 @@ class Database:
             """, site_visits_params)
 
             for row in cursor.fetchall():
-                staff = row["staff"]
-                if staff not in staff_tickets:
-                    staff_tickets[staff] = {
-                        "tickets_created": 0,
-                        "within_5min": 0,
-                        "within_10min": 0,
-                        "over_10min": 0,
-                        "avg_minutes": 0,
-                        "on_time_pct": 0,
-                        "articles_count": 0,
-                        "tickets_updated": 0,
-                        "znuny_only_count": 0
-                    }
-                staff_tickets[staff]["site_visits_total"] = row["site_visits_total"]
-                staff_tickets[staff]["site_visits_completed"] = row["site_visits_completed"] or 0
-                staff_tickets[staff]["avg_visit_time"] = round(row["avg_visit_time"], 1) if row["avg_visit_time"] else 0
+                # Split multi-staff assigned_to and attribute visit to each person
+                names = [n.strip() for n in (row["staff"] or "").split(",") if n.strip()]
+                for staff in names:
+                    if staff not in staff_tickets:
+                        staff_tickets[staff] = {
+                            "tickets_created": 0,
+                            "within_5min": 0,
+                            "within_10min": 0,
+                            "over_10min": 0,
+                            "avg_minutes": 0,
+                            "on_time_pct": 0,
+                            "articles_count": 0,
+                            "tickets_updated": 0,
+                            "znuny_only_count": 0
+                        }
+                    prev_total = staff_tickets[staff].get("site_visits_total", 0)
+                    prev_completed = staff_tickets[staff].get("site_visits_completed", 0)
+                    prev_avg = staff_tickets[staff].get("avg_visit_time", 0)
+                    new_total = row["site_visits_total"]
+                    new_completed = row["site_visits_completed"] or 0
+                    new_avg = round(row["avg_visit_time"], 1) if row["avg_visit_time"] else 0
+                    combined_total = prev_total + new_total
+                    # Weighted average of visit times
+                    if prev_total and new_avg and prev_avg:
+                        combined_avg = round((prev_avg * prev_total + new_avg * new_total) / combined_total, 1)
+                    elif new_avg:
+                        combined_avg = new_avg
+                    else:
+                        combined_avg = prev_avg
+                    staff_tickets[staff]["site_visits_total"] = combined_total
+                    staff_tickets[staff]["site_visits_completed"] = prev_completed + new_completed
+                    staff_tickets[staff]["avg_visit_time"] = combined_avg
 
             # Build final list sorted by tickets created
             staff_list = []
@@ -1723,8 +1739,9 @@ class Database:
                 query += " AND DATE(sv.visit_date) <= ?"
                 params.append(date_to)
             if assigned_to:
-                query += " AND sv.assigned_to = ?"
-                params.append(assigned_to)
+                # Match individual staff within comma-separated assigned_to
+                query += " AND (sv.assigned_to = ? OR sv.assigned_to LIKE ? OR sv.assigned_to LIKE ? OR sv.assigned_to LIKE ?)"
+                params.extend([assigned_to, f"{assigned_to}, %", f"%, {assigned_to}", f"%, {assigned_to}, %"])
             if status:
                 query += " AND sv.status = ?"
                 params.append(status)
@@ -1794,15 +1811,44 @@ class Database:
             query += " GROUP BY assigned_to ORDER BY total_visits DESC"
             cursor.execute(query, params)
 
-            return [{
-                "assigned_to": row["assigned_to"],
-                "total_visits": row["total_visits"],
-                "completed": row["completed"] or 0,
-                "pending": row["pending"] or 0,
-                "avg_time_minutes": round(row["avg_time"], 1) if row["avg_time"] else None,
-                "min_time_minutes": row["min_time"],
-                "max_time_minutes": row["max_time"]
-            } for row in cursor.fetchall()]
+            # Post-process: split multi-staff assigned_to and re-aggregate per individual
+            staff_agg = {}
+            for row in cursor.fetchall():
+                names = [n.strip() for n in (row["assigned_to"] or "").split(",") if n.strip()]
+                if not names:
+                    continue
+                for name in names:
+                    if name not in staff_agg:
+                        staff_agg[name] = {"total": 0, "completed": 0, "pending": 0, "times": []}
+                    staff_agg[name]["total"] += row["total_visits"]
+                    staff_agg[name]["completed"] += row["completed"] or 0
+                    staff_agg[name]["pending"] += row["pending"] or 0
+                    # Collect individual times for accurate avg/min/max
+                    if row["avg_time"] is not None:
+                        staff_agg[name]["times"].append((row["avg_time"], row["total_visits"], row["min_time"], row["max_time"]))
+
+            result = []
+            for name, data in staff_agg.items():
+                # Weighted average, overall min/max
+                avg_time = None
+                min_time = None
+                max_time = None
+                if data["times"]:
+                    total_weight = sum(t[1] for t in data["times"])
+                    avg_time = round(sum(t[0] * t[1] for t in data["times"]) / total_weight, 1) if total_weight else None
+                    min_time = min(t[2] for t in data["times"] if t[2] is not None) if any(t[2] is not None for t in data["times"]) else None
+                    max_time = max(t[3] for t in data["times"] if t[3] is not None) if any(t[3] is not None for t in data["times"]) else None
+                result.append({
+                    "assigned_to": name,
+                    "total_visits": data["total"],
+                    "completed": data["completed"],
+                    "pending": data["pending"],
+                    "avg_time_minutes": avg_time,
+                    "min_time_minutes": min_time,
+                    "max_time_minutes": max_time
+                })
+            result.sort(key=lambda x: x["total_visits"], reverse=True)
+            return result
 
     def get_site_visit_by_date(self, date_from: str = None, date_to: str = None) -> list:
         """Get site visits aggregated by date."""
@@ -2386,7 +2432,7 @@ class Database:
                     staff_data[name] = {"name": name, "isp_tickets": 0, "znuny_tickets": 0, "articles": 0, "site_visits": 0}
                 staff_data[name]["articles"] = row["count"]
 
-            # 4. Site visits (assigned_to)
+            # 4. Site visits (assigned_to) - split multi-staff names
             cursor.execute("""
                 SELECT assigned_to as name, COUNT(*) as count
                 FROM site_visits
@@ -2394,10 +2440,11 @@ class Database:
                 GROUP BY assigned_to
             """)
             for row in cursor.fetchall():
-                name = row["name"]
-                if name not in staff_data:
-                    staff_data[name] = {"name": name, "isp_tickets": 0, "znuny_tickets": 0, "articles": 0, "site_visits": 0}
-                staff_data[name]["site_visits"] = row["count"]
+                names = [n.strip() for n in (row["name"] or "").split(",") if n.strip()]
+                for name in names:
+                    if name not in staff_data:
+                        staff_data[name] = {"name": name, "isp_tickets": 0, "znuny_tickets": 0, "articles": 0, "site_visits": 0}
+                    staff_data[name]["site_visits"] += row["count"]
 
             # Calculate totals and convert to list
             result = []
@@ -2451,11 +2498,11 @@ class Database:
             """, (source_name,))
             preview["affected"]["articles"] = cursor.fetchone()["count"]
 
-            # Count affected site visits
+            # Count affected site visits (including multi-staff assignments)
             cursor.execute("""
                 SELECT COUNT(*) as count FROM site_visits
-                WHERE assigned_to = ?
-            """, (source_name,))
+                WHERE assigned_to = ? OR assigned_to LIKE ? OR assigned_to LIKE ? OR assigned_to LIKE ?
+            """, (source_name, f"{source_name}, %", f"%, {source_name}", f"%, {source_name}, %"))
             preview["affected"]["site_visits"] = cursor.fetchone()["count"]
 
             # Count affected staff performance daily
@@ -2512,12 +2559,29 @@ class Database:
             """, (target_name, source_name))
             result["updated"]["articles"] = cursor.rowcount
 
-            # 5. Update site visits (assigned_to)
+            # 5. Update site visits (assigned_to) - handle multi-staff assignments
+            now = now_maldives()
+            # Exact match (single staff)
             cursor.execute("""
                 UPDATE site_visits SET assigned_to = ?, updated_at = ?
                 WHERE assigned_to = ?
-            """, (target_name, now_maldives(), source_name))
-            result["updated"]["site_visits"] = cursor.rowcount
+            """, (target_name, now, source_name))
+            sv_count = cursor.rowcount
+            # Multi-staff: replace source_name within comma-separated values
+            cursor.execute("""
+                SELECT id, assigned_to FROM site_visits
+                WHERE assigned_to LIKE ? OR assigned_to LIKE ? OR assigned_to LIKE ?
+            """, (f"{source_name}, %", f"%, {source_name}", f"%, {source_name}, %"))
+            for row in cursor.fetchall():
+                names = [n.strip() for n in row["assigned_to"].split(",")]
+                new_names = [target_name if n == source_name else n for n in names]
+                # Deduplicate (in case target already in the list)
+                seen = set()
+                deduped = [n for n in new_names if n not in seen and not seen.add(n)]
+                cursor.execute("UPDATE site_visits SET assigned_to = ?, updated_at = ? WHERE id = ?",
+                               (", ".join(deduped), now, row["id"]))
+                sv_count += 1
+            result["updated"]["site_visits"] = sv_count
 
             # 6. Handle staff performance daily - need to merge or delete
             # First check if target already has entries for same dates

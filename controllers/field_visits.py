@@ -68,7 +68,14 @@ async def get_field_visits_assigned_staff(db: Database = Depends(get_db)):
             WHERE assigned_to IS NOT NULL AND assigned_to != ''
             ORDER BY assigned_to
         """)
-        return {"staff": [row["assigned_to"] for row in cursor.fetchall()]}
+        # Split multi-staff assigned_to values into individual names
+        staff_set = set()
+        for row in cursor.fetchall():
+            for name in (row["assigned_to"] or "").split(","):
+                name = name.strip()
+                if name:
+                    staff_set.add(name)
+        return {"staff": sorted(staff_set)}
 
 
 @router.post("/sync")
