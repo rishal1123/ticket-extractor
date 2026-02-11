@@ -136,8 +136,52 @@
             gap: 0.5rem;
         }
         .notes-container {
-            max-height: 300px;
+            max-height: 500px;
             overflow-y: auto;
+        }
+        /* Article type color accents */
+        .article-phone { border-left: 3px solid var(--warning-color); }
+        .article-internal { border-left: 3px solid var(--secondary-color); }
+        .article-email { border-left: 3px solid #6c757d; }
+        .article-sitevisit { border-left: 3px solid var(--success-color); }
+        .article-body-content {
+            max-height: 250px;
+            overflow-y: auto;
+            line-height: 1.6;
+            font-size: 0.85rem;
+            padding: 0.5rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .article-subject {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.25rem;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .article-preview {
+            display: block;
+            font-size: 0.75rem;
+            color: #999;
+            font-weight: normal;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 400px;
+            margin-top: 2px;
+        }
+        .accordion-button .article-meta {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            flex: 1;
+        }
+        .accordion-button .article-time {
+            margin-left: auto;
+            white-space: nowrap;
         }
         .loading-overlay {
             position: fixed;

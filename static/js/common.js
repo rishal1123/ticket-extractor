@@ -206,24 +206,35 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                     <div class="section-title"><i class="bi bi-journal-text"></i> Znuny Articles (${znunyArticles.length})</div>
                     <div class="notes-container">
                         <div class="accordion" id="articlesAccordion">
-                            ${znunyArticles.map((a, idx) => `
-                                <div class="accordion-item">
+                            ${znunyArticles.map((a, idx) => {
+                                const isSiteVisit = (a.subject || '').toLowerCase().includes('site visit') || (a.subject || '').toLowerCase().includes('preventative maintenance');
+                                const articleClass = isSiteVisit ? 'article-sitevisit' : a.via === 'Phone' ? 'article-phone' : a.via === 'Internal' ? 'article-internal' : 'article-email';
+                                const isFirst = idx === 0;
+                                const preview = a.body ? a.body.replace(/\\n/g, ' ').substring(0, 80) : (a.subject || '');
+                                const authorLine = a.via === 'Phone' && a.sender && a.created_by && a.sender !== a.created_by
+                                    ? `${escapeHtml(a.created_by)} <span class="text-muted small">(caller: ${escapeHtml(a.sender)})</span>`
+                                    : escapeHtml(a.created_by || a.sender);
+                                return `
+                                <div class="accordion-item ${articleClass}">
                                     <h2 class="accordion-header">
-                                        <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#article${idx}">
-                                            <span class="badge bg-secondary me-2">#${a.article_number}</span>
-                                            <span class="badge bg-${a.via === 'Internal' ? 'info' : a.via === 'Phone' ? 'warning' : 'secondary'} me-2">${a.via}</span>
-                                            <strong class="me-2">${escapeHtml(a.created_by || a.sender)}</strong>
-                                            <small class="text-muted ms-auto">${a.created_at_str || '-'}</small>
+                                        <button class="accordion-button ${isFirst ? '' : 'collapsed'} py-2" type="button" data-bs-toggle="collapse" data-bs-target="#article${idx}">
+                                            <div class="article-meta">
+                                                <span class="badge bg-secondary">#${a.article_number}</span>
+                                                <span class="badge bg-${a.via === 'Internal' ? 'info' : a.via === 'Phone' ? 'warning' : isSiteVisit ? 'success' : 'secondary'}">${isSiteVisit ? 'Site Visit' : a.via}</span>
+                                                <strong>${authorLine}</strong>
+                                                <span class="article-preview">${escapeHtml(preview)}</span>
+                                            </div>
+                                            <small class="article-time text-muted">${a.created_at_str || '-'}</small>
                                         </button>
                                     </h2>
-                                    <div id="article${idx}" class="accordion-collapse collapse" data-bs-parent="#articlesAccordion">
+                                    <div id="article${idx}" class="accordion-collapse collapse ${isFirst ? 'show' : ''}" data-bs-parent="#articlesAccordion">
                                         <div class="accordion-body py-2">
-                                            <p class="mb-1 small"><strong>Subject:</strong> ${escapeHtml(a.subject)}</p>
-                                            ${a.body ? `<pre class="bg-light p-2 rounded mb-0 small" style="white-space: pre-wrap;">${escapeHtml(a.body)}</pre>` : '<p class="text-muted small mb-0"><em>No content - click Sync Znuny Data</em></p>'}
+                                            <div class="article-subject"><i class="bi bi-chat-square-text me-1"></i>${escapeHtml(a.subject)}</div>
+                                            ${a.body ? `<div class="article-body-content">${escapeHtml(a.body).replace(/\\n/g, '<br>')}</div>` : '<p class="text-muted small mb-0"><em>Body not fetched yet - click Sync Znuny Data to load</em></p>'}
                                         </div>
                                     </div>
-                                </div>
-                            `).join('')}
+                                </div>`;
+                            }).join('')}
                         </div>
                     </div>
                     ` : '<p class="text-muted small">No articles synced. Click "Sync Znuny Data" to fetch.</p>'}

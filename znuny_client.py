@@ -128,10 +128,13 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
         else:
             scheduled_time = time_match.group(1).strip()
 
-    # Assigned to - usually starts with @
-    assigned_match = re.search(r"Assigned to:\s*@?(.+?)(?:\n|$)", body, re.IGNORECASE)
+    # Assigned to - may have multiple staff: "@maah", "@aslan @ayan", "aslan  @ayan"
+    assigned_match = re.search(r"Assigned to:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
     if assigned_match:
-        assigned_to = assigned_match.group(1).strip()
+        raw = assigned_match.group(1).strip()
+        # Split on @ and whitespace to extract individual names, then rejoin with comma
+        names = [n.strip() for n in re.split(r'\s*@\s*', raw) if n.strip()]
+        assigned_to = ", ".join(names)
 
     # Get visit date from article creation date
     visit_date = ""
@@ -747,8 +750,8 @@ class ZnunyClient:
                             "subject": subject,
                             "created_str": (cells[6].text_content() or "").strip(),
                             "row": row,
-                            # Only need body for site visit articles or Phone articles (for address)
-                            "needs_body": "site visit" in subject.lower() or "preventative maintenance" in subject.lower() or via_text == "Phone"
+                            # Fetch body for all articles so they display in the modal
+                            "needs_body": True
                         })
                 except (IndexError, Exception):
                     continue
