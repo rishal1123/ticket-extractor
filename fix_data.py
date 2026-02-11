@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 
 # Database path (same logic as config.py)
 DB_PATH = os.getenv("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "data", "tickets.db"))
-if not os.path.exists(DB_PATH):
+if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) == 0:
     # Try legacy path
     DB_PATH = os.path.join(os.path.dirname(__file__), "tickets.db")
 
@@ -165,6 +165,50 @@ def check_stale_pending_visits(conn, dry_run=True):
     return len(rows)
 
 
+def backfill_site_visit_addresses(conn, dry_run=True):
+    """Backfill address and customer_name from Znuny article bodies."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT sv.id, sv.znuny_ticket_id, sv.article_id, za.body
+        FROM site_visits sv
+        JOIN znuny_articles za ON sv.znuny_ticket_id = za.znuny_ticket_id AND sv.article_id = za.article_number
+        WHERE (sv.address IS NULL OR sv.address = '')
+        AND za.body IS NOT NULL AND za.body != ''
+    """)
+    rows = cursor.fetchall()
+
+    if not rows:
+        print("  [OK] All site visits with articles already have address data")
+        return 0
+
+    fixed = 0
+    for row in rows:
+        body = row["body"]
+        address = ""
+        customer_name = ""
+
+        addr_match = re.search(r"Address:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+        if addr_match:
+            address = addr_match.group(1).strip()
+        name_match = re.search(r"Customer Name:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+        if name_match:
+            customer_name = name_match.group(1).strip()
+
+        if address or customer_name:
+            print(f"  FIX sv_id={row['id']} znuny={row['znuny_ticket_id']}: addr='{address}' name='{customer_name}'")
+            if not dry_run:
+                cursor.execute(
+                    "UPDATE site_visits SET address = ?, customer_name = ?, updated_at = ? WHERE id = ?",
+                    (address, customer_name, datetime.now(MVT).isoformat(), row["id"])
+                )
+            fixed += 1
+
+    if not dry_run and fixed:
+        conn.commit()
+
+    return fixed
+
+
 def show_stats(conn):
     """Show database statistics."""
     cursor = conn.cursor()
@@ -217,6 +261,7 @@ def main():
 
     checks = [
         ("Site visit assigned_to cleanup", fix_site_visit_assigned_to),
+        ("Site visit address backfill", backfill_site_visit_addresses),
         ("Empty article bodies", fix_empty_article_bodies),
         ("Orphan Znuny links", check_orphan_znuny_links),
         ("Duplicate site visits", check_duplicate_site_visits),

@@ -68,6 +68,8 @@ class SiteVisit:
     scheduled_time: str = ""  # HHMM or "now"
     assigned_to: str = ""
     visit_date: str = ""  # Date of the visit (from article date)
+    address: str = ""
+    customer_name: str = ""
 
 
 def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> SiteVisit | None:
@@ -128,6 +130,18 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
         else:
             scheduled_time = time_match.group(1).strip()
 
+    # Address
+    address = ""
+    address_match = re.search(r"Address:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+    if address_match:
+        address = address_match.group(1).strip()
+
+    # Customer Name
+    customer_name = ""
+    name_match = re.search(r"Customer Name:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
+    if name_match:
+        customer_name = name_match.group(1).strip()
+
     # Assigned to - may have multiple staff: "@maah", "@aslan @ayan", "aslan  @ayan"
     assigned_match = re.search(r"Assigned to:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
     if assigned_match:
@@ -149,7 +163,9 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
         service_provider=service_provider,
         scheduled_time=scheduled_time,
         assigned_to=assigned_to,
-        visit_date=visit_date
+        visit_date=visit_date,
+        address=address,
+        customer_name=customer_name
     )
 
 

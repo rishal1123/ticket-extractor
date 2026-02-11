@@ -315,6 +315,13 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+            # Migration: Add address and customer_name to site_visits
+            for col in ["address TEXT", "customer_name TEXT"]:
+                try:
+                    cursor.execute(f"ALTER TABLE site_visits ADD COLUMN {col}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
             # Znuny-only tickets table (tickets not linked to any ISP portal)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS znuny_tickets (
@@ -1536,7 +1543,8 @@ class Database:
     def upsert_site_visit(self, znuny_ticket_id: str, article_id: int, site_type: str,
                           service_provider: str, scheduled_time: str, assigned_to: str,
                           visit_date: str, article_created_at: datetime,
-                          ticket_id: int = None, znuny_url: str = None) -> int:
+                          ticket_id: int = None, znuny_url: str = None,
+                          address: str = None, customer_name: str = None) -> int:
         """Insert or update a site visit record."""
         now = now_maldives()
         with self._get_connection() as conn:
@@ -1544,8 +1552,9 @@ class Database:
             cursor.execute("""
                 INSERT INTO site_visits
                     (ticket_id, znuny_ticket_id, article_id, site_type, service_provider,
-                     scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     scheduled_time, assigned_to, visit_date, article_created_at, znuny_url,
+                     address, customer_name, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(znuny_ticket_id, article_id) DO UPDATE SET
                     site_type = excluded.site_type,
                     service_provider = excluded.service_provider,
@@ -1554,9 +1563,12 @@ class Database:
                     visit_date = excluded.visit_date,
                     article_created_at = excluded.article_created_at,
                     znuny_url = excluded.znuny_url,
+                    address = excluded.address,
+                    customer_name = excluded.customer_name,
                     updated_at = excluded.updated_at
             """, (ticket_id, znuny_ticket_id, article_id, site_type, service_provider,
-                  scheduled_time, assigned_to, visit_date, article_created_at, znuny_url, now, now))
+                  scheduled_time, assigned_to, visit_date, article_created_at, znuny_url,
+                  address, customer_name, now, now))
             return cursor.lastrowid
 
     def update_site_visit_completion(self, znuny_ticket_id: str, completed_at: datetime):
@@ -1714,7 +1726,9 @@ class Database:
                 "ticket_completed_at": row["ticket_completed_at"],
                 "time_taken_minutes": row["time_taken_minutes"],
                 "status": row["status"],
-                "znuny_url": row["znuny_url"]
+                "znuny_url": row["znuny_url"],
+                "address": row["address"],
+                "customer_name": row["customer_name"]
             } for row in cursor.fetchall()]
 
     def get_site_visits(self, date_from: str = None, date_to: str = None,
@@ -1725,7 +1739,7 @@ class Database:
             cursor = conn.cursor()
 
             query = """
-                SELECT sv.*, t.portal, t.address, t.customer_name, t.ticket_id as portal_ticket_id
+                SELECT sv.*, t.portal, t.address as ticket_address, t.customer_name as ticket_customer_name, t.ticket_id as portal_ticket_id
                 FROM site_visits sv
                 LEFT JOIN tickets t ON sv.ticket_id = t.id
                 WHERE 1=1
@@ -1747,7 +1761,7 @@ class Database:
                 params.append(status)
 
             # Get total count
-            count_query = query.replace("SELECT sv.*, t.portal, t.address, t.customer_name, t.ticket_id as portal_ticket_id", "SELECT COUNT(*)")
+            count_query = query.replace("SELECT sv.*, t.portal, t.address as ticket_address, t.customer_name as ticket_customer_name, t.ticket_id as portal_ticket_id", "SELECT COUNT(*)")
             cursor.execute(count_query, params)
             total = cursor.fetchone()[0]
 
@@ -1773,9 +1787,11 @@ class Database:
                     "time_taken_minutes": row["time_taken_minutes"],
                     "status": row["status"],
                     "znuny_url": row["znuny_url"],
-                    "portal": row["portal"],
                     "address": row["address"],
                     "customer_name": row["customer_name"],
+                    "portal": row["portal"],
+                    "ticket_address": row["ticket_address"],
+                    "ticket_customer_name": row["ticket_customer_name"],
                     "portal_ticket_id": row["portal_ticket_id"],
                     "created_at": row["created_at"]
                 })

@@ -268,6 +268,7 @@
                 <tr>
                     <th>Date</th>
                     <th>Time</th>
+                    <th>Address</th>
                     <th class="d-none d-sm-table-cell">Provider</th>
                     <th class="d-none d-md-table-cell">Site Type</th>
                     <th>Status</th>
@@ -276,7 +277,7 @@
                 </tr>
             </thead>
             <tbody id="siteVisitsTable">
-                <tr><td colspan="7" class="text-center text-muted py-3">Loading...</td></tr>
+                <tr><td colspan="8" class="text-center text-muted py-3">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -629,7 +630,7 @@ async function loadSiteVisits() {
 
         const tbody = document.getElementById('siteVisitsTable');
         if (visits.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No site visits found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No site visits found</td></tr>';
             return;
         }
 
@@ -647,6 +648,7 @@ async function loadSiteVisits() {
                 <tr>
                     <td>${v.visit_date || '-'}</td>
                     <td>${v.scheduled_time || '-'}</td>
+                    <td><small>${v.address ? escapeHtml(v.address) : '--'}${v.customer_name ? `<br><span class="text-muted">${escapeHtml(v.customer_name)}</span>` : ''}</small></td>
                     <td class="d-none d-sm-table-cell">${v.service_provider || '-'}</td>
                     <td class="d-none d-md-table-cell">${v.site_type || '-'}</td>
                     <td>${statusBadge}</td>
@@ -658,7 +660,7 @@ async function loadSiteVisits() {
     } catch (error) {
         console.error('Error loading site visits:', error);
         document.getElementById('siteVisitsTable').innerHTML =
-            '<tr><td colspan="7" class="text-center text-muted py-3">Error loading site visits</td></tr>';
+            '<tr><td colspan="8" class="text-center text-muted py-3">Error loading site visits</td></tr>';
     }
 }
 {% endblock %}

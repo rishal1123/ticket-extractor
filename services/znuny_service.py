@@ -117,7 +117,9 @@ class ZnunyService:
                         visit_date=site_visit.visit_date,
                         article_created_at=site_visit.article_created_at,
                         ticket_id=ticket_id,
-                        znuny_url=details.znuny_url
+                        znuny_url=details.znuny_url,
+                        address=site_visit.address,
+                        customer_name=site_visit.customer_name
                     )
                     site_visits_found += 1
                     logger.info(f"Found site visit in ticket {ticket.znuny_ticket_id}: {site_visit.assigned_to} at {site_visit.scheduled_time}")
@@ -382,7 +384,9 @@ class ZnunyService:
                                         visit_date=site_visit.visit_date,
                                         article_created_at=site_visit.article_created_at,
                                         ticket_id=ticket.id,
-                                        znuny_url=details.znuny_url
+                                        znuny_url=details.znuny_url,
+                                        address=site_visit.address,
+                                        customer_name=site_visit.customer_name
                                     )
                                     results["site_visits_extracted"] += 1
                             # Also store in znuny_tickets table
@@ -577,7 +581,9 @@ class ZnunyService:
                                 visit_date=site_visit.visit_date,
                                 article_created_at=site_visit.article_created_at,
                                 ticket_id=isp_ticket.id if isp_ticket else None,
-                                znuny_url=details.znuny_url
+                                znuny_url=details.znuny_url,
+                                address=site_visit.address,
+                                customer_name=site_visit.customer_name
                             )
                             results["site_visits_extracted"] += 1
 

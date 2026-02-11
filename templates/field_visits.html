@@ -133,6 +133,7 @@
                     <tr>
                         <th>Date</th>
                         <th>Time</th>
+                        <th>Address</th>
                         <th>Assigned</th>
                         <th class="d-none d-md-table-cell">Provider</th>
                         <th class="d-none d-lg-table-cell">Type</th>
@@ -140,7 +141,7 @@
                     </tr>
                 </thead>
                 <tbody id="pendingTableBody">
-                    <tr><td colspan="6" class="text-center text-muted py-3">Loading...</td></tr>
+                    <tr><td colspan="7" class="text-center text-muted py-3">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -224,6 +225,7 @@
                     <tr>
                         <th>Date</th>
                         <th>Time</th>
+                        <th>Address</th>
                         <th>Assigned</th>
                         <th class="d-none d-md-table-cell">Provider</th>
                         <th class="d-none d-lg-table-cell">Site Type</th>
@@ -332,7 +334,7 @@ async function loadPendingVisits() {
         const tbody = document.getElementById('pendingTableBody');
 
         if (!data.visits || data.visits.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No pending visits</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No pending visits</td></tr>';
             return;
         }
 
@@ -342,6 +344,7 @@ async function loadPendingVisits() {
                 <tr>
                     <td>${v.visit_date || '--'}</td>
                     <td><span class="time-badge">${v.scheduled_time || '--'}</span></td>
+                    <td><small>${v.address ? escapeHtml(v.address) : '--'}${v.customer_name ? `<br><span class="text-muted">${escapeHtml(v.customer_name)}</span>` : ''}</small></td>
                     <td><strong>${v.assigned_to || '--'}</strong></td>
                     <td class="d-none d-md-table-cell">
                         ${v.service_provider ? `<span class="provider-badge ${providerClass}">${v.service_provider}</span>` : '--'}
@@ -359,7 +362,7 @@ async function loadPendingVisits() {
     } catch (error) {
         console.error('Error loading pending visits:', error);
         document.getElementById('pendingTableBody').innerHTML =
-            '<tr><td colspan="6" class="text-center text-danger py-3">Error loading pending visits</td></tr>';
+            '<tr><td colspan="7" class="text-center text-danger py-3">Error loading pending visits</td></tr>';
     }
 }
 
@@ -493,7 +496,7 @@ async function loadVisits() {
 
         const tbody = document.getElementById('visitsTableBody');
         if (data.visits.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No visits found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">No visits found</td></tr>';
             document.getElementById('pagination').innerHTML = '';
             return;
         }
@@ -507,6 +510,7 @@ async function loadVisits() {
                 <tr>
                     <td>${v.visit_date || '--'}</td>
                     <td><span class="time-badge">${v.scheduled_time || '--'}</span></td>
+                    <td><small>${v.address ? escapeHtml(v.address) : '--'}${v.customer_name ? `<br><span class="text-muted">${escapeHtml(v.customer_name)}</span>` : ''}</small></td>
                     <td><strong>${v.assigned_to || '--'}</strong></td>
                     <td class="d-none d-md-table-cell">
                         ${v.service_provider ? `<span class="provider-badge ${providerClass}">${v.service_provider}</span>` : '--'}

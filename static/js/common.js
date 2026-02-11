@@ -254,6 +254,7 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                                 <tr>
                                     <th>Date</th>
                                     <th>Time</th>
+                                    <th>Address</th>
                                     <th>Assigned To</th>
                                     <th class="d-none d-sm-table-cell">Type</th>
                                     <th>Status</th>
@@ -265,6 +266,7 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                                     <tr>
                                         <td>${v.visit_date || '-'}</td>
                                         <td><code>${v.scheduled_time || '-'}</code></td>
+                                        <td>${v.address ? `<small>${escapeHtml(v.address)}</small>${v.customer_name ? `<br><small class="text-muted">${escapeHtml(v.customer_name)}</small>` : ''}` : '-'}</td>
                                         <td><strong>${v.assigned_to || '-'}</strong></td>
                                         <td class="d-none d-sm-table-cell">${v.site_type || '-'}</td>
                                         <td>
