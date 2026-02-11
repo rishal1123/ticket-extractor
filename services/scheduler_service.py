@@ -38,8 +38,22 @@ class SchedulerService:
         """Check if scheduler is running."""
         return self._running and self._thread is not None and self._thread.is_alive()
 
+    def _has_db_credentials(self) -> bool:
+        """Check if portal credentials exist in the database."""
+        db = Database()
+        config = db.get_config_settings()
+        # Check if at least one portal has URL + username configured
+        for portal in ("DHIRAAGU", "OOREDOO", "ROL", "MEDIANET"):
+            if config.get(f"{portal}_URL") and config.get(f"{portal}_USERNAME"):
+                return True
+        return False
+
     def run_portal_extraction(self) -> list[dict]:
         """Run extraction for all configured portals."""
+        if not self._has_db_credentials():
+            logger.warning("No portal credentials in database - skipping extraction. Upload .env via Admin > Config.")
+            return []
+
         logger.info("Starting scheduled portal extraction")
         db = Database()
         db.log_system("info", "scheduler", "Portal extraction started")
@@ -91,6 +105,10 @@ class SchedulerService:
 
     def run_znuny_sync(self) -> dict:
         """Run unified Znuny sync: ISP check + site visits + articles in one pass."""
+        if not self._has_db_credentials():
+            logger.warning("No credentials in database - skipping Znuny sync. Upload .env via Admin > Config.")
+            return {}
+
         logger.info("Starting unified Znuny sync")
         db = Database()
         db.log_system("info", "znuny", "Znuny sync started")

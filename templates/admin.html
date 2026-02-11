@@ -1384,8 +1384,8 @@ async function uploadEnvFile(input) {
 
 async function loadConfig() {
     try {
-        // Load portal configs
-        const response = await fetch('/api/config');
+        // Load portal configs (unmasked - password inputs hide them visually)
+        const response = await fetch('/api/config/raw');
         const data = await response.json();
 
         if (data.config) {
