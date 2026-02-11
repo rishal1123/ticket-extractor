@@ -103,8 +103,12 @@ class MedianetExtractor(BaseExtractor):
                 self.logger.warning(f"is_logged_in: Navigation failed: {nav_err}")
                 return False
 
-            # Wait for page to settle (SPA routing)
-            time.sleep(5)
+            # Wait for page JS to finish (SPA routing/redirect)
+            try:
+                self.browser.page.wait_for_load_state("networkidle", timeout=30000)
+            except Exception:
+                pass
+            time.sleep(2)
 
             # Check current URL after navigation
             current_url = self.browser.page.url
@@ -142,17 +146,28 @@ class MedianetExtractor(BaseExtractor):
         self.logger.info(f"Logging into Medianet portal: {self.LOGIN_URL}")
 
         try:
-            # Navigate to login page directly (lighter than the board SPA)
-            self._goto_spa(self.LOGIN_URL)
-            time.sleep(3)
-
             current_url = self.browser.page.url
-            self.logger.info(f"login: Current URL after navigation: {current_url}")
+
+            # Only navigate if not already on the login page
+            # (is_logged_in() already navigated there, re-navigating causes
+            # a page reload where wait_until="commit" returns before React renders)
+            if "/account/login" not in current_url:
+                self._goto_spa(self.LOGIN_URL)
+                time.sleep(3)
+                current_url = self.browser.page.url
+
+            self.logger.info(f"login: Current URL: {current_url}")
 
             # Check if redirected away from login (already logged in)
             if "/account/login" not in current_url:
                 self.logger.info("login: Session already active (not on login page) - reusing session")
                 return True
+
+            # Wait for page JS to finish executing (React form needs to render)
+            try:
+                self.browser.page.wait_for_load_state("networkidle", timeout=30000)
+            except Exception:
+                self.logger.info("login: networkidle wait timed out, proceeding anyway")
 
             # Wait for the login form to render
             self.logger.info("Step 1: Waiting for email field")
