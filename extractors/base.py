@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Optional
+import os
 import time
 import psutil
 
@@ -12,7 +13,10 @@ from utils.browser import BrowserManager
 from utils.logger import get_logger
 
 # Memory threshold in MB - reset browser if Chromium exceeds this
-BROWSER_MEMORY_LIMIT_MB = 500
+# Playwright Chromium typically uses 300-600 MB per browser; SPA-heavy portals (Medianet) can reach 600+
+BROWSER_MEMORY_LIMIT_MB = 800
+# Directory for persistent browser sessions
+SESSIONS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "browser_sessions")
 
 
 class BaseExtractor(ABC):
@@ -62,17 +66,16 @@ class BaseExtractor(ABC):
         """Ensure we are logged in, re-login if session expired."""
         if self.is_logged_in():
             self.logger.info("Session still active, skipping login")
-            # Log session reuse
             self.db.log_login_event(self.config.name, "session_reused")
             return True
         self.logger.info("Session expired or not logged in, logging in...")
-        # Log login attempt
         self.db.log_login_event(self.config.name, "login_attempt")
         success = self.login()
         if success:
             self.db.log_login_event(self.config.name, "login_success")
         else:
             self.db.log_login_event(self.config.name, "login_failed", success=False)
+            self.db.log_system("error", f"extractor.{self.config.name}", "Login failed")
         return success
 
     def _get_browser_memory_mb(self, browser: BrowserManager) -> float:
@@ -102,6 +105,10 @@ class BaseExtractor(ABC):
         self.logger.info(f"[{portal}] Browser memory: {mem_mb:.0f} MB (limit: {BROWSER_MEMORY_LIMIT_MB} MB)")
         if mem_mb > BROWSER_MEMORY_LIMIT_MB:
             self.logger.warning(f"[{portal}] Memory {mem_mb:.0f} MB exceeds {BROWSER_MEMORY_LIMIT_MB} MB - resetting browser")
+            self.db.log_system(
+                "warning", f"extractor.{portal}",
+                f"Browser memory {mem_mb:.0f} MB exceeds {BROWSER_MEMORY_LIMIT_MB} MB limit - resetting"
+            )
             try:
                 browser.stop()
             except Exception:
@@ -110,8 +117,17 @@ class BaseExtractor(ABC):
             return None
         return browser
 
+    def _get_session_dir(self) -> str:
+        """Get persistent session directory for this portal."""
+        session_dir = os.path.join(SESSIONS_DIR, self.config.name.lower())
+        os.makedirs(session_dir, exist_ok=True)
+        return session_dir
+
     def _get_or_create_browser(self) -> BrowserManager:
-        """Get or create a dedicated browser for this portal."""
+        """Get or create a dedicated browser for this portal.
+
+        Uses Playwright persistent context so login sessions survive browser resets.
+        """
         portal = self.config.name
         existing = BaseExtractor._portal_browsers.get(portal)
 
@@ -122,9 +138,11 @@ class BaseExtractor(ABC):
                 if checked is not None:
                     self.logger.info(f"[{portal}] Reusing dedicated browser")
                     return checked
-                # Memory too high, fall through to create new one
+                # Memory too high - session data persists on disk, safe to recreate
+                self.logger.info(f"[{portal}] Memory limit exceeded, recreating (session persisted)")
             else:
-                self.logger.info(f"[{portal}] Browser died, creating new one")
+                self.logger.info(f"[{portal}] Browser died, recreating (session persisted)")
+                self.db.log_system("warning", f"extractor.{portal}", "Browser died, recreating with persisted session")
                 try:
                     existing.stop()
                 except Exception:
@@ -132,9 +150,10 @@ class BaseExtractor(ABC):
                 BaseExtractor._portal_browsers.pop(portal, None)
 
         browser = BrowserManager(headless=self.headless)
-        browser.start()
+        session_dir = self._get_session_dir()
+        browser.start(user_data_dir=session_dir)
         BaseExtractor._portal_browsers[portal] = browser
-        self.logger.info(f"[{portal}] Created dedicated browser")
+        self.logger.info(f"[{portal}] Created persistent browser (session dir: {session_dir})")
         return browser
 
     def run(self, max_retries: int = 3, keep_session: bool = True) -> dict:
@@ -245,6 +264,10 @@ class BaseExtractor(ABC):
             except Exception as e:
                 self.logger.error(f"Extraction failed: {e}")
                 result["error"] = str(e)
+                self.db.log_system(
+                    "error", f"extractor.{self.config.name}",
+                    f"Extraction attempt {attempt + 1}/{max_retries} failed: {e}"
+                )
                 # Kill this portal's browser on error so next attempt starts fresh
                 portal = self.config.name
                 existing = BaseExtractor._portal_browsers.get(portal)

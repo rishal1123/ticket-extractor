@@ -175,6 +175,7 @@ class ZnunyService:
                     results["not_found"] += 1
             except Exception as e:
                 logger.error(f"Error checking ticket {ticket.id}: {e}")
+                self.db.log_system("error", "znuny", f"Error checking ticket {ticket.ticket_id} in Znuny: {e}")
                 results["errors"] += 1
 
         logger.info(f"ISP ticket check complete: {results['found']}/{results['checked']} found in Znuny")
@@ -607,7 +608,9 @@ class ZnunyService:
                         results["site_visits_completed"] += completed
 
                 except Exception as e:
-                    logger.error(f"Error processing Znuny ticket {ticket_info.get('ticket_number', '?')}: {e}")
+                    ticket_num = ticket_info.get('ticket_number', '?')
+                    logger.error(f"Error processing Znuny ticket {ticket_num}: {e}")
+                    self.db.log_system("error", "znuny", f"Error processing ticket {ticket_num}: {e}")
                     results["errors"] += 1
 
             # Step 3: Mark znuny_tickets as closed if no longer in open list
@@ -617,6 +620,7 @@ class ZnunyService:
 
         except Exception as e:
             logger.error(f"Error in comprehensive site visit sync: {e}")
+            self.db.log_system("error", "znuny", f"Znuny sync error: {e}")
             results["errors"] += 1
 
         logger.info(f"Site visit sync complete: {results}")

@@ -42,6 +42,9 @@ env/
 *.swo
 *~
 
+# Browser session data (Playwright persistent contexts)
+data/browser_sessions/
+
 # Screenshots
 screenshots/
 

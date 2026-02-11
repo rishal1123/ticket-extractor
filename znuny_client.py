@@ -4,6 +4,7 @@ Searches tickets by subject/title using *ticketid* pattern.
 Fetches ticket details including creator, creation time, and article history.
 """
 
+import os
 import time
 import re
 from datetime import datetime, timezone, timedelta
@@ -17,6 +18,9 @@ from playwright.sync_api import Error as PlaywrightError
 
 from config import Config
 from utils.logger import get_logger
+
+# Session directory for persistent Znuny browser
+ZNUNY_SESSION_DIR = os.path.join(os.path.dirname(__file__), "data", "browser_sessions", "znuny")
 
 logger = get_logger("znuny")
 
@@ -168,8 +172,7 @@ class ZnunyClient:
 
     # Class-level state (persists across instances for session reuse)
     _shared_playwright = None
-    _shared_browser = None
-    _shared_context = None
+    _shared_context = None  # Persistent context (acts as both browser + context)
     _shared_page = None
     _shared_logged_in = False
     _shared_last_login_check = 0  # Timestamp of last successful login verification
@@ -233,7 +236,7 @@ class ZnunyClient:
         ZnunyClient._shared_details_cache = value
 
     def _setup_browser(self):
-        """Setup Playwright browser with options, reusing existing session if available."""
+        """Setup Playwright browser with persistent context, reusing existing session if available."""
         if self.page:
             # Check if browser is still alive
             try:
@@ -241,34 +244,44 @@ class ZnunyClient:
                 logger.info("Reusing existing Znuny browser session")
                 return
             except Exception:
-                logger.info("Znuny browser session died, creating new one")
-                # Try to close the dead browser to avoid orphaned processes
+                logger.info("Znuny browser session died, recreating (session persisted)")
                 self._close_browser_resources()
                 self._logged_in = False
 
+        os.makedirs(ZNUNY_SESSION_DIR, exist_ok=True)
         ZnunyClient._shared_playwright = sync_playwright().start()
-        ZnunyClient._shared_browser = ZnunyClient._shared_playwright.chromium.launch(
+        ZnunyClient._shared_context = ZnunyClient._shared_playwright.chromium.launch_persistent_context(
+            ZNUNY_SESSION_DIR,
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-        )
-        ZnunyClient._shared_context = ZnunyClient._shared_browser.new_context(
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             viewport={"width": 1920, "height": 1080},
             ignore_https_errors=True  # CRITICAL: Znuny uses self-signed cert
         )
-        ZnunyClient._shared_page = ZnunyClient._shared_context.new_page()
+        # Persistent context may already have a page
+        if ZnunyClient._shared_context.pages:
+            ZnunyClient._shared_page = ZnunyClient._shared_context.pages[0]
+        else:
+            ZnunyClient._shared_page = ZnunyClient._shared_context.new_page()
         ZnunyClient._shared_page.set_default_timeout(10000)
-        logger.info("Znuny browser started (new session)")
+        logger.info(f"Znuny persistent browser started (session dir: {ZNUNY_SESSION_DIR})")
 
     def _close_browser_resources(self):
-        """Close all Playwright browser resources safely."""
-        for attr in ("_shared_page", "_shared_context", "_shared_browser"):
-            obj = getattr(ZnunyClient, attr, None)
-            if obj:
-                try:
-                    obj.close()
-                except Exception:
-                    pass
-                setattr(ZnunyClient, attr, None)
+        """Close Playwright persistent context and driver safely."""
+        # Close page first, then context (which closes browser internally)
+        page = ZnunyClient._shared_page
+        if page:
+            try:
+                page.close()
+            except Exception:
+                pass
+            ZnunyClient._shared_page = None
+        ctx = ZnunyClient._shared_context
+        if ctx:
+            try:
+                ctx.close()  # Saves session data and closes browser
+            except Exception:
+                pass
+            ZnunyClient._shared_context = None
         pw = ZnunyClient._shared_playwright
         if pw:
             try:
@@ -869,14 +882,20 @@ class ZnunyClient:
     @classmethod
     def force_close(cls):
         """Force close the shared browser session."""
-        for attr in ("_shared_page", "_shared_context", "_shared_browser"):
-            obj = getattr(cls, attr, None)
-            if obj:
-                try:
-                    obj.close()
-                except Exception:
-                    pass
-                setattr(cls, attr, None)
+        page = cls._shared_page
+        if page:
+            try:
+                page.close()
+            except Exception:
+                pass
+            cls._shared_page = None
+        ctx = cls._shared_context
+        if ctx:
+            try:
+                ctx.close()  # Saves session data and closes browser
+            except Exception:
+                pass
+            cls._shared_context = None
         pw = cls._shared_playwright
         if pw:
             try:

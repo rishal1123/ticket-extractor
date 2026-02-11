@@ -1,11 +1,28 @@
 import threading
 
+import psutil
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, Playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from .logger import get_logger
 
 logger = get_logger("browser")
+
+# Shared Chromium launch args
+CHROMIUM_ARGS = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-translate",
+    "--disable-component-update",
+    "--no-first-run",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+]
 
 
 class BrowserManager:
@@ -20,7 +37,7 @@ class BrowserManager:
         self._context: BrowserContext | None = None
         self.page: Page | None = None
         self._browser_pid: int | None = None
-        self._owns_playwright = False  # Whether this instance created the playwright
+        self._is_persistent = False
 
     @classmethod
     def _get_thread_playwright(cls) -> Playwright:
@@ -36,53 +53,87 @@ class BrowserManager:
         """Backward compatibility - returns the page object."""
         return self.page
 
-    def start(self, ignore_https_errors: bool = False) -> Page:
-        logger.info(f"Starting browser (headless={self.headless})")
-
-        self._playwright = self._get_thread_playwright()
-        self._browser = self._playwright.chromium.launch(
-            headless=self.headless,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-extensions",
-                "--disable-background-networking",
-                "--disable-sync",
-                "--disable-translate",
-                "--disable-component-update",
-                "--no-first-run",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-                "--disable-background-timer-throttling",
-            ]
-        )
-
-        # Capture browser PID for memory tracking
+    def _snapshot_driver_children(self) -> tuple[int | None, set[int]]:
+        """Get driver PID and current child PIDs for Chromium PID detection."""
         try:
-            self._browser_pid = self._browser._impl_obj._connection._transport._proc.pid
+            driver_pid = self._playwright._impl_obj._connection._transport._proc.pid
+            children = {c.pid for c in psutil.Process(driver_pid).children(recursive=False)}
+            return driver_pid, children
         except Exception:
-            self._browser_pid = None
+            return None, set()
 
-        self._context = self._browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            ignore_https_errors=ignore_https_errors,
-        )
-        self.page = self._context.new_page()
+    def _detect_browser_pid(self, driver_pid: int | None, before_children: set[int]):
+        """Find the new Chromium process PID spawned after launch."""
+        self._browser_pid = None
+        if not driver_pid:
+            return
+        try:
+            after_children = {c.pid for c in psutil.Process(driver_pid).children(recursive=False)}
+            new_pids = after_children - before_children
+            if new_pids:
+                self._browser_pid = new_pids.pop()
+                logger.debug(f"Chromium browser PID: {self._browser_pid}")
+        except Exception:
+            pass
+
+    def start(self, ignore_https_errors: bool = False, user_data_dir: str = None) -> Page:
+        """Start browser. If user_data_dir is given, uses persistent context for session reuse."""
+        self._playwright = self._get_thread_playwright()
+        driver_pid, before_children = self._snapshot_driver_children()
+
+        if user_data_dir:
+            # Persistent context - cookies/localStorage/sessionStorage saved to disk
+            logger.info(f"Starting persistent browser (headless={self.headless}, dir={user_data_dir})")
+            self._is_persistent = True
+            self._context = self._playwright.chromium.launch_persistent_context(
+                user_data_dir,
+                headless=self.headless,
+                args=CHROMIUM_ARGS,
+                viewport={"width": 1920, "height": 1080},
+                ignore_https_errors=ignore_https_errors,
+            )
+            self._browser = None  # No separate Browser object with persistent context
+            # Persistent context may already have a page open
+            self.page = self._context.pages[0] if self._context.pages else self._context.new_page()
+        else:
+            # Regular context (for ZnunyClient or non-persistent use)
+            logger.info(f"Starting browser (headless={self.headless})")
+            self._is_persistent = False
+            self._browser = self._playwright.chromium.launch(
+                headless=self.headless,
+                args=CHROMIUM_ARGS,
+            )
+            self._context = self._browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                ignore_https_errors=ignore_https_errors,
+            )
+            self.page = self._context.new_page()
+
+        # Detect actual Chromium PID (not the shared Playwright driver PID)
+        self._detect_browser_pid(driver_pid, before_children)
+
         self.page.set_default_timeout(10000)
         logger.info("Browser started successfully")
         return self.page
 
     def stop(self):
         logger.info("Stopping browser")
-        # Close page, context, and browser - but NOT playwright (shared per thread)
-        for obj, name in [(self.page, "page"), (self._context, "context"),
-                          (self._browser, "browser")]:
-            if obj:
+        if self._is_persistent:
+            # Persistent context: closing it saves session data and kills browser
+            if self._context:
                 try:
-                    obj.close()
+                    self._context.close()
                 except Exception as e:
-                    logger.warning(f"Error closing {name}: {e}")
+                    logger.warning(f"Error closing persistent context: {e}")
+        else:
+            # Regular: close page → context → browser
+            for obj, name in [(self.page, "page"), (self._context, "context"),
+                              (self._browser, "browser")]:
+                if obj:
+                    try:
+                        obj.close()
+                    except Exception as e:
+                        logger.warning(f"Error closing {name}: {e}")
         self.page = None
         self._context = None
         self._browser = None
