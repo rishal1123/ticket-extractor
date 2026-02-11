@@ -17,10 +17,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import WebDriverException, NoSuchElementException, StaleElementReferenceException
-from webdriver_manager.chrome import ChromeDriverManager
 
 from config import Config
 from utils.logger import get_logger
@@ -263,8 +261,7 @@ class ZnunyClient:
         options.add_argument("--ignore-certificate-errors")
         options.add_argument("--ignore-ssl-errors")
 
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=options)
+        self.driver = webdriver.Chrome(options=options)
         self.driver.implicitly_wait(10)
         logger.info("Znuny browser started (new session)")
 
