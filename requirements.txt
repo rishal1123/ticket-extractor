@@ -1,5 +1,5 @@
 # Core dependencies
-playwright==1.49.1
+playwright==1.58.0
 python-dotenv==1.0.1
 schedule==1.2.1
 psutil==5.9.8
