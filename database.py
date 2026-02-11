@@ -2036,6 +2036,27 @@ class Database:
         self.set_setting("perf_threshold_bad", str(bad))
         self.set_setting("perf_threshold_critical", str(critical))
 
+    # ==================== Portal Config (DB-stored) ====================
+
+    def get_config_settings(self) -> dict:
+        """Get all portal/app config settings (cfg_* keys) as a flat dict."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT key, value FROM app_settings WHERE key LIKE 'cfg_%'")
+            return {row["key"].replace("cfg_", "", 1): row["value"] for row in cursor.fetchall()}
+
+    def set_config_settings(self, config: dict):
+        """Bulk upsert portal/app config settings."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for key, value in config.items():
+                db_key = f"cfg_{key}" if not key.startswith("cfg_") else key
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """, (db_key, value, now_maldives()))
+
     # ==================== Znuny-Only Tickets ====================
 
     def is_ticket_linked_to_isp(self, znuny_ticket_id: str) -> bool:

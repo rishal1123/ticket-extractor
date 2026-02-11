@@ -34,9 +34,5 @@ EXPOSE 8000
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Copy .env.example as seed for first run (entrypoint copies to data vol if needed)
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Run the application
 CMD ["python", "app.py"]

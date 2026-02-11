@@ -11,7 +11,6 @@ services:
       - DASHBOARD_PORT=8000
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/tickets.db
-      - ENV_FILE_PATH=/app/data/.env
     restart: unless-stopped
     shm_size: '2gb'
     healthcheck:

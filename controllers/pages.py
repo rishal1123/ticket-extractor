@@ -19,12 +19,7 @@ templates.env.globals["app_version"] = APP_VERSION
 
 def _get_portal_urls():
     """Get portal URLs from config."""
-    return {
-        "dhiraagu": Config.DHIRAAGU.url,
-        "ooredoo": Config.OOREDOO.url,
-        "rol": Config.ROL.url,
-        "medianet": Config.MEDIANET.url
-    }
+    return Config.get_portal_urls()
 
 
 @router.get("/", response_class=HTMLResponse)

@@ -183,8 +183,8 @@ class ZnunyClient:
     _shared_details_cache = {}  # {ticket_number: (ZnunyTicketDetails, timestamp)}
 
     def __init__(self):
-        self.username = Config.ZNUNY_USERNAME
-        self.password = Config.ZNUNY_PASSWORD
+        self.username = Config.get_znuny_username()
+        self.password = Config.get_znuny_password()
 
     @property
     def driver(self):

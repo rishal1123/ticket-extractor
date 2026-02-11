@@ -51,8 +51,8 @@ async def get_scheduler_status():
         logger.error(f"Error getting scheduler status: {e}")
         return JSONResponse(content={
             "running": False,
-            "extraction_interval_minutes": Config.EXTRACTION_INTERVAL_MINUTES,
-            "znuny_sync_interval_minutes": Config.ZNUNY_SYNC_INTERVAL_MINUTES,
+            "extraction_interval_minutes": Config.get_extraction_interval(),
+            "znuny_sync_interval_minutes": Config.get_znuny_sync_interval(),
             "jobs_count": 0,
             "next_run": None,
             "error": str(e)

@@ -28,8 +28,8 @@ class SchedulerService:
     def __init__(self):
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._extraction_interval = Config.EXTRACTION_INTERVAL_MINUTES
-        self._znuny_sync_interval = Config.ZNUNY_SYNC_INTERVAL_MINUTES
+        self._extraction_interval = Config.get_extraction_interval()
+        self._znuny_sync_interval = Config.get_znuny_sync_interval()
         self._znuny_sync_lock = threading.Lock()
         self._extraction_lock = threading.Lock()
 

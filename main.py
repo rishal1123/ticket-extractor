@@ -84,7 +84,7 @@ def run_scheduler():
     """Run the extraction scheduler."""
     global running
 
-    interval = Config.EXTRACTION_INTERVAL_MINUTES
+    interval = Config.get_extraction_interval()
     logger.info(f"Starting scheduler with {interval} minute interval")
 
     # Run immediately on start
