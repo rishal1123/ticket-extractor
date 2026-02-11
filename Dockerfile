@@ -9,12 +9,14 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright Chromium with system dependencies + curl for healthcheck
-# Combined into single RUN to share apt cache
-RUN apt-get update && \
+# Install Playwright system dependencies for Chromium + curl for healthcheck
+# Uses install-deps (apt packages) separately from browser download for reliability
+RUN playwright install-deps chromium && \
     apt-get install -y --no-install-recommends curl && \
-    playwright install --with-deps chromium && \
     rm -rf /var/lib/apt/lists/*
+
+# Download Playwright Chromium browser binary (no apt needed)
+RUN playwright install chromium
 
 # Copy application code
 COPY . .
