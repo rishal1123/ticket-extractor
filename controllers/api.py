@@ -17,6 +17,7 @@ from services import StatsService, ZnunyService, ConfigService
 from config import Config, APP_VERSION
 from utils.logger import get_logger
 from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams
+import threading
 
 # API Router with OpenAPI tags
 router = APIRouter(
@@ -530,6 +531,23 @@ async def get_config_raw():
     return JSONResponse(content={"config": config})
 
 
+def _restart_extractions():
+    """Restart extraction and Znuny sync in background after config change."""
+    from services.scheduler_service import get_scheduler
+    try:
+        scheduler = get_scheduler()
+        logger.info("Config changed - restarting extractions with new credentials")
+
+        def run_async():
+            scheduler.run_portal_extraction()
+            scheduler.run_znuny_sync()
+
+        thread = threading.Thread(target=run_async, daemon=True)
+        thread.start()
+    except Exception as e:
+        logger.error(f"Error restarting extractions after config change: {e}")
+
+
 @router.post("/config")
 @handle_errors("update config")
 async def update_config(request: Request):
@@ -537,6 +555,8 @@ async def update_config(request: Request):
     data = await request.json()
     service = get_config_service()
     result = service.update_config(data.get('config', {}))
+    if result.get("success"):
+        _restart_extractions()
     return JSONResponse(content=result)
 
 
@@ -561,6 +581,8 @@ async def upload_env_file(file: UploadFile = File(...)):
     service = get_config_service()
     result = service.update_config(new_config)
     result["keys_count"] = len(new_config)
+    if result.get("success"):
+        _restart_extractions()
     return JSONResponse(content=result)
 
 
