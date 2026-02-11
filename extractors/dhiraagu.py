@@ -1,5 +1,4 @@
 import time
-from selenium.webdriver.common.by import By
 
 from .base import BaseExtractor
 from models.ticket import Ticket
@@ -13,7 +12,7 @@ class DhiraaguExtractor(BaseExtractor):
     # ============================================================
 
     # Pre-login selector (click Third Party button to show login form)
-    THIRDPARTY_BUTTON_XPATH = "//button[.//span[contains(text(), 'Third Party')]]"
+    THIRDPARTY_BUTTON_XPATH = "xpath=//button[.//span[contains(text(), 'Third Party')]]"
 
     # Login page selectors
     LOGIN_USERNAME_SELECTOR = "#email"
@@ -28,7 +27,7 @@ class DhiraaguExtractor(BaseExtractor):
     TABLE_ROW_SELECTOR = "table.filament-tables-table tbody tr"
 
     # Pagination - Filament uses wire:click for pagination
-    NEXT_PAGE_XPATH = "//button[contains(@wire:click, 'nextPage')]"
+    NEXT_PAGE_XPATH = "xpath=//button[contains(@wire:click, 'nextPage')]"
 
     # Notes section selectors (on detail page)
     NOTES_CONTAINER_SELECTOR = ".filament-forms-rich-editor-component, .prose, [wire\\:model*='notes'], .filament-infolists-component-container"
@@ -55,18 +54,18 @@ class DhiraaguExtractor(BaseExtractor):
             time.sleep(2)
 
             # If we're redirected to login page or see login form, we're not logged in
-            current_url = self.browser.driver.current_url
+            current_url = self.browser.page.url
             if "login" in current_url:
                 return False
 
             # Check for table (means we're logged in and on orders page)
-            tables = self.browser.driver.find_elements(By.CSS_SELECTOR, self.TABLE_SELECTOR)
+            tables = self.browser.page.query_selector_all(self.TABLE_SELECTOR)
             if tables:
                 self.logger.info("Session is active - found orders table")
                 return True
 
             # Check for user menu (another sign of being logged in)
-            user_menu = self.browser.driver.find_elements(By.CSS_SELECTOR, "[data-dropdown-trigger]")
+            user_menu = self.browser.page.query_selector_all("[data-dropdown-trigger]")
             if user_menu:
                 return True
 
@@ -84,23 +83,23 @@ class DhiraaguExtractor(BaseExtractor):
 
             # Click "Third Party" button to show login form
             self.logger.info("Clicking Third Party button...")
-            if not self.wait_and_click(By.XPATH, self.THIRDPARTY_BUTTON_XPATH):
+            if not self.wait_and_click(self.THIRDPARTY_BUTTON_XPATH):
                 self.logger.error("Failed to click Third Party button")
                 return False
             time.sleep(2)
 
             # Enter username
-            if not self.wait_and_type(By.CSS_SELECTOR, self.LOGIN_USERNAME_SELECTOR, self.config.username):
+            if not self.wait_and_type(self.LOGIN_USERNAME_SELECTOR, self.config.username):
                 self.logger.error("Failed to enter username")
                 return False
 
             # Enter password
-            if not self.wait_and_type(By.CSS_SELECTOR, self.LOGIN_PASSWORD_SELECTOR, self.config.password):
+            if not self.wait_and_type(self.LOGIN_PASSWORD_SELECTOR, self.config.password):
                 self.logger.error("Failed to enter password")
                 return False
 
             # Click login button
-            if not self.wait_and_click(By.CSS_SELECTOR, self.LOGIN_BUTTON_SELECTOR):
+            if not self.wait_and_click(self.LOGIN_BUTTON_SELECTOR):
                 self.logger.error("Failed to click login button")
                 return False
 
@@ -127,7 +126,7 @@ class DhiraaguExtractor(BaseExtractor):
             time.sleep(3)
 
             # Wait for table to load
-            self.browser.wait_for_element(By.CSS_SELECTOR, self.TABLE_SELECTOR, timeout=15)
+            self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
             time.sleep(2)
 
             page_num = 1
@@ -161,7 +160,7 @@ class DhiraaguExtractor(BaseExtractor):
             time.sleep(1)
 
             # Get the count of rows first
-            rows = self.find_elements(By.CSS_SELECTOR, self.TABLE_ROW_SELECTOR)
+            rows = self.find_elements(self.TABLE_ROW_SELECTOR)
             row_count = len(rows)
             self.logger.info(f"Found {row_count} rows on current page")
 
@@ -169,13 +168,13 @@ class DhiraaguExtractor(BaseExtractor):
             for row_idx in range(row_count):
                 try:
                     # Re-find rows after returning from detail page
-                    rows = self.find_elements(By.CSS_SELECTOR, self.TABLE_ROW_SELECTOR)
+                    rows = self.find_elements(self.TABLE_ROW_SELECTOR)
                     if row_idx >= len(rows):
                         self.logger.warning(f"Row index {row_idx} out of range, skipping")
                         continue
 
                     row = rows[row_idx]
-                    cells = row.find_elements(By.TAG_NAME, "td")
+                    cells = row.query_selector_all("td")
 
                     if len(cells) < 10:
                         continue
@@ -206,10 +205,10 @@ class DhiraaguExtractor(BaseExtractor):
                     self.logger.info(f"Processing order {row_idx + 1}/{row_count}: {order_data['service_num']}")
 
                     # Find and click the link in this row
-                    link = row.find_elements(By.CSS_SELECTOR, self.ORDER_LINK_SELECTOR)
+                    link = row.query_selector_all(self.ORDER_LINK_SELECTOR)
                     if not link:
                         # Try clicking on the order number cell directly
-                        link = cells[self.COL_ORDER_NUM].find_elements(By.TAG_NAME, "a")
+                        link = cells[self.COL_ORDER_NUM].query_selector_all("a")
 
                     if link:
                         link[0].click()
@@ -223,7 +222,7 @@ class DhiraaguExtractor(BaseExtractor):
                         # Navigate back to the orders list
                         self.navigate_to(self.ORDERS_PAGE_URL)
                         time.sleep(2)
-                        self.browser.wait_for_element(By.CSS_SELECTOR, self.TABLE_SELECTOR, timeout=15)
+                        self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
                         time.sleep(1)
                     else:
                         self.logger.warning(f"No clickable link found for order {order_data['order_num']}")
@@ -247,7 +246,7 @@ class DhiraaguExtractor(BaseExtractor):
         """Extract ticket data from the detail page."""
         try:
             # Capture the current URL (detail page URL)
-            portal_url = self.browser.driver.current_url
+            portal_url = self.browser.page.url
 
             # Extract additional details from the form
             detail_data = self._extract_detail_page_data()
@@ -287,36 +286,36 @@ class DhiraaguExtractor(BaseExtractor):
         data = {}
         try:
             # Customer name
-            customer_name_input = self.browser.driver.find_elements(By.ID, "data.customer_name")
+            customer_name_input = self.browser.page.query_selector("[id='data.customer_name']")
             if customer_name_input:
-                data['customer_name'] = customer_name_input[0].get_attribute('value')
+                data['customer_name'] = customer_name_input.get_attribute('value')
 
             # Contact number
-            contact_input = self.browser.driver.find_elements(By.ID, "data.contact_number")
+            contact_input = self.browser.page.query_selector("[id='data.contact_number']")
             if contact_input:
-                data['contact_number'] = contact_input[0].get_attribute('value')
+                data['contact_number'] = contact_input.get_attribute('value')
 
             # Building
-            building_input = self.browser.driver.find_elements(By.ID, "data.building")
+            building_input = self.browser.page.query_selector("[id='data.building']")
             if building_input:
-                data['building'] = building_input[0].get_attribute('value')
+                data['building'] = building_input.get_attribute('value')
 
             # Floor
-            floor_input = self.browser.driver.find_elements(By.ID, "data.floor")
+            floor_input = self.browser.page.query_selector("[id='data.floor']")
             if floor_input:
-                data['floor'] = floor_input[0].get_attribute('value')
+                data['floor'] = floor_input.get_attribute('value')
 
             # Apartment
-            apartment_input = self.browser.driver.find_elements(By.ID, "data.apartment")
+            apartment_input = self.browser.page.query_selector("[id='data.apartment']")
             if apartment_input:
-                data['apartment'] = apartment_input[0].get_attribute('value')
+                data['apartment'] = apartment_input.get_attribute('value')
 
             # Try to extract portal creation date (created_at field)
-            created_at_input = self.browser.driver.find_elements(By.ID, "data.created_at")
+            created_at_input = self.browser.page.query_selector("[id='data.created_at']")
             if not created_at_input:
-                created_at_input = self.browser.driver.find_elements(By.CSS_SELECTOR, "[id*='created_at'], [name*='created_at']")
+                created_at_input = self.browser.page.query_selector("[id*='created_at'], [name*='created_at']")
             if created_at_input:
-                created_str = created_at_input[0].get_attribute('value') or created_at_input[0].text
+                created_str = created_at_input.get_attribute('value') or (created_at_input.text_content() or "")
                 if created_str:
                     data['portal_created_at'] = self._parse_date(created_str)
 
@@ -372,8 +371,7 @@ class DhiraaguExtractor(BaseExtractor):
             # - div.font-bold = source (e.g., "HDC")
             # - div.py-2.whitespace-pre-wrap = note text
             # - div.text-sm.italic = author and date
-            note_rows = self.browser.driver.find_elements(
-                By.CSS_SELECTOR,
+            note_rows = self.browser.page.query_selector_all(
                 ".filament-tables-row .filament-tables-cell .whitespace-normal"
             )
 
@@ -381,21 +379,21 @@ class DhiraaguExtractor(BaseExtractor):
                 try:
                     # Extract source
                     source = ""
-                    source_elem = note_container.find_elements(By.CSS_SELECTOR, ".font-bold")
+                    source_elem = note_container.query_selector_all(".font-bold")
                     if source_elem:
-                        source = source_elem[0].text.strip()
+                        source = (source_elem[0].text_content() or "").strip()
 
                     # Extract note text
                     note_text = ""
-                    text_elem = note_container.find_elements(By.CSS_SELECTOR, ".whitespace-pre-wrap")
+                    text_elem = note_container.query_selector_all(".whitespace-pre-wrap")
                     if text_elem:
-                        note_text = text_elem[0].text.strip()
+                        note_text = (text_elem[0].text_content() or "").strip()
 
                     # Extract author and date
                     author_date = ""
-                    author_elem = note_container.find_elements(By.CSS_SELECTOR, ".italic")
+                    author_elem = note_container.query_selector_all(".italic")
                     if author_elem:
-                        author_date = author_elem[0].text.strip()
+                        author_date = (author_elem[0].text_content() or "").strip()
 
                     if note_text:
                         note_entry = f"[{source}] {note_text}"
@@ -409,13 +407,12 @@ class DhiraaguExtractor(BaseExtractor):
 
             # Fallback: try to get all text from note rows
             if not notes_list:
-                rows = self.browser.driver.find_elements(
-                    By.CSS_SELECTOR,
+                rows = self.browser.page.query_selector_all(
                     ".filament-tables-row"
                 )
                 for row in rows:
                     try:
-                        text = row.text.strip()
+                        text = (row.text_content() or "").strip()
                         if text and len(text) > 5:
                             notes_list.append(text)
                     except Exception:
@@ -433,7 +430,7 @@ class DhiraaguExtractor(BaseExtractor):
     def _get_cell_text_by_element(self, cell) -> str | None:
         """Get text from a cell element."""
         try:
-            text = cell.text.strip()
+            text = (cell.text_content() or "").strip()
             return text if text else None
         except Exception:
             return None
@@ -442,10 +439,10 @@ class DhiraaguExtractor(BaseExtractor):
         """Navigate to next page of tickets. Returns False if no more pages."""
         try:
             # Filament pagination - look for next page button
-            next_buttons = self.browser.driver.find_elements(By.XPATH, self.NEXT_PAGE_XPATH)
+            next_buttons = self.browser.page.query_selector_all(self.NEXT_PAGE_XPATH)
 
             for btn in next_buttons:
-                if btn.is_displayed() and btn.is_enabled():
+                if btn.is_visible() and btn.is_enabled():
                     classes = btn.get_attribute("class") or ""
                     if "disabled" not in classes and "cursor-not-allowed" not in classes:
                         btn.click()
@@ -453,12 +450,11 @@ class DhiraaguExtractor(BaseExtractor):
                         return True
 
             # Alternative: Look for "Next" link in pagination
-            next_links = self.browser.driver.find_elements(
-                By.XPATH,
-                "//nav[contains(@class, 'pagination')]//a[contains(text(), 'Next') or @rel='next']"
+            next_links = self.browser.page.query_selector_all(
+                "xpath=//nav[contains(@class, 'pagination')]//a[contains(text(), 'Next') or @rel='next']"
             )
             for link in next_links:
-                if link.is_displayed():
+                if link.is_visible():
                     link.click()
                     time.sleep(2)
                     return True
@@ -472,14 +468,13 @@ class DhiraaguExtractor(BaseExtractor):
     def logout(self):
         try:
             self.logger.info("Logging out...")
-            user_menu = self.browser.driver.find_elements(By.CSS_SELECTOR, "[data-dropdown-trigger]")
+            user_menu = self.browser.page.query_selector_all("[data-dropdown-trigger]")
             if user_menu:
                 user_menu[0].click()
                 time.sleep(1)
 
-            logout_link = self.browser.driver.find_elements(
-                By.XPATH,
-                "//a[contains(@href, 'logout')] | //button[contains(text(), 'Sign out') or contains(text(), 'Logout')]"
+            logout_link = self.browser.page.query_selector_all(
+                "xpath=//a[contains(@href, 'logout')] | //button[contains(text(), 'Sign out') or contains(text(), 'Logout')]"
             )
             if logout_link:
                 logout_link[0].click()

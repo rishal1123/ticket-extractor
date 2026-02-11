@@ -5,7 +5,6 @@ Admin Controller - Handles admin panel routes.
 from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import JSONResponse
 from typing import Optional
-import threading
 
 from database import Database
 from services import ExtractionService, StatsService, ZnunyService
@@ -65,13 +64,9 @@ async def trigger_extraction():
     try:
         scheduler = get_scheduler()
 
-        # Run extraction and sync in a background thread
-        def run_async():
-            scheduler.run_portal_extraction()
-            scheduler.run_znuny_sync()
-
-        thread = threading.Thread(target=run_async, daemon=True)
-        thread.start()
+        # Signal the persistent worker threads to run
+        scheduler._extraction_job()
+        scheduler._znuny_sync_job()
 
         return JSONResponse(content={
             "success": True,

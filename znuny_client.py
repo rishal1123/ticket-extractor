@@ -1,5 +1,5 @@
 """
-Znuny client using Selenium for web-based ticket search.
+Znuny client using Playwright for web-based ticket search.
 Searches tickets by subject/title using *ticketid* pattern.
 Fetches ticket details including creator, creation time, and article history.
 """
@@ -12,13 +12,8 @@ from dataclasses import dataclass, field
 
 # Maldives timezone (UTC+5)
 MALDIVES_TZ = timezone(timedelta(hours=5))
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import WebDriverException, NoSuchElementException, StaleElementReferenceException
+from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, Playwright
+from playwright.sync_api import Error as PlaywrightError
 
 from config import Config
 from utils.logger import get_logger
@@ -150,7 +145,7 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
 
 
 class ZnunyClient:
-    """Client for searching tickets in Znuny using Selenium."""
+    """Client for searching tickets in Znuny using Playwright."""
 
     # Znuny URLs
     BASE_URL = "https://10.241.1.110"
@@ -172,7 +167,10 @@ class ZnunyClient:
     TICKET_TITLE_SELECTOR = ".MasterActionLink"
 
     # Class-level state (persists across instances for session reuse)
-    _shared_driver = None
+    _shared_playwright = None
+    _shared_browser = None
+    _shared_context = None
+    _shared_page = None
     _shared_logged_in = False
     _shared_last_login_check = 0  # Timestamp of last successful login verification
     # Class-level caches (persist across instances so sync cycles reuse cached data)
@@ -185,14 +183,14 @@ class ZnunyClient:
         self.password = Config.get_znuny_password()
 
     @property
-    def driver(self):
-        """Get shared driver instance."""
-        return ZnunyClient._shared_driver
+    def page(self):
+        """Get shared page instance."""
+        return ZnunyClient._shared_page
 
-    @driver.setter
-    def driver(self, value):
-        """Set shared driver instance."""
-        ZnunyClient._shared_driver = value
+    @page.setter
+    def page(self, value):
+        """Set shared page instance."""
+        ZnunyClient._shared_page = value
 
     @property
     def _logged_in(self):
@@ -235,35 +233,49 @@ class ZnunyClient:
         ZnunyClient._shared_details_cache = value
 
     def _setup_browser(self):
-        """Setup Chrome browser with options, reusing existing session if available."""
-        if self.driver:
+        """Setup Playwright browser with options, reusing existing session if available."""
+        if self.page:
             # Check if browser is still alive
             try:
-                self.driver.current_url
+                _ = self.page.url
                 logger.info("Reusing existing Znuny browser session")
                 return
-            except WebDriverException:
+            except Exception:
                 logger.info("Znuny browser session died, creating new one")
-                # Try to quit the dead browser to avoid orphaned Chrome processes
-                try:
-                    self.driver.quit()
-                except Exception:
-                    pass
-                self.driver = None
+                # Try to close the dead browser to avoid orphaned processes
+                self._close_browser_resources()
                 self._logged_in = False
 
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--ignore-certificate-errors")
-        options.add_argument("--ignore-ssl-errors")
-
-        self.driver = webdriver.Chrome(options=options)
-        self.driver.implicitly_wait(10)
+        ZnunyClient._shared_playwright = sync_playwright().start()
+        ZnunyClient._shared_browser = ZnunyClient._shared_playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        )
+        ZnunyClient._shared_context = ZnunyClient._shared_browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            ignore_https_errors=True  # CRITICAL: Znuny uses self-signed cert
+        )
+        ZnunyClient._shared_page = ZnunyClient._shared_context.new_page()
+        ZnunyClient._shared_page.set_default_timeout(10000)
         logger.info("Znuny browser started (new session)")
+
+    def _close_browser_resources(self):
+        """Close all Playwright browser resources safely."""
+        for attr in ("_shared_page", "_shared_context", "_shared_browser"):
+            obj = getattr(ZnunyClient, attr, None)
+            if obj:
+                try:
+                    obj.close()
+                except Exception:
+                    pass
+                setattr(ZnunyClient, attr, None)
+        pw = ZnunyClient._shared_playwright
+        if pw:
+            try:
+                pw.stop()
+            except Exception:
+                pass
+            ZnunyClient._shared_playwright = None
 
     def _login(self) -> bool:
         """Login to Znuny, reusing existing session if valid."""
@@ -275,43 +287,44 @@ class ZnunyClient:
                 return True
             # Full verification: navigate to dashboard
             try:
-                self.driver.get(self.DASHBOARD_URL)
+                self.page.goto(self.DASHBOARD_URL)
                 time.sleep(2)
-                if "Dashboard" in self.driver.title:
+                if "Dashboard" in self.page.title():
                     ZnunyClient._shared_last_login_check = time.time()
                     logger.info("Znuny session still active, skipping login")
                     return True
-            except WebDriverException:
+            except Exception:
                 pass
             self._logged_in = False
             logger.info("Znuny session expired, re-logging in...")
 
         try:
-            self.driver.get(self.LOGIN_URL)
+            self.page.goto(self.LOGIN_URL)
             time.sleep(2)
 
             # Check if already on dashboard (session still valid from cookies)
-            if "Dashboard" in self.driver.title:
+            if "Dashboard" in self.page.title():
                 self._logged_in = True
                 logger.info("Znuny session valid from cookies")
                 return True
 
             # Enter credentials
-            user_field = self.driver.find_element(By.CSS_SELECTOR, self.LOGIN_USER_SELECTOR)
-            user_field.clear()
-            user_field.send_keys(self.username)
+            user_field = self.page.query_selector(self.LOGIN_USER_SELECTOR)
+            if user_field:
+                user_field.fill(self.username)
 
-            password_field = self.driver.find_element(By.CSS_SELECTOR, self.LOGIN_PASSWORD_SELECTOR)
-            password_field.clear()
-            password_field.send_keys(self.password)
+            password_field = self.page.query_selector(self.LOGIN_PASSWORD_SELECTOR)
+            if password_field:
+                password_field.fill(self.password)
 
             # Click login
-            login_btn = self.driver.find_element(By.CSS_SELECTOR, self.LOGIN_BUTTON_SELECTOR)
-            login_btn.click()
+            login_btn = self.page.query_selector(self.LOGIN_BUTTON_SELECTOR)
+            if login_btn:
+                login_btn.click()
             time.sleep(3)
 
             # Verify login
-            if "Dashboard" in self.driver.title:
+            if "Dashboard" in self.page.title():
                 self._logged_in = True
                 logger.info("Znuny login successful (new session)")
                 return True
@@ -346,7 +359,7 @@ class ZnunyClient:
             return []
 
         try:
-            self.driver.get(self.DASHBOARD_URL)
+            self.page.goto(self.DASHBOARD_URL)
             time.sleep(2)
 
             all_tickets = []
@@ -355,20 +368,22 @@ class ZnunyClient:
 
             while page <= max_pages:
                 # Get tickets from current page of the Open Tickets widget
-                rows = self.driver.find_elements(By.CSS_SELECTOR, "#Dashboard0130-TicketOpen tr.MasterAction")
+                rows = self.page.query_selector_all("#Dashboard0130-TicketOpen tr.MasterAction")
 
                 for row in rows:
                     try:
                         # Get ticket number from MasterActionLink
-                        link = row.find_element(By.CSS_SELECTOR, "a.MasterActionLink")
-                        ticket_number = link.text.strip()
+                        link = row.query_selector("a.MasterActionLink")
+                        if not link:
+                            continue
+                        ticket_number = (link.text_content() or "").strip()
                         href = link.get_attribute('href') or ""
 
                         # Get title from the last td div
-                        title_divs = row.find_elements(By.CSS_SELECTOR, "td div[title]")
+                        title_divs = row.query_selector_all("td div[title]")
                         title = ""
                         if title_divs:
-                            title = title_divs[-1].get_attribute('title') or title_divs[-1].text
+                            title = title_divs[-1].get_attribute('title') or (title_divs[-1].text_content() or "")
 
                         if ticket_number:
                             all_tickets.append({
@@ -376,16 +391,16 @@ class ZnunyClient:
                                 "title": title,
                                 "href": href
                             })
-                    except (NoSuchElementException, StaleElementReferenceException):
+                    except Exception:
                         continue
 
                 # Check for next page
                 next_page = page + 1
-                next_page_link = self.driver.find_elements(
-                    By.CSS_SELECTOR, f"#Dashboard0130-TicketOpenPage{next_page}"
+                next_page_link = self.page.query_selector_all(
+                    f"#Dashboard0130-TicketOpenPage{next_page}"
                 )
 
-                if next_page_link and "Selected" not in next_page_link[0].get_attribute("class"):
+                if next_page_link and "Selected" not in (next_page_link[0].get_attribute("class") or ""):
                     next_page_link[0].click()
                     time.sleep(2)
                     page += 1
@@ -469,12 +484,15 @@ class ZnunyClient:
                 logger.warning(f"Ticket {ticket_number} not found in open tickets")
                 return None
 
-            # Navigate to ticket detail page
-            self.driver.get(ticket_info["href"])
+            # Navigate to ticket detail page (ensure absolute URL)
+            href = ticket_info["href"]
+            if href.startswith("/"):
+                href = self.BASE_URL + href
+            self.page.goto(href)
             time.sleep(1.5)  # Reduced from 2s
 
             # Capture the ticket URL
-            znuny_url = self.driver.current_url
+            znuny_url = self.page.url
 
             # Parse ticket details from sidebar
             created_at = None
@@ -484,9 +502,9 @@ class ZnunyClient:
             state = ""
 
             # Get sidebar content
-            sidebar = self.driver.find_elements(By.CSS_SELECTOR, ".SidebarColumn")
+            sidebar = self.page.query_selector_all(".SidebarColumn")
             if sidebar:
-                sidebar_text = sidebar[0].text
+                sidebar_text = (sidebar[0].text_content() or "")
 
                 # Extract "Created:" line - format: "02/04/2026 11:32 (Indian/Maldives)"
                 created_match = re.search(r"Created:\s*\n?(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", sidebar_text)
@@ -514,30 +532,31 @@ class ZnunyClient:
 
             # Parse articles from article overview table
             articles = []
-            article_rows = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple table tbody tr")
+            article_rows = self.page.query_selector_all(".WidgetSimple table tbody tr")
 
             # Collect basic article info from table (no clicking needed)
             article_data = []
             for row in article_rows:
                 try:
-                    cells = row.find_elements(By.TAG_NAME, "td")
+                    cells = row.query_selector_all("td")
                     if len(cells) >= 7:
-                        article_num_text = cells[0].text.strip()
+                        article_num_text = (cells[0].text_content() or "").strip()
                         if not article_num_text.isdigit():
                             continue
 
-                        subject = cells[5].text.strip()
+                        subject = (cells[5].text_content() or "").strip()
+                        via_text = (cells[4].text_content() or "").strip()
                         article_data.append({
                             "num": int(article_num_text),
-                            "sender": cells[3].text.strip(),
-                            "via": cells[4].text.strip(),
+                            "sender": (cells[3].text_content() or "").strip(),
+                            "via": via_text,
                             "subject": subject,
-                            "created_str": cells[6].text.strip(),
+                            "created_str": (cells[6].text_content() or "").strip(),
                             "row": row,
                             # Only need body for site visit articles or Phone articles (for address)
-                            "needs_body": "site visit" in subject.lower() or "preventative maintenance" in subject.lower() or cells[4].text.strip() == "Phone"
+                            "needs_body": "site visit" in subject.lower() or "preventative maintenance" in subject.lower() or via_text == "Phone"
                         })
-                except (NoSuchElementException, StaleElementReferenceException, IndexError):
+                except (IndexError, Exception):
                     continue
 
             # Layer 2: Article count check (skip parsing if unchanged)
@@ -611,9 +630,9 @@ class ZnunyClient:
 
                     # Look for the article header with "by [Staff Name]"
                     article_created_by = ""
-                    article_headers = self.driver.find_elements(By.CSS_SELECTOR, ".WidgetSimple h2")
+                    article_headers = self.page.query_selector_all(".WidgetSimple h2")
                     for header in article_headers:
-                        header_text = header.text
+                        header_text = (header.text_content() or "")
                         by_match = re.search(r'\bby\s+([A-Za-z][A-Za-z\s]+)$', header_text, re.MULTILINE)
                         if by_match:
                             article_created_by = by_match.group(1).strip()
@@ -625,25 +644,20 @@ class ZnunyClient:
                     # Get the article body content from iframe
                     body = ""
                     try:
-                        iframes = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleMailContentHTMLWrapper iframe, .ArticleMailContent iframe, iframe[id^='Iframe']")
+                        iframes = self.page.query_selector_all(".ArticleMailContentHTMLWrapper iframe, .ArticleMailContent iframe, iframe[id^='Iframe']")
                         if iframes:
-                            self.driver.switch_to.frame(iframes[0])
-                            try:
-                                body_elem = self.driver.find_element(By.TAG_NAME, "body")
-                                body = body_elem.text.strip()
-                            finally:
-                                self.driver.switch_to.default_content()
+                            frame = iframes[0].content_frame()
+                            if frame:
+                                body_elem = frame.query_selector("body")
+                                if body_elem:
+                                    body = (body_elem.text_content() or "").strip()
 
                         if not body:
-                            body_elements = self.driver.find_elements(By.CSS_SELECTOR, ".ArticleBody, .MessageBody")
+                            body_elements = self.page.query_selector_all(".ArticleBody, .MessageBody")
                             if body_elements:
-                                body = body_elements[0].text.strip()
+                                body = (body_elements[0].text_content() or "").strip()
                     except Exception as e:
                         logger.debug(f"Error extracting article body: {e}")
-                        try:
-                            self.driver.switch_to.default_content()
-                        except WebDriverException:
-                            pass
 
                     article_created = None
                     time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
@@ -848,27 +862,31 @@ class ZnunyClient:
             logger.debug("Znuny close called but keeping session alive for reuse")
             return
 
-        if self.driver:
-            try:
-                self.driver.quit()
-            except WebDriverException:
-                pass
-            ZnunyClient._shared_driver = None
-            ZnunyClient._shared_logged_in = False
-            logger.info("Znuny browser closed (forced)")
+        self._close_browser_resources()
+        ZnunyClient._shared_logged_in = False
+        logger.info("Znuny browser closed (forced)")
 
     @classmethod
     def force_close(cls):
         """Force close the shared browser session."""
-        if cls._shared_driver:
+        for attr in ("_shared_page", "_shared_context", "_shared_browser"):
+            obj = getattr(cls, attr, None)
+            if obj:
+                try:
+                    obj.close()
+                except Exception:
+                    pass
+                setattr(cls, attr, None)
+        pw = cls._shared_playwright
+        if pw:
             try:
-                cls._shared_driver.quit()
-            except WebDriverException:
+                pw.stop()
+            except Exception:
                 pass
-            cls._shared_driver = None
-            cls._shared_logged_in = False
-            cls._shared_last_login_check = 0
-            logger.info("Znuny shared browser session closed")
+            cls._shared_playwright = None
+        cls._shared_logged_in = False
+        cls._shared_last_login_check = 0
+        logger.info("Znuny shared browser session closed")
 
     def __del__(self):
         # Don't close on garbage collection - keep session alive

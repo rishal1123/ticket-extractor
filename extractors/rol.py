@@ -1,8 +1,7 @@
 import time
 from datetime import datetime
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from .base import BaseExtractor
 from models.ticket import Ticket
@@ -17,6 +16,9 @@ class ROLExtractor(BaseExtractor):
     # Filter URLs - HDC department (55)
     # Status codes: 4=Open, 5=On Hold, 6=Closed, 7=Today
     OPEN_TICKETS_URL = "https://support.rol.net.mv/staff/index.php?/Tickets/Manage/Filter/55/4/-1"
+
+    # Navigation timeout for ROL portal (ms) - ROL can be slow
+    NAV_TIMEOUT_MS = 30000
 
     # ============================================================
     # CSS SELECTORS
@@ -46,7 +48,7 @@ class ROLExtractor(BaseExtractor):
         self.logger.info(f"Logging into ROL portal: {self.config.url}")
 
         try:
-            self.navigate_to(self.config.url)
+            self.browser.page.goto(self.config.url, timeout=self.NAV_TIMEOUT_MS)
             time.sleep(2)
 
             # Check if already logged in
@@ -54,27 +56,56 @@ class ROLExtractor(BaseExtractor):
                 self.logger.info("Already logged in")
                 return True
 
+            # Wait for login form to be ready
+            try:
+                self.browser.page.wait_for_selector(
+                    self.LOGIN_USERNAME_SELECTOR, timeout=15000, state="visible"
+                )
+            except PlaywrightTimeout:
+                self.logger.error("Login form did not appear within 15s")
+                return False
+
             # Enter username
-            if not self.wait_and_type(By.CSS_SELECTOR, self.LOGIN_USERNAME_SELECTOR, self.config.username):
+            if not self.wait_and_type(self.LOGIN_USERNAME_SELECTOR, self.config.username):
                 self.logger.error("Failed to enter username")
                 return False
 
             # Enter password
-            if not self.wait_and_type(By.CSS_SELECTOR, self.LOGIN_PASSWORD_SELECTOR, self.config.password):
+            if not self.wait_and_type(self.LOGIN_PASSWORD_SELECTOR, self.config.password):
                 self.logger.error("Failed to enter password")
                 return False
 
-            # Click login button
-            if not self.wait_and_click(By.CSS_SELECTOR, self.LOGIN_BUTTON_SELECTOR):
-                self.logger.error("Failed to click login button")
-                return False
+            # Click login button and wait for navigation to complete
+            try:
+                with self.browser.page.expect_navigation(
+                    timeout=self.NAV_TIMEOUT_MS, wait_until="domcontentloaded"
+                ):
+                    if not self.wait_and_click(self.LOGIN_BUTTON_SELECTOR):
+                        self.logger.error("Failed to click login button")
+                        return False
+            except PlaywrightTimeout:
+                self.logger.warning("Navigation after login click timed out, checking URL anyway")
 
-            # Wait for login to complete
-            time.sleep(5)
+            # Wait briefly for any redirects to settle
+            time.sleep(2)
 
-            # Verify login success
-            if "login" in self.browser.driver.current_url.lower():
-                self.logger.error("Login failed - still on login page")
+            # Verify login success: check URL is no longer the login page
+            current_url = self.browser.page.url.lower()
+            if "/login" in current_url or current_url.rstrip("/") == self.config.url.lower().rstrip("/"):
+                # Double-check by looking for the logout button (more reliable)
+                if not self.is_logged_in():
+                    self.logger.error("Login failed - still on login page")
+                    self.take_screenshot("login_failed")
+                    return False
+
+            # Final confirmation: wait for a post-login element to appear
+            try:
+                self.browser.page.wait_for_selector(
+                    self.LOGOUT_SELECTOR, timeout=15000, state="attached"
+                )
+            except PlaywrightTimeout:
+                self.logger.error("Login failed - logout button never appeared")
+                self.take_screenshot("login_no_logout_btn")
                 return False
 
             self.logger.info("Login successful")
@@ -82,13 +113,20 @@ class ROLExtractor(BaseExtractor):
 
         except Exception as e:
             self.logger.error(f"Login error: {e}")
+            self.take_screenshot("login_error")
             return False
 
     def is_logged_in(self) -> bool:
         """Check if currently logged in by looking for logout button."""
         try:
-            logout_elements = self.browser.driver.find_elements(By.CSS_SELECTOR, self.LOGOUT_SELECTOR)
-            return len(logout_elements) > 0
+            # Use wait_for_selector with a short timeout instead of instant query
+            # This handles cases where the page is still loading
+            element = self.browser.page.wait_for_selector(
+                self.LOGOUT_SELECTOR, timeout=3000, state="attached"
+            )
+            return element is not None
+        except PlaywrightTimeout:
+            return False
         except Exception:
             return False
 
@@ -99,13 +137,11 @@ class ROLExtractor(BaseExtractor):
         try:
             # Navigate to Open tickets page
             self.logger.info("Navigating to Open tickets")
-            self.navigate_to(self.OPEN_TICKETS_URL)
+            self.browser.page.goto(self.OPEN_TICKETS_URL, timeout=self.NAV_TIMEOUT_MS)
             time.sleep(3)
 
             # Wait for grid to load
-            WebDriverWait(self.browser.driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.GRID_CONTAINER_SELECTOR))
-            )
+            self.browser.page.wait_for_selector(self.GRID_CONTAINER_SELECTOR, timeout=self.NAV_TIMEOUT_MS)
 
             # Extract tickets from grid
             tickets = self._extract_tickets_from_grid()
@@ -121,7 +157,7 @@ class ROLExtractor(BaseExtractor):
         tickets = []
 
         try:
-            rows = self.browser.driver.find_elements(By.CSS_SELECTOR, self.GRID_ROW_SELECTOR)
+            rows = self.browser.page.query_selector_all(self.GRID_ROW_SELECTOR)
             self.logger.info(f"Found {len(rows)} ticket rows")
 
             for i, row in enumerate(rows):
@@ -147,7 +183,7 @@ class ROLExtractor(BaseExtractor):
             internal_id = row_id.split('_')[-1] if row_id else None
 
             # Get all cells
-            cells = row.find_elements(By.TAG_NAME, "td")
+            cells = row.query_selector_all("td")
 
             if len(cells) < 14:
                 self.logger.warning(f"Row {index} has insufficient cells: {len(cells)}")
@@ -155,34 +191,37 @@ class ROLExtractor(BaseExtractor):
 
             # Extract data from cells (0-indexed)
             # Cell 5 = Date
-            date_text = cells[5].text.strip() if len(cells) > 5 else ""
+            date_text = (cells[5].text_content() or "").strip() if len(cells) > 5 else ""
 
             # Cell 6 = Display ID (ROL250141)
             display_id = ""
             try:
-                link = cells[6].find_element(By.TAG_NAME, "a")
-                display_id = link.text.strip()
+                link = cells[6].query_selector("a")
+                if link:
+                    display_id = (link.text_content() or "").strip()
             except Exception:
-                display_id = cells[6].text.strip() if len(cells) > 6 else ""
+                pass
+            if not display_id:
+                display_id = (cells[6].text_content() or "").strip() if len(cells) > 6 else ""
 
             if not display_id:
                 self.logger.warning(f"Row {index} has no display ID")
                 return None
 
             # Cell 7 = Owner/Customer name
-            customer_name = cells[7].text.strip() if len(cells) > 7 else ""
+            customer_name = (cells[7].text_content() or "").strip() if len(cells) > 7 else ""
 
             # Cell 8 = Priority
-            priority = cells[8].text.strip() if len(cells) > 8 else ""
+            priority = (cells[8].text_content() or "").strip() if len(cells) > 8 else ""
 
             # Cell 9 = Type (New Connection, etc)
-            ticket_type = cells[9].text.strip() if len(cells) > 9 else ""
+            ticket_type = (cells[9].text_content() or "").strip() if len(cells) > 9 else ""
 
             # Cell 12 = Department (HDC)
-            department = cells[12].text.strip() if len(cells) > 12 else ""
+            department = (cells[12].text_content() or "").strip() if len(cells) > 12 else ""
 
             # Cell 13 = Reply Due (KPI)
-            kpi = cells[13].text.strip() if len(cells) > 13 else ""
+            kpi = (cells[13].text_content() or "").strip() if len(cells) > 13 else ""
 
             # Parse date
             ticket_time = self._parse_date(date_text)
@@ -220,21 +259,19 @@ class ROLExtractor(BaseExtractor):
 
         try:
             # Store current URL to navigate back
-            current_url = self.browser.driver.current_url
+            current_url = self.browser.page.url
             detail_url = f"https://support.rol.net.mv/staff/index.php?/Tickets/Ticket/View/{internal_id}/inbox/55/4/-1"
 
-            self.browser.driver.get(detail_url)
+            self.browser.page.goto(detail_url, timeout=self.NAV_TIMEOUT_MS)
             time.sleep(2)
 
             # Wait for page to load
-            WebDriverWait(self.browser.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.TICKET_POST_CONTAINER_SELECTOR))
-            )
+            self.browser.page.wait_for_selector(self.TICKET_POST_CONTAINER_SELECTOR, timeout=self.NAV_TIMEOUT_MS)
 
             # Get post content (contains the ticket description/notes)
             try:
-                post_container = self.browser.driver.find_element(By.CSS_SELECTOR, self.TICKET_POST_CONTAINER_SELECTOR)
-                post_text = post_container.text.strip()
+                post_container = self.browser.page.query_selector(self.TICKET_POST_CONTAINER_SELECTOR)
+                post_text = (post_container.text_content() or "").strip() if post_container else ""
 
                 if post_text:
                     notes = post_text
@@ -248,13 +285,11 @@ class ROLExtractor(BaseExtractor):
                 self.logger.debug(f"Error getting post content: {e}")
 
             # Navigate back to grid
-            self.browser.driver.get(current_url)
+            self.browser.page.goto(current_url, timeout=self.NAV_TIMEOUT_MS)
             time.sleep(1)
 
             # Wait for grid to reload
-            WebDriverWait(self.browser.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.GRID_CONTAINER_SELECTOR))
-            )
+            self.browser.page.wait_for_selector(self.GRID_CONTAINER_SELECTOR, timeout=self.NAV_TIMEOUT_MS)
 
         except Exception as e:
             self.logger.debug(f"Error getting ticket details: {e}")
@@ -284,7 +319,7 @@ class ROLExtractor(BaseExtractor):
     def logout(self):
         """Logout from ROL portal."""
         try:
-            self.wait_and_click(By.CSS_SELECTOR, self.LOGOUT_SELECTOR)
+            self.wait_and_click(self.LOGOUT_SELECTOR)
             time.sleep(1)
             self.logger.info("Logged out successfully")
         except Exception as e:

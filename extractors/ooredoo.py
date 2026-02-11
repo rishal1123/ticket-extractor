@@ -1,6 +1,6 @@
+import re
 import time
 from datetime import datetime
-from selenium.webdriver.common.by import By
 
 from .base import BaseExtractor
 from models.ticket import Ticket
@@ -75,12 +75,12 @@ class OoredooExtractor(BaseExtractor):
             time.sleep(2)
 
             # If redirected to login page, we're not logged in
-            current_url = self.browser.driver.current_url
+            current_url = self.browser.page.url
             if "login" in current_url:
                 return False
 
             # Check if ticket table is present
-            tables = self.find_elements(By.CSS_SELECTOR, self.TICKET_TABLE_SELECTOR)
+            tables = self.find_elements(self.TICKET_TABLE_SELECTOR)
             return len(tables) > 0
 
         except Exception as e:
@@ -95,17 +95,17 @@ class OoredooExtractor(BaseExtractor):
             time.sleep(2)
 
             # Enter email
-            if not self.wait_and_type(By.CSS_SELECTOR, self.LOGIN_EMAIL_SELECTOR, self.config.username):
+            if not self.wait_and_type(self.LOGIN_EMAIL_SELECTOR, self.config.username):
                 self.logger.error("Failed to enter email")
                 return False
 
             # Enter password
-            if not self.wait_and_type(By.CSS_SELECTOR, self.LOGIN_PASSWORD_SELECTOR, self.config.password):
+            if not self.wait_and_type(self.LOGIN_PASSWORD_SELECTOR, self.config.password):
                 self.logger.error("Failed to enter password")
                 return False
 
             # Click login button
-            if not self.wait_and_click(By.CSS_SELECTOR, self.LOGIN_BUTTON_SELECTOR):
+            if not self.wait_and_click(self.LOGIN_BUTTON_SELECTOR):
                 self.logger.error("Failed to click login button")
                 return False
 
@@ -113,7 +113,7 @@ class OoredooExtractor(BaseExtractor):
             time.sleep(5)
 
             # Verify login succeeded
-            current_url = self.browser.driver.current_url
+            current_url = self.browser.page.url
             if "login" in current_url:
                 self.logger.error("Login failed - still on login page")
                 self.take_screenshot("login_failed")
@@ -143,9 +143,9 @@ class OoredooExtractor(BaseExtractor):
 
             # Extract tickets from all pages
             # Log total entries info
-            info_els = self.find_elements(By.CSS_SELECTOR, self.PAGINATION_INFO_SELECTOR)
+            info_els = self.find_elements(self.PAGINATION_INFO_SELECTOR)
             if info_els:
-                self.logger.info(f"DataTable pagination: {info_els[0].text}")
+                self.logger.info(f"DataTable pagination: {(info_els[0].text_content() or '').strip()}")
 
             page_num = 1
             while True:
@@ -167,10 +167,10 @@ class OoredooExtractor(BaseExtractor):
         """Wait for DataTable to be fully loaded."""
         try:
             for _ in range(10):
-                rows = self.find_elements(By.CSS_SELECTOR, self.TICKET_ROW_SELECTOR)
+                rows = self.find_elements(self.TICKET_ROW_SELECTOR)
                 if rows:
                     # Check if first row is not a "Loading..." or "No data" message
-                    first_row_text = rows[0].text.lower()
+                    first_row_text = (rows[0].text_content() or "").lower()
                     if "loading" not in first_row_text and "processing" not in first_row_text:
                         return
                 time.sleep(1)
@@ -181,14 +181,13 @@ class OoredooExtractor(BaseExtractor):
         """Set DataTable to show all entries (or maximum) to avoid pagination issues."""
         try:
             # Try to change "Show entries" dropdown to max value
-            length_select = self.find_elements(By.CSS_SELECTOR, "#datatable_length select, select[name='datatable_length']")
+            length_select = self.find_elements("#datatable_length select, select[name='datatable_length']")
             if length_select:
-                from selenium.webdriver.support.ui import Select
-                select = Select(length_select[0])
+                el = length_select[0]
                 # Try common "show all" values: -1 (All), 100, 50
                 for value in ["-1", "100", "50"]:
                     try:
-                        select.select_by_value(value)
+                        el.select_option(value=value)
                         self.logger.info(f"Set DataTable page size to {value}")
                         time.sleep(3)
                         self._wait_for_datatable()
@@ -197,9 +196,9 @@ class OoredooExtractor(BaseExtractor):
                         continue
 
             # Log pagination info for diagnostics
-            info_els = self.find_elements(By.CSS_SELECTOR, self.PAGINATION_INFO_SELECTOR)
+            info_els = self.find_elements(self.PAGINATION_INFO_SELECTOR)
             if info_els:
-                self.logger.info(f"DataTable info: {info_els[0].text}")
+                self.logger.info(f"DataTable info: {(info_els[0].text_content() or '').strip()}")
         except Exception as e:
             self.logger.debug(f"Could not set DataTable page size: {e}")
 
@@ -207,7 +206,7 @@ class OoredooExtractor(BaseExtractor):
         tickets = []
 
         try:
-            rows = self.find_elements(By.CSS_SELECTOR, self.TICKET_ROW_SELECTOR)
+            rows = self.find_elements(self.TICKET_ROW_SELECTOR)
             row_count = len(rows)
             self.logger.info(f"Found {row_count} ticket rows on current page")
 
@@ -215,7 +214,7 @@ class OoredooExtractor(BaseExtractor):
             for row_idx in range(row_count):
                 try:
                     # Re-find rows after returning from detail page
-                    rows = self.find_elements(By.CSS_SELECTOR, self.TICKET_ROW_SELECTOR)
+                    rows = self.find_elements(self.TICKET_ROW_SELECTOR)
                     if row_idx >= len(rows):
                         self.logger.warning(f"Row index {row_idx} out of range, skipping")
                         continue
@@ -230,8 +229,8 @@ class OoredooExtractor(BaseExtractor):
                     self.logger.info(f"Processing ticket {row_idx + 1}/{row_count}: {ticket_data['ticket_id']}")
 
                     # Click on the ticket to open detail page
-                    cells = row.find_elements(By.TAG_NAME, "td")
-                    ticket_link = cells[self.COL_TICKET_ID].find_elements(By.TAG_NAME, "a")
+                    cells = row.query_selector_all("td")
+                    ticket_link = cells[self.COL_TICKET_ID].query_selector_all("a")
 
                     if ticket_link:
                         ticket_link[0].click()
@@ -274,7 +273,7 @@ class OoredooExtractor(BaseExtractor):
     def _parse_ticket_row_data(self, row) -> dict | None:
         """Extract data from a ticket row into a dictionary."""
         try:
-            cells = row.find_elements(By.TAG_NAME, "td")
+            cells = row.query_selector_all("td")
 
             if len(cells) < 12:
                 return None
@@ -331,30 +330,30 @@ class OoredooExtractor(BaseExtractor):
         comments = []
         try:
             # Click on Comments tab - try multiple selectors
-            comments_tabs = self.find_elements(By.CSS_SELECTOR, self.COMMENTS_TAB_SELECTOR)
+            comments_tabs = self.find_elements(self.COMMENTS_TAB_SELECTOR)
             if not comments_tabs:
-                comments_tabs = self.find_elements(By.XPATH, "//a[contains(text(), 'Comments')]")
+                comments_tabs = self.find_elements("xpath=//a[contains(text(), 'Comments')]")
             if not comments_tabs:
-                comments_tabs = self.find_elements(By.XPATH, "//a[@href='#internalcommentlink1']")
+                comments_tabs = self.find_elements("xpath=//a[@href='#internalcommentlink1']")
 
             if comments_tabs:
-                self.browser.driver.execute_script("arguments[0].click();", comments_tabs[0])
+                comments_tabs[0].dispatch_event("click")
                 time.sleep(2)
 
             # Extract comments from table - try broader selector
-            comment_rows = self.find_elements(By.CSS_SELECTOR, "#internalcommentlink1 table tbody tr")
+            comment_rows = self.find_elements("#internalcommentlink1 table tbody tr")
             if not comment_rows:
-                comment_rows = self.find_elements(By.CSS_SELECTOR, "#internalcommentlink1 tr")
+                comment_rows = self.find_elements("#internalcommentlink1 tr")
 
             self.logger.debug(f"Found {len(comment_rows)} comment rows")
 
             for row in comment_rows:
                 try:
-                    cells = row.find_elements(By.TAG_NAME, "td")
+                    cells = row.query_selector_all("td")
                     if len(cells) >= 3:
-                        user = cells[0].text.strip() if cells[0].text else cells[0].get_attribute('textContent').strip()
-                        comment = cells[1].text.strip() if cells[1].text else cells[1].get_attribute('textContent').strip()
-                        date = cells[2].text.strip() if cells[2].text else cells[2].get_attribute('textContent').strip()
+                        user = (cells[0].text_content() or "").strip()
+                        comment = (cells[1].text_content() or "").strip()
+                        date = (cells[2].text_content() or "").strip()
 
                         if comment and len(comment) > 5:
                             comments.append(f"[{user}] {comment} ({date})")
@@ -373,23 +372,22 @@ class OoredooExtractor(BaseExtractor):
         notes_list = []
         try:
             # Click on "Ticket Feed" tab
-            feed_tabs = self.find_elements(By.CSS_SELECTOR, self.TICKET_FEED_TAB_SELECTOR)
+            feed_tabs = self.find_elements(self.TICKET_FEED_TAB_SELECTOR)
             if not feed_tabs:
-                feed_tabs = self.find_elements(By.XPATH, "//a[contains(text(), 'Ticket Feed')]")
+                feed_tabs = self.find_elements("xpath=//a[contains(text(), 'Ticket Feed')]")
 
             if feed_tabs:
-                self.browser.driver.execute_script("arguments[0].click();", feed_tabs[0])
+                feed_tabs[0].dispatch_event("click")
                 time.sleep(1)
 
             # Extract feed entries from <li> elements
-            feed_entries = self.find_elements(By.CSS_SELECTOR, "#ticket_feedlink li")
+            feed_entries = self.find_elements("#ticket_feedlink li")
 
             if feed_entries:
                 for entry in feed_entries:
                     try:
-                        html = entry.get_attribute('innerHTML')
+                        html = entry.inner_html()
                         if html:
-                            import re
                             text = re.sub(r'<[^>]+>', ' ', html)
                             text = re.sub(r'\s+', ' ', text).strip()
                             if text and len(text) > 5:
@@ -449,7 +447,7 @@ class OoredooExtractor(BaseExtractor):
         """Get text from a cell by index."""
         try:
             if index < len(cells):
-                text = cells[index].text.strip()
+                text = (cells[index].text_content() or "").strip()
                 return text if text and text != "-" else None
         except Exception:
             pass
@@ -483,10 +481,10 @@ class OoredooExtractor(BaseExtractor):
         """Navigate to next page if available."""
         try:
             # Check if next button exists and is enabled
-            next_btns = self.find_elements(By.CSS_SELECTOR, self.NEXT_PAGE_SELECTOR)
+            next_btns = self.find_elements(self.NEXT_PAGE_SELECTOR)
             if next_btns and len(next_btns) > 0:
                 next_btn = next_btns[0]
-                if "disabled" not in next_btn.get_attribute("class"):
+                if "disabled" not in (next_btn.get_attribute("class") or ""):
                     next_btn.click()
                     time.sleep(2)
                     self._wait_for_datatable()
@@ -499,14 +497,14 @@ class OoredooExtractor(BaseExtractor):
         """Logout from Ooredoo portal."""
         try:
             # Find and submit logout form
-            logout_forms = self.find_elements(By.CSS_SELECTOR, self.LOGOUT_FORM_SELECTOR)
+            logout_forms = self.find_elements(self.LOGOUT_FORM_SELECTOR)
             if logout_forms:
-                self.browser.driver.execute_script("arguments[0].submit();", logout_forms[0])
+                logout_forms[0].evaluate("el => el.submit()")
                 time.sleep(1)
                 self.logger.info("Logged out successfully")
             else:
                 # Try clicking logout link
-                logout_links = self.find_elements(By.XPATH, "//a[contains(@href, 'logout')]")
+                logout_links = self.find_elements("xpath=//a[contains(@href, 'logout')]")
                 if logout_links:
                     logout_links[0].click()
                     time.sleep(1)

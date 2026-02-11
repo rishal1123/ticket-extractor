@@ -5,6 +5,9 @@ This service encapsulates all scheduler-related logic including:
 - Running portal extractions (every N minutes, default 5)
 - Running Znuny sync (every M minutes, default 1) as a separate job
 - Managing the background scheduler thread
+
+Uses persistent worker threads so Playwright browser instances can be
+reused across cycles (Playwright objects are bound to their creator thread).
 """
 
 import time
@@ -31,8 +34,12 @@ class SchedulerService:
         self._thread: Optional[threading.Thread] = None
         self._extraction_interval = Config.get_extraction_interval()
         self._znuny_sync_interval = Config.get_znuny_sync_interval()
-        self._znuny_sync_lock = threading.Lock()
-        self._extraction_lock = threading.Lock()
+        # Events to signal persistent worker threads
+        self._extraction_event = threading.Event()
+        self._znuny_sync_event = threading.Event()
+        # Persistent worker threads (keep Playwright alive across cycles)
+        self._extraction_thread: Optional[threading.Thread] = None
+        self._znuny_sync_thread: Optional[threading.Thread] = None
 
     @property
     def is_running(self) -> bool:
@@ -147,53 +154,63 @@ class SchedulerService:
             db.log_system("error", "znuny", f"Znuny sync failed: {e}")
             raise
 
-    def _extraction_worker(self):
-        """Run portal extraction with lock to prevent overlap."""
-        if not self._extraction_lock.acquire(blocking=False):
-            logger.debug("Portal extraction still running, skipping this cycle")
-            return
+    def _extraction_worker_loop(self):
+        """Persistent extraction worker - stays alive between cycles.
 
-        try:
-            db = Database()
+        Playwright objects are bound to their creator thread, so keeping
+        this thread alive allows browser reuse across extraction cycles.
+        """
+        logger.info("Extraction worker thread started")
+        while self._running:
+            self._extraction_event.wait(timeout=5)
+            if not self._running:
+                break
+            if not self._extraction_event.is_set():
+                continue
+            self._extraction_event.clear()
+
             try:
                 self.run_portal_extraction()
             except Exception as e:
                 logger.error(f"Portal extraction failed: {e}")
+                db = Database()
                 db.log_system("error", "scheduler", f"Portal extraction crashed: {e}")
-        finally:
-            self._extraction_lock.release()
 
-    def _znuny_sync_worker(self):
-        """Run Znuny sync with lock to prevent overlap."""
-        if not self._znuny_sync_lock.acquire(blocking=False):
-            logger.debug("Znuny sync still running, skipping this cycle")
-            return
+        logger.info("Extraction worker thread stopped")
 
-        try:
-            db = Database()
+    def _znuny_sync_worker_loop(self):
+        """Persistent Znuny sync worker - stays alive between cycles."""
+        logger.info("Znuny sync worker thread started")
+        while self._running:
+            self._znuny_sync_event.wait(timeout=5)
+            if not self._running:
+                break
+            if not self._znuny_sync_event.is_set():
+                continue
+            self._znuny_sync_event.clear()
+
             try:
                 self.run_znuny_sync()
             except Exception as e:
                 logger.error(f"Znuny sync failed: {e}")
+                db = Database()
                 db.log_system("error", "scheduler", f"Znuny sync crashed: {e}")
-        finally:
-            self._znuny_sync_lock.release()
+
+        logger.info("Znuny sync worker thread stopped")
 
     def _extraction_job(self):
-        """Launch portal extraction in its own thread (non-blocking)."""
-        threading.Thread(
-            target=self._extraction_worker,
-            daemon=True,
-            name="ExtractionWorker"
-        ).start()
+        """Signal the persistent extraction worker to run."""
+        if self._extraction_event.is_set():
+            logger.debug("Portal extraction still running, skipping this cycle")
+            return
+        self._extraction_event.set()
 
     def _znuny_sync_job(self):
-        """Launch Znuny sync in its own thread (non-blocking)."""
-        threading.Thread(
-            target=self._znuny_sync_worker,
-            daemon=True,
-            name="ZnunySyncWorker"
-        ).start()
+        """Signal the persistent Znuny sync worker to run."""
+        if self._znuny_sync_event.is_set():
+            logger.debug("Znuny sync still running, skipping this cycle")
+            return
+        self._znuny_sync_event.set()
 
     def _scheduler_loop(self):
         """Background scheduler loop with separate extraction and sync jobs."""
@@ -209,11 +226,26 @@ class SchedulerService:
             f"Znuny sync every {self._znuny_sync_interval}min"
         )
 
-        # Schedule separate jobs (each runs in its own thread)
+        # Start persistent worker threads
+        self._extraction_thread = threading.Thread(
+            target=self._extraction_worker_loop,
+            daemon=True,
+            name="ExtractionWorker"
+        )
+        self._extraction_thread.start()
+
+        self._znuny_sync_thread = threading.Thread(
+            target=self._znuny_sync_worker_loop,
+            daemon=True,
+            name="ZnunySyncWorker"
+        )
+        self._znuny_sync_thread.start()
+
+        # Schedule periodic jobs (just signal the persistent workers)
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
 
-        # Run both immediately on start (in parallel threads)
+        # Run both immediately on start
         self._extraction_job()
         self._znuny_sync_job()
 
@@ -242,6 +274,9 @@ class SchedulerService:
     def stop(self):
         """Stop the background scheduler."""
         self._running = False
+        # Wake up workers so they can exit
+        self._extraction_event.set()
+        self._znuny_sync_event.set()
         logger.info("Scheduler stop requested")
 
     def get_status(self) -> dict:

@@ -1,9 +1,6 @@
 import time
 import re
 from datetime import datetime
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 from .base import BaseExtractor
 from models.ticket import Ticket
@@ -63,55 +60,75 @@ class MedianetExtractor(BaseExtractor):
 
     # ============================================================
 
+    # Longer timeout for this SPA (default 10s is too short)
+    SPA_TIMEOUT = 60000
+    # Login page URL (lighter than the full SPA board)
+    LOGIN_URL = "https://app.crm.com/account/login"
+
+    def _goto_spa(self, url: str, timeout: int = None):
+        """Navigate to a Medianet SPA page using commit wait strategy.
+
+        The SPA at app.crm.com never fires 'load' or 'domcontentloaded' in time,
+        so we use 'commit' (just wait for initial HTTP response) and then wait
+        for actual content via wait_for_selector().
+        """
+        t = timeout or self.SPA_TIMEOUT
+        self.browser.page.goto(url, wait_until="commit", timeout=t)
+
     def is_logged_in(self) -> bool:
         """Check if currently logged in to Medianet portal."""
         try:
             # Check if browser is available
-            if not self.browser or not self.browser.driver:
+            if not self.browser or not self.browser.page:
                 self.logger.info("is_logged_in: No browser available")
                 return False
 
             # Check current URL first before navigating
             try:
-                current_url = self.browser.driver.current_url
+                current_url = self.browser.page.url
                 self.logger.info(f"is_logged_in: Current URL before check: {current_url}")
             except Exception as e:
                 self.logger.info(f"is_logged_in: Browser not responsive: {e}")
                 return False
 
-            # Navigate to service requests page and check if we can access it
-            self.logger.info(f"is_logged_in: Navigating to {self.SERVICE_REQUESTS_URL}")
-            self.navigate_to(self.SERVICE_REQUESTS_URL)
-            time.sleep(4)  # Increased wait time for page load
-
-            # Check current URL after navigation
-            current_url = self.browser.driver.current_url
-            self.logger.info(f"is_logged_in: URL after navigation: {current_url}")
-
-            # If redirected to login page, we're not logged in
-            if "/account/login" in current_url:
-                self.logger.info("is_logged_in: Redirected to login page - session expired")
+            # Navigate to login page (lighter than full SPA board)
+            # If we're logged in, it will redirect to the app; if not, we stay on login
+            self.logger.info(f"is_logged_in: Navigating to {self.LOGIN_URL}")
+            try:
+                self._goto_spa(self.LOGIN_URL)
+            except Exception as nav_err:
+                self.logger.warning(f"is_logged_in: Navigation failed: {nav_err}")
                 return False
 
-            # Check if board columns are visible (indicates successful load)
-            columns = self.browser.driver.find_elements(By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR)
-            self.logger.info(f"is_logged_in: Found {len(columns)} board columns")
+            # Wait for page to settle (SPA routing)
+            time.sleep(5)
 
-            if len(columns) > 0:
-                self.logger.info("Session valid - board loaded successfully")
-                return True
+            # Check current URL after navigation
+            current_url = self.browser.page.url
+            self.logger.info(f"is_logged_in: URL after navigation: {current_url}")
 
-            # Maybe need more time for columns to load
-            self.logger.info("is_logged_in: No columns found, waiting more...")
+            # If still on login page, we're not logged in
+            if "/account/login" in current_url:
+                self.logger.info("is_logged_in: On login page - session expired")
+                return False
+
+            # If redirected away from login, session is active
+            # Now navigate to the board and wait for it to load
+            self.logger.info("is_logged_in: Session active, navigating to board")
+            self._goto_spa(self.SERVICE_REQUESTS_URL)
             time.sleep(3)
-            columns = self.browser.driver.find_elements(By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR)
-            self.logger.info(f"is_logged_in: After additional wait, found {len(columns)} columns")
 
-            if len(columns) > 0:
-                self.logger.info("Session valid - board loaded after extended wait")
-                return True
+            # Wait for board columns to render (SPA content)
+            try:
+                self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=30000)
+                columns = self.browser.page.query_selector_all(self.BOARD_COLUMN_SELECTOR)
+                self.logger.info(f"is_logged_in: Found {len(columns)} board columns")
+                if len(columns) > 0:
+                    self.logger.info("Session valid - board loaded successfully")
+                    return True
+            except Exception:
+                self.logger.info("is_logged_in: Board columns did not appear in time")
 
-            self.logger.info("is_logged_in: No board columns found - session may be invalid")
             return False
         except Exception as e:
             self.logger.warning(f"is_logged_in check failed with error: {e}")
@@ -119,52 +136,57 @@ class MedianetExtractor(BaseExtractor):
 
     def login(self) -> bool:
         """Login to Medianet portal using two-step authentication."""
-        self.logger.info(f"Logging into Medianet portal: {self.config.url}")
+        self.logger.info(f"Logging into Medianet portal: {self.LOGIN_URL}")
 
         try:
-            self.navigate_to(self.config.url)
+            # Navigate to login page directly (lighter than the board SPA)
+            self._goto_spa(self.LOGIN_URL)
             time.sleep(3)
 
-            current_url = self.browser.driver.current_url
+            current_url = self.browser.page.url
             self.logger.info(f"login: Current URL after navigation: {current_url}")
 
-            # Check if redirected to login page
+            # Check if redirected away from login (already logged in)
             if "/account/login" not in current_url:
                 self.logger.info("login: Session already active (not on login page) - reusing session")
-                # This means is_logged_in() returned False but session is actually valid
-                # This can happen if is_logged_in() had an issue checking the board
                 return True
 
-            # Step 1: Enter email
-            self.logger.info("Step 1: Entering email")
-            email_field = WebDriverWait(self.browser.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.LOGIN_EMAIL_SELECTOR))
-            )
-            email_field.clear()
-            email_field.send_keys(self.config.username)
+            # Wait for the login form to render
+            self.logger.info("Step 1: Waiting for email field")
+            email_field = self.browser.page.wait_for_selector(self.LOGIN_EMAIL_SELECTOR, timeout=30000)
+            email_field.fill(self.config.username)
             time.sleep(0.5)
 
             # Click submit to proceed to password
-            submit_btn = self.browser.driver.find_element(By.CSS_SELECTOR, self.LOGIN_SUBMIT_SELECTOR)
+            submit_btn = self.browser.page.wait_for_selector(self.LOGIN_SUBMIT_SELECTOR, timeout=10000)
             submit_btn.click()
             time.sleep(2)
 
             # Step 2: Enter password
             self.logger.info("Step 2: Entering password")
-            password_field = WebDriverWait(self.browser.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.LOGIN_PASSWORD_SELECTOR))
-            )
-            password_field.clear()
-            password_field.send_keys(self.config.password)
+            password_field = self.browser.page.wait_for_selector(self.LOGIN_PASSWORD_SELECTOR, timeout=30000)
+            password_field.fill(self.config.password)
             time.sleep(0.5)
 
             # Click submit to complete login
-            submit_btn = self.browser.driver.find_element(By.CSS_SELECTOR, self.LOGIN_SUBMIT_SELECTOR)
+            submit_btn = self.browser.page.wait_for_selector(self.LOGIN_SUBMIT_SELECTOR, timeout=10000)
             submit_btn.click()
-            time.sleep(5)
+
+            # Wait for URL to change away from login page (SPA redirect after auth)
+            self.logger.info("Waiting for post-login navigation...")
+            try:
+                self.browser.page.wait_for_url(
+                    lambda url: "/account/login" not in url,
+                    timeout=self.SPA_TIMEOUT
+                )
+            except Exception as wait_err:
+                self.logger.warning(f"wait_for_url timed out: {wait_err}")
+                # Fall through to URL check below
+
+            time.sleep(3)  # Extra settle time for SPA to finish loading
 
             # Verify login success by checking URL
-            if "/account/login" in self.browser.driver.current_url:
+            if "/account/login" in self.browser.page.url:
                 self.logger.error("Login failed - still on login page")
                 return False
 
@@ -183,13 +205,11 @@ class MedianetExtractor(BaseExtractor):
         try:
             # Navigate to Service Requests Board
             self.logger.info("Navigating to Service Requests Board")
-            self.navigate_to(self.SERVICE_REQUESTS_URL)
+            self._goto_spa(self.SERVICE_REQUESTS_URL)
             time.sleep(5)
 
             # Wait for board to load
-            WebDriverWait(self.browser.driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR))
-            )
+            self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=15000)
 
             # Get all available ticket types from the dropdown
             ticket_types = self._get_ticket_type_options()
@@ -200,22 +220,18 @@ class MedianetExtractor(BaseExtractor):
                 try:
                     # Navigate back to board page first
                     self.logger.info(f"Navigating to board for ticket type: {ticket_type}")
-                    self.navigate_to(self.SERVICE_REQUESTS_URL)
+                    self._goto_spa(self.SERVICE_REQUESTS_URL)
                     time.sleep(3)
 
                     # Wait for board to load
-                    WebDriverWait(self.browser.driver, 15).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR))
-                    )
+                    self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=30000)
 
                     # Select the ticket type
                     self._select_ticket_type(ticket_type)
                     time.sleep(3)
 
                     # Wait for board to refresh
-                    WebDriverWait(self.browser.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR))
-                    )
+                    self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=10000)
 
                     # Get all ticket cards from the board for this type
                     ticket_cards = self._get_all_ticket_cards()
@@ -254,35 +270,32 @@ class MedianetExtractor(BaseExtractor):
         options = []
         try:
             # Click the dropdown to open it
-            dropdown = self.browser.driver.find_element(By.CSS_SELECTOR, self.TICKET_TYPE_DROPDOWN_SELECTOR)
+            dropdown = self.browser.page.query_selector(self.TICKET_TYPE_DROPDOWN_SELECTOR)
             dropdown.click()
             time.sleep(1)
 
             # Wait for menu to appear
-            WebDriverWait(self.browser.driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.TICKET_TYPE_DROPDOWN_MENU_SELECTOR))
-            )
+            self.browser.page.wait_for_selector(self.TICKET_TYPE_DROPDOWN_MENU_SELECTOR, timeout=5000)
 
             # Get all options
-            option_elements = self.browser.driver.find_elements(By.CSS_SELECTOR, self.TICKET_TYPE_OPTION_SELECTOR)
+            option_elements = self.browser.page.query_selector_all(self.TICKET_TYPE_OPTION_SELECTOR)
             for opt in option_elements:
-                text = opt.text.strip()
+                text = (opt.text_content() or "").strip()
                 # Skip placeholder options
                 if text and not text.lower().startswith("select"):
                     options.append(text)
 
-            # Close dropdown by pressing Escape or clicking elsewhere
-            from selenium.webdriver.common.keys import Keys
-            self.browser.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+            # Close dropdown by pressing Escape
+            self.browser.page.keyboard.press("Escape")
             time.sleep(0.5)
 
         except Exception as e:
             self.logger.warning(f"Error getting ticket type options: {e}")
             # If we can't get options, try to get current value at least
             try:
-                current_value = self.browser.driver.find_element(By.CSS_SELECTOR, self.TICKET_TYPE_CURRENT_VALUE_SELECTOR)
-                if current_value and current_value.text.strip():
-                    options.append(current_value.text.strip())
+                current_value = self.browser.page.query_selector(self.TICKET_TYPE_CURRENT_VALUE_SELECTOR)
+                if current_value and (current_value.text_content() or "").strip():
+                    options.append((current_value.text_content() or "").strip())
             except Exception:
                 pass
 
@@ -292,25 +305,23 @@ class MedianetExtractor(BaseExtractor):
         """Select a ticket type from the React Select dropdown."""
         try:
             # Click the dropdown to open it
-            dropdown = self.browser.driver.find_element(By.CSS_SELECTOR, self.TICKET_TYPE_DROPDOWN_SELECTOR)
+            dropdown = self.browser.page.query_selector(self.TICKET_TYPE_DROPDOWN_SELECTOR)
             dropdown.click()
             time.sleep(1)
 
             # Wait for menu to appear
-            WebDriverWait(self.browser.driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.TICKET_TYPE_DROPDOWN_MENU_SELECTOR))
-            )
+            self.browser.page.wait_for_selector(self.TICKET_TYPE_DROPDOWN_MENU_SELECTOR, timeout=5000)
 
             # Find and click the option
-            option_elements = self.browser.driver.find_elements(By.CSS_SELECTOR, self.TICKET_TYPE_OPTION_SELECTOR)
+            option_elements = self.browser.page.query_selector_all(self.TICKET_TYPE_OPTION_SELECTOR)
             for opt in option_elements:
-                if opt.text.strip() == ticket_type:
+                if (opt.text_content() or "").strip() == ticket_type:
                     opt.click()
                     time.sleep(1)
                     return
 
             # If exact match not found, close dropdown
-            self.browser.driver.find_element(By.TAG_NAME, "body").click()
+            self.browser.page.query_selector("body").click()
 
         except Exception as e:
             self.logger.warning(f"Error selecting ticket type '{ticket_type}': {e}")
@@ -320,15 +331,15 @@ class MedianetExtractor(BaseExtractor):
         ticket_cards = []
 
         try:
-            columns = self.browser.driver.find_elements(By.CSS_SELECTOR, self.BOARD_COLUMN_SELECTOR)
+            columns = self.browser.page.query_selector_all(self.BOARD_COLUMN_SELECTOR)
             self.logger.info(f"Found {len(columns)} board columns")
 
             # Only process first 2 columns (skip Closed which is usually column 3)
             for col_idx, col in enumerate(columns):
                 try:
                     # Get column status
-                    title_el = col.find_elements(By.CSS_SELECTOR, self.COLUMN_TITLE_SELECTOR)
-                    column_status = title_el[0].text.split('\n')[0] if title_el else "Unknown"
+                    title_el = col.query_selector_all(self.COLUMN_TITLE_SELECTOR)
+                    column_status = (title_el[0].text_content() or "").split('\n')[0] if title_el else "Unknown"
 
                     # Skip Closed column
                     if "closed" in column_status.lower():
@@ -336,18 +347,18 @@ class MedianetExtractor(BaseExtractor):
                         continue
 
                     # Get tickets in this column
-                    cards = col.find_elements(By.CSS_SELECTOR, self.TICKET_CARD_SELECTOR)
+                    cards = col.query_selector_all(self.TICKET_CARD_SELECTOR)
                     self.logger.info(f"Column '{column_status}': {len(cards)} tickets")
 
                     for card in cards:
                         try:
                             # Extract ticket ID from card using data-test attribute
-                            ticket_id_el = card.find_elements(By.CSS_SELECTOR, "span[data-test='serviceRequestNumber']")
-                            ticket_id = ticket_id_el[0].text.strip() if ticket_id_el else None
+                            ticket_id_el = card.query_selector_all("span[data-test='serviceRequestNumber']")
+                            ticket_id = (ticket_id_el[0].text_content() or "").strip() if ticket_id_el else None
 
                             if not ticket_id:
                                 # Fallback: try getting from card text
-                                card_text = card.text.strip()
+                                card_text = (card.text_content() or "").strip()
                                 lines = card_text.split('\n')
                                 ticket_id = lines[0] if lines else None
 
@@ -372,22 +383,20 @@ class MedianetExtractor(BaseExtractor):
         """Click on a ticket card and extract details from the detail page."""
         try:
             # Navigate back to board if needed
-            if "/service-requests-board" not in self.browser.driver.current_url:
-                self.navigate_to(self.SERVICE_REQUESTS_URL)
+            if "/service-requests-board" not in self.browser.page.url:
+                self._goto_spa(self.SERVICE_REQUESTS_URL)
                 time.sleep(3)
 
                 # Re-find the ticket card
-                WebDriverWait(self.browser.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, self.TICKET_CARD_SELECTOR))
-                )
+                self.browser.page.wait_for_selector(self.TICKET_CARD_SELECTOR, timeout=10000)
 
             # Find and click the ticket card
             ticket_id = card_info['ticket_id']
-            cards = self.browser.driver.find_elements(By.CSS_SELECTOR, self.TICKET_CARD_SELECTOR)
+            cards = self.browser.page.query_selector_all(self.TICKET_CARD_SELECTOR)
             target_card = None
 
             for card in cards:
-                if ticket_id in card.text:
+                if ticket_id in (card.text_content() or ""):
                     target_card = card
                     break
 
@@ -400,9 +409,7 @@ class MedianetExtractor(BaseExtractor):
             time.sleep(3)
 
             # Wait for detail page to load
-            WebDriverWait(self.browser.driver, 10).until(
-                EC.url_contains("/service-request/")
-            )
+            self.browser.page.wait_for_url("**/service-request/**", timeout=10000)
             time.sleep(2)
 
             # Extract ticket details
@@ -416,7 +423,7 @@ class MedianetExtractor(BaseExtractor):
         """Parse the ticket detail page and extract all information."""
         try:
             # Capture the current URL (contains UUID for this ticket)
-            portal_url = self.browser.driver.current_url
+            portal_url = self.browser.page.url
 
             # Ticket number
             ticket_id = self._get_element_text(self.TICKET_NUMBER_SELECTOR)
@@ -544,9 +551,9 @@ class MedianetExtractor(BaseExtractor):
     def _get_element_text(self, selector: str) -> str | None:
         """Get text from an element by CSS selector."""
         try:
-            elements = self.browser.driver.find_elements(By.CSS_SELECTOR, selector)
+            elements = self.browser.page.query_selector_all(selector)
             if elements:
-                text = elements[0].text.strip()
+                text = (elements[0].text_content() or "").strip()
                 if not text:
                     # Try getting value attribute (for textarea/input)
                     text = elements[0].get_attribute('value')
@@ -560,9 +567,9 @@ class MedianetExtractor(BaseExtractor):
     def _extract_notes(self) -> str | None:
         """Extract notes from the Notes card on the detail page."""
         try:
-            notes_content = self.browser.driver.find_elements(By.CSS_SELECTOR, self.NOTES_CONTENT_SELECTOR)
+            notes_content = self.browser.page.query_selector_all(self.NOTES_CONTENT_SELECTOR)
             if notes_content:
-                text = notes_content[0].text.strip()
+                text = (notes_content[0].text_content() or "").strip()
                 # Check if it's the "No notes found" message
                 if text and "No notes found" not in text:
                     # Remove the "NOTES" header if present

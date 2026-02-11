@@ -538,12 +538,8 @@ def _restart_extractions():
         scheduler = get_scheduler()
         logger.info("Config changed - restarting extractions with new credentials")
 
-        def run_async():
-            scheduler.run_portal_extraction()
-            scheduler.run_znuny_sync()
-
-        thread = threading.Thread(target=run_async, daemon=True)
-        thread.start()
+        scheduler._extraction_job()
+        scheduler._znuny_sync_job()
     except Exception as e:
         logger.error(f"Error restarting extractions after config change: {e}")
 

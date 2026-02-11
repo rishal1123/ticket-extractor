@@ -3,8 +3,7 @@ from typing import Optional
 import time
 import psutil
 
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import WebDriverException
+from playwright.sync_api import Error as PlaywrightError
 
 from config import PortalConfig
 from models.ticket import Ticket
@@ -12,14 +11,14 @@ from database import Database
 from utils.browser import BrowserManager
 from utils.logger import get_logger
 
-# Memory threshold in MB - reset browser if Chrome exceeds this
+# Memory threshold in MB - reset browser if Chromium exceeds this
 BROWSER_MEMORY_LIMIT_MB = 500
 
 
 class BaseExtractor(ABC):
     """Base class for all portal extractors."""
 
-    # Per-portal browser instances (each portal gets its own Chrome)
+    # Per-portal browser instances (each portal gets its own Chromium)
     _portal_browsers: dict[str, BrowserManager] = {}
     # Track consecutive 0-ticket extraction cycles per portal
     _consecutive_zero_counts: dict = {}
@@ -77,11 +76,13 @@ class BaseExtractor(ABC):
         return success
 
     def _get_browser_memory_mb(self, browser: BrowserManager) -> float:
-        """Get total memory usage (MB) for the browser's Chrome process tree."""
-        if not browser or not browser.driver:
+        """Get total memory usage (MB) for the browser's Chromium process tree."""
+        if not browser:
+            return 0.0
+        pid = browser.get_browser_pid()
+        if not pid:
             return 0.0
         try:
-            pid = browser.driver.service.process.pid
             parent = psutil.Process(pid)
             total = parent.memory_info().rss
             for child in parent.children(recursive=True):
@@ -115,15 +116,14 @@ class BaseExtractor(ABC):
         existing = BaseExtractor._portal_browsers.get(portal)
 
         if existing is not None:
-            try:
-                existing.driver.current_url
+            if existing.is_alive():
                 # Check memory before reusing
                 checked = self._check_memory_and_reset(portal, existing)
                 if checked is not None:
                     self.logger.info(f"[{portal}] Reusing dedicated browser")
                     return checked
                 # Memory too high, fall through to create new one
-            except WebDriverException:
+            else:
                 self.logger.info(f"[{portal}] Browser died, creating new one")
                 try:
                     existing.stop()
@@ -272,29 +272,34 @@ class BaseExtractor(ABC):
 
         return result
 
-    def navigate_to(self, url: str):
-        """Navigate to a URL."""
+    def navigate_to(self, url: str, timeout: int = None, wait_until: str = None):
+        """Navigate to a URL. timeout is in milliseconds (default uses page default)."""
         self.logger.debug(f"Navigating to: {url}")
-        self.browser.driver.get(url)
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if wait_until is not None:
+            kwargs["wait_until"] = wait_until
+        self.browser.page.goto(url, **kwargs)
 
-    def wait_and_click(self, by: By, value: str, timeout: int = 10) -> bool:
+    def wait_and_click(self, selector: str, timeout: int = 10) -> bool:
         """Wait for element and click it."""
-        return self.browser.safe_click(by, value, timeout)
+        return self.browser.safe_click(selector, timeout)
 
-    def wait_and_type(self, by: By, value: str, text: str, timeout: int = 10) -> bool:
+    def wait_and_type(self, selector: str, text: str, timeout: int = 10) -> bool:
         """Wait for element and type text."""
-        return self.browser.safe_send_keys(by, value, text, timeout)
+        return self.browser.safe_send_keys(selector, text, timeout)
 
-    def get_element_text(self, by: By, value: str, timeout: int = 10) -> Optional[str]:
+    def get_element_text(self, selector: str, timeout: int = 10) -> Optional[str]:
         """Get text from element."""
-        return self.browser.get_text(by, value, timeout)
+        return self.browser.get_text(selector, timeout)
 
-    def find_elements(self, by: By, value: str) -> list:
+    def find_elements(self, selector: str) -> list:
         """Find multiple elements."""
         try:
-            return self.browser.driver.find_elements(by, value)
+            return self.browser.page.query_selector_all(selector)
         except Exception as e:
-            self.logger.warning(f"Error finding elements {by}={value}: {e}")
+            self.logger.warning(f"Error finding elements {selector}: {e}")
             return []
 
     def take_screenshot(self, name: str):
