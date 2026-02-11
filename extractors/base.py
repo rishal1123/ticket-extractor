@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 import os
+import shutil
 import time
 import psutil
 
@@ -123,6 +124,16 @@ class BaseExtractor(ABC):
         session_dir = os.path.join(SESSIONS_DIR, self.config.name.lower())
         os.makedirs(session_dir, exist_ok=True)
         return session_dir
+
+    def _clear_session_dir(self):
+        """Delete persistent session directory to force a fresh browser next cycle."""
+        session_dir = os.path.join(SESSIONS_DIR, self.config.name.lower())
+        if os.path.exists(session_dir):
+            try:
+                shutil.rmtree(session_dir)
+                self.logger.info(f"Cleared browser session directory: {session_dir}")
+            except Exception as e:
+                self.logger.warning(f"Failed to clear session directory: {e}")
 
     def _get_or_create_browser(self) -> BrowserManager:
         """Get or create a dedicated browser for this portal.
@@ -282,6 +293,17 @@ class BaseExtractor(ABC):
                 if attempt < max_retries - 1:
                     self.logger.info(f"Retrying in 5 seconds...")
                     time.sleep(5)
+
+        # If all retries failed, clear session data for a fresh start next cycle
+        if result["status"] == "failed":
+            self.logger.warning(
+                f"All {max_retries} attempts failed - clearing browser session for fresh start"
+            )
+            self._clear_session_dir()
+            self.db.log_system(
+                "warning", f"extractor.{self.config.name}",
+                f"All {max_retries} extraction attempts failed - browser session cleared"
+            )
 
         # Log extraction result
         self.db.log_extraction(
