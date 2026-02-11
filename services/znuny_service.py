@@ -2,6 +2,7 @@
 Znuny Service - Business logic for Znuny ticket synchronization.
 """
 
+import time
 from typing import Dict, List, Optional
 from database import Database, now_maldives
 from znuny_client import ZnunyClient, parse_site_visit_article
@@ -328,6 +329,7 @@ class ZnunyService:
         }
 
         logger.info("Starting unified Znuny sync")
+        sync_start = time.time()
 
         # Track Znuny ticket IDs processed in Step 0 to avoid re-fetching in main loop
         step0_processed_ids = set()
@@ -623,7 +625,18 @@ class ZnunyService:
             self.db.log_system("error", "znuny", f"Znuny sync error: {e}")
             results["errors"] += 1
 
-        logger.info(f"Site visit sync complete: {results}")
+        # Log Znuny browser memory and timing at end of sync
+        elapsed = time.time() - sync_start
+        results["sync_duration_seconds"] = round(elapsed, 1)
+        try:
+            mem_mb = self.znuny_client._get_browser_memory_mb()
+            if mem_mb > 0:
+                results["znuny_memory_mb"] = round(mem_mb, 1)
+                logger.info(f"Znuny browser memory: {mem_mb:.0f}MB")
+        except Exception:
+            pass
+
+        logger.info(f"Site visit sync complete ({elapsed:.1f}s): {results}")
         return results
 
     def close(self):

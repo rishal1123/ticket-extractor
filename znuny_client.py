@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from dataclasses import dataclass, field
 
+import psutil
+
 # Maldives timezone (UTC+5)
 MALDIVES_TZ = timezone(timedelta(hours=5))
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, Playwright
@@ -235,14 +237,63 @@ class ZnunyClient:
         """Set shared ticket details cache."""
         ZnunyClient._shared_details_cache = value
 
+    # Memory limit for Znuny browser (MB) - reset if exceeded
+    MEMORY_LIMIT_MB = 800
+    _shared_browser_pid: int | None = None
+
+    def _get_browser_memory_mb(self) -> float:
+        """Get Znuny browser memory usage in MB."""
+        pid = ZnunyClient._shared_browser_pid
+        if not pid:
+            return 0.0
+        try:
+            parent = psutil.Process(pid)
+            total = parent.memory_info().rss
+            for child in parent.children(recursive=True):
+                try:
+                    total += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            return total / (1024 * 1024)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return 0.0
+
+    def _detect_browser_pid(self):
+        """Detect the Chromium PID spawned by Playwright for memory tracking."""
+        try:
+            driver_pid = ZnunyClient._shared_playwright._impl_obj._connection._transport._proc.pid
+            children = psutil.Process(driver_pid).children(recursive=False)
+            for child in children:
+                if "chromium" in child.name().lower() or "chrome" in child.name().lower():
+                    ZnunyClient._shared_browser_pid = child.pid
+                    logger.debug(f"Znuny Chromium PID: {child.pid}")
+                    return
+            # Fallback: use first child
+            if children:
+                ZnunyClient._shared_browser_pid = children[0].pid
+        except Exception:
+            pass
+
     def _setup_browser(self):
         """Setup Playwright browser with persistent context, reusing existing session if available."""
         if self.page:
             # Check if browser is still alive
             try:
                 _ = self.page.url
-                logger.info("Reusing existing Znuny browser session")
-                return
+                # Check memory usage
+                mem_mb = self._get_browser_memory_mb()
+                if mem_mb > 0:
+                    logger.info(f"Reusing existing Znuny browser session (memory: {mem_mb:.0f}MB)")
+                    if mem_mb > self.MEMORY_LIMIT_MB:
+                        logger.warning(f"Znuny browser memory {mem_mb:.0f}MB exceeds {self.MEMORY_LIMIT_MB}MB - resetting")
+                        self._close_browser_resources()
+                        self._logged_in = False
+                        # Fall through to create new browser
+                    else:
+                        return
+                else:
+                    logger.info("Reusing existing Znuny browser session")
+                    return
             except Exception:
                 logger.info("Znuny browser session died, recreating (session persisted)")
                 self._close_browser_resources()
@@ -263,6 +314,7 @@ class ZnunyClient:
         else:
             ZnunyClient._shared_page = ZnunyClient._shared_context.new_page()
         ZnunyClient._shared_page.set_default_timeout(10000)
+        self._detect_browser_pid()
         logger.info(f"Znuny persistent browser started (session dir: {ZNUNY_SESSION_DIR})")
 
     def _close_browser_resources(self):
@@ -289,6 +341,7 @@ class ZnunyClient:
             except Exception:
                 pass
             ZnunyClient._shared_playwright = None
+        ZnunyClient._shared_browser_pid = None
 
     def _login(self) -> bool:
         """Login to Znuny, reusing existing session if valid."""
@@ -439,7 +492,7 @@ class ZnunyClient:
     def search_by_title(self, search_term: str) -> list[dict]:
         """
         Search for tickets by checking if search_term appears in any open ticket's title.
-        Uses cached dashboard data for efficiency.
+        Uses cached dashboard data first, then falls back to Znuny search form.
         Returns list of matching tickets with ticket_number and title.
         """
         # Get all open tickets from dashboard (uses cache)
@@ -456,8 +509,136 @@ class ZnunyClient:
             if search_lower in t.get("title", "").lower()
         ]
 
-        logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
-        return matching
+        if matching:
+            logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
+            return matching
+
+        # Fallback: use Znuny's search form to find tickets not in the dashboard widget
+        # (e.g. tickets in other queues, or with different title format)
+        logger.info(f"Znuny search for '{search_term}': not in dashboard, trying search form")
+        fallback = self._search_via_form(search_term)
+        if fallback:
+            logger.info(f"Znuny search for '{search_term}': found {len(fallback)} via search form")
+        else:
+            logger.info(f"Znuny search for '{search_term}': not found (dashboard + search form)")
+        return fallback
+
+    def _search_via_form(self, search_term: str) -> list[dict]:
+        """
+        Search Znuny using the search form as a fallback.
+        This finds tickets in ALL queues and states, not just the dashboard widget.
+        """
+        if not self._login():
+            return []
+
+        try:
+            # Navigate to search page (loads AJAX dialog)
+            self.page.goto(self.SEARCH_URL)
+            time.sleep(2)
+
+            # Debug: screenshot search page
+            try:
+                self.page.screenshot(path=f"screenshots/znuny_search_debug.png")
+            except Exception:
+                pass
+
+            # Wait for the search form to appear (may be in a dialog/overlay)
+            title_field = None
+
+            # Try direct selector first
+            try:
+                title_field = self.page.wait_for_selector(
+                    self.SEARCH_TITLE_SELECTOR, timeout=5000, state="visible"
+                )
+            except Exception:
+                pass
+
+            # Try alternate selectors if direct didn't work
+            if not title_field:
+                for selector in ["#Title", "input#Title", "[name='Title']", "input[name='Fulltext']"]:
+                    try:
+                        title_field = self.page.wait_for_selector(selector, timeout=3000, state="visible")
+                        if title_field:
+                            logger.info(f"Znuny search: found field with selector '{selector}'")
+                            break
+                    except Exception:
+                        continue
+
+            if not title_field:
+                # Log page HTML for debugging
+                try:
+                    forms = self.page.evaluate("() => Array.from(document.querySelectorAll('input')).map(e => ({name: e.name, id: e.id, type: e.type})).slice(0, 20)")
+                    logger.warning(f"Znuny search: title field not found. Inputs on page: {forms}")
+                except Exception:
+                    logger.warning("Znuny search: title field not found and couldn't inspect page")
+                return []
+
+            # Fill search term with wildcards
+            title_field.fill(f"*{search_term}*")
+            time.sleep(0.5)
+
+            # Submit the search form
+            submitted = False
+            for btn_selector in [self.SEARCH_SUBMIT_SELECTOR, "button[type='submit']", "#SearchFormSubmit", ".Primary"]:
+                try:
+                    btn = self.page.query_selector(btn_selector)
+                    if btn:
+                        btn.click()
+                        submitted = True
+                        break
+                except Exception:
+                    continue
+
+            if not submitted:
+                logger.warning("Znuny search: couldn't find submit button")
+                return []
+
+            # Wait for results page to load
+            time.sleep(4)
+
+            # Debug: screenshot results
+            try:
+                self.page.screenshot(path=f"screenshots/znuny_search_results.png")
+            except Exception:
+                pass
+
+            page_title = self.page.title() or ""
+            logger.info(f"Znuny search results: page title = '{page_title}'")
+
+            # Parse search results
+            results = []
+            result_rows = self.page.query_selector_all("tr.MasterAction")
+            logger.info(f"Znuny search: found {len(result_rows)} result rows")
+
+            for row in result_rows:
+                try:
+                    link = row.query_selector("a.MasterActionLink")
+                    if not link:
+                        continue
+                    ticket_number = (link.text_content() or "").strip()
+                    href = link.get_attribute('href') or ""
+
+                    # Get title
+                    title_divs = row.query_selector_all("td div[title]")
+                    title = ""
+                    if title_divs:
+                        title = title_divs[-1].get_attribute('title') or (title_divs[-1].text_content() or "")
+
+                    if ticket_number:
+                        results.append({
+                            "ticket_number": ticket_number,
+                            "title": title,
+                            "href": href
+                        })
+                        logger.info(f"Znuny search result: {ticket_number}: {title[:80]}")
+                except Exception:
+                    continue
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Znuny search form error: {e}")
+            return []
 
     def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False,
                            bypass_cache: bool = False) -> ZnunyTicketDetails | None:
