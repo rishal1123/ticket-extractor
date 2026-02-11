@@ -9,8 +9,9 @@ This service encapsulates all scheduler-related logic including:
 
 import time
 import threading
-from typing import Callable, Optional
+from typing import Optional
 
+import psutil
 import schedule
 
 from database import Database
@@ -92,8 +93,20 @@ class SchedulerService:
         total_new = sum(r.get("tickets_new", 0) for r in results)
         failed = [r["portal"] for r in results if r.get("status") == "failed"]
 
-        logger.info(f"Portal extraction complete: {total_found} found, {total_new} new")
-        summary = f"Total: {total_found} found, {total_new} new"
+        # Log per-portal and total memory usage
+        mem_parts = []
+        for r in results:
+            if r.get("memory_mb"):
+                mem_parts.append(f"{r['portal']}:{r['memory_mb']}MB")
+        total_mem = sum(r.get("memory_mb", 0) for r in results)
+        mem_str = f", Memory: {', '.join(mem_parts)} (total: {total_mem:.0f}MB)" if mem_parts else ""
+
+        # Log process-level memory
+        proc_mem = psutil.Process().memory_info().rss / (1024 * 1024)
+        mem_str += f", App: {proc_mem:.0f}MB"
+
+        logger.info(f"Portal extraction complete: {total_found} found, {total_new} new{mem_str}")
+        summary = f"Total: {total_found} found, {total_new} new{mem_str}"
         if failed:
             logger.warning(f"Failed portals: {', '.join(failed)}")
             summary += f", Failed: {', '.join(failed)}"

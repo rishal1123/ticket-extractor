@@ -46,6 +46,15 @@
         right: 0.75rem;
         font-size: 1rem;
     }
+    .portal-name {
+        font-size: 0.8rem;
+    }
+    .extraction-info small {
+        font-size: 0.65rem;
+    }
+    .today-count small {
+        font-size: 0.6rem;
+    }
 }
 .delayed-date-filter.active {
     background-color: #0d6efd !important;
@@ -220,13 +229,13 @@
                     <th>Portal</th>
                     <th>Ticket ID</th>
                     <th>Customer</th>
-                    <th>Address</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Extracted</th>
+                    <th class="d-none d-md-table-cell">Address</th>
+                    <th class="d-none d-lg-table-cell">Type</th>
+                    <th class="d-none d-sm-table-cell">Status</th>
+                    <th class="d-none d-md-table-cell">Extracted</th>
                     <th>Znuny</th>
                     <th>Time to Create</th>
-                    <th>Created By</th>
+                    <th class="d-none d-sm-table-cell">Created By</th>
                 </tr>
             </thead>
             <tbody id="ticketsTable">
@@ -321,11 +330,11 @@
                 <tr>
                     <th>Portal</th>
                     <th>Ticket ID</th>
-                    <th>Customer</th>
-                    <th>Extracted</th>
-                    <th>Znuny Created</th>
-                    <th>Time to Create</th>
-                    <th>Created By</th>
+                    <th class="d-none d-sm-table-cell">Customer</th>
+                    <th class="d-none d-md-table-cell">Extracted</th>
+                    <th class="d-none d-md-table-cell">Znuny Created</th>
+                    <th>Delay</th>
+                    <th class="d-none d-sm-table-cell">Created By</th>
                     <th>Status</th>
                 </tr>
             </thead>
@@ -493,11 +502,11 @@ function renderDelayedTickets(tickets) {
         row.innerHTML = `
             <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
             <td><strong>${ticket.ticket_id}</strong></td>
-            <td class="text-truncate" style="max-width: 120px;" title="${ticket.customer_name || ''}">${ticket.customer_name || '-'}</td>
-            <td><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
-            <td><small>${formatMaldivesDateTime(ticket.znuny_created_at)}</small></td>
+            <td class="text-truncate d-none d-sm-table-cell" style="max-width: 120px;" title="${ticket.customer_name || ''}">${ticket.customer_name || '-'}</td>
+            <td class="d-none d-md-table-cell"><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
+            <td class="d-none d-md-table-cell"><small>${formatMaldivesDateTime(ticket.znuny_created_at)}</small></td>
             <td><span class="badge ${delayClass} time-badge">${formatTimeDiff(delayMs)}</span></td>
-            <td><small>${ticket.znuny_created_by || '-'}</small></td>
+            <td class="d-none d-sm-table-cell"><small>${ticket.znuny_created_by || '-'}</small></td>
             <td>${statusBadge}</td>
         `;
         tbody.appendChild(row);

@@ -177,9 +177,9 @@
                     <tr>
                         <th>Staff</th>
                         <th class="text-center">Total</th>
-                        <th class="text-center">Open</th>
-                        <th class="text-center">Closed</th>
-                        <th class="text-center">Articles</th>
+                        <th class="text-center d-none d-sm-table-cell">Open</th>
+                        <th class="text-center d-none d-sm-table-cell">Closed</th>
+                        <th class="text-center d-none d-md-table-cell">Articles</th>
                         <th class="text-center">Avg Close</th>
                     </tr>
                 </thead>
@@ -205,11 +205,11 @@
                         <th>Znuny ID</th>
                         <th>Title</th>
                         <th>State</th>
-                        <th class="text-center">ISP</th>
-                        <th>Created By</th>
-                        <th>Created At</th>
-                        <th class="d-none d-md-table-cell">Closed At</th>
-                        <th class="text-center">Time to Close</th>
+                        <th class="text-center d-none d-sm-table-cell">ISP</th>
+                        <th class="d-none d-sm-table-cell">Created By</th>
+                        <th class="d-none d-md-table-cell">Created At</th>
+                        <th class="d-none d-lg-table-cell">Closed At</th>
+                        <th class="text-center">Time</th>
                         <th class="text-center d-none d-lg-table-cell">Articles</th>
                         <th class="text-center">Znuny</th>
                     </tr>
@@ -326,9 +326,9 @@ async function loadStaffStats() {
             <tr class="staff-row">
                 <td><strong>${s.created_by}</strong></td>
                 <td class="text-center">${s.total_tickets}</td>
-                <td class="text-center state-open">${s.open_tickets}</td>
-                <td class="text-center state-closed">${s.closed_tickets}</td>
-                <td class="text-center">${s.total_articles}</td>
+                <td class="text-center d-none d-sm-table-cell state-open">${s.open_tickets}</td>
+                <td class="text-center d-none d-sm-table-cell state-closed">${s.closed_tickets}</td>
+                <td class="text-center d-none d-md-table-cell">${s.total_articles}</td>
                 <td class="text-center">${s.avg_close_time_minutes ? formatDuration(s.avg_close_time_minutes) : '--'}</td>
             </tr>
         `).join('');
@@ -379,10 +379,10 @@ async function loadTickets() {
                     <td><strong>${t.znuny_ticket_id}</strong></td>
                     <td class="text-truncate" style="max-width: 200px;" title="${escapeHtml(t.title || '')}">${t.title || '--'}</td>
                     <td><span class="badge ${stateClass}"><i class="bi bi-${stateIcon} me-1"></i>${t.state || 'Open'}</span></td>
-                    <td class="text-center">${linkBadge}</td>
-                    <td>${t.created_by || '--'}</td>
-                    <td><small>${formatDateTime(t.created_at)}</small></td>
-                    <td class="d-none d-md-table-cell"><small>${t.closed_at ? formatDateTime(t.closed_at) : '--'}</small></td>
+                    <td class="text-center d-none d-sm-table-cell">${linkBadge}</td>
+                    <td class="d-none d-sm-table-cell">${t.created_by || '--'}</td>
+                    <td class="d-none d-md-table-cell"><small>${formatDateTime(t.created_at)}</small></td>
+                    <td class="d-none d-lg-table-cell"><small>${t.closed_at ? formatDateTime(t.closed_at) : '--'}</small></td>
                     <td class="text-center">
                         ${t.time_to_close_minutes !== null
                             ? `<span class="time-badge ${timeClass}">${formatDuration(t.time_to_close_minutes)}</span>`

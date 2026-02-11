@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 import time
+import psutil
 
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import WebDriverException
@@ -11,12 +12,15 @@ from database import Database
 from utils.browser import BrowserManager
 from utils.logger import get_logger
 
+# Memory threshold in MB - reset browser if Chrome exceeds this
+BROWSER_MEMORY_LIMIT_MB = 500
+
 
 class BaseExtractor(ABC):
     """Base class for all portal extractors."""
 
-    # Single shared browser for all ISP portals (minimizes Chrome memory)
-    _shared_browser: Optional[BrowserManager] = None
+    # Per-portal browser instances (each portal gets its own Chrome)
+    _portal_browsers: dict[str, BrowserManager] = {}
     # Track consecutive 0-ticket extraction cycles per portal
     _consecutive_zero_counts: dict = {}
 
@@ -72,24 +76,65 @@ class BaseExtractor(ABC):
             self.db.log_login_event(self.config.name, "login_failed", success=False)
         return success
 
-    def _get_or_create_browser(self) -> BrowserManager:
-        """Get or create the shared ISP browser (1 Chrome for all portals)."""
-        if BaseExtractor._shared_browser is not None:
-            try:
-                BaseExtractor._shared_browser.driver.current_url
-                self.logger.info("Reusing shared ISP browser")
-                return BaseExtractor._shared_browser
-            except WebDriverException:
-                self.logger.info("Shared browser died, creating new one")
+    def _get_browser_memory_mb(self, browser: BrowserManager) -> float:
+        """Get total memory usage (MB) for the browser's Chrome process tree."""
+        if not browser or not browser.driver:
+            return 0.0
+        try:
+            pid = browser.driver.service.process.pid
+            parent = psutil.Process(pid)
+            total = parent.memory_info().rss
+            for child in parent.children(recursive=True):
                 try:
-                    BaseExtractor._shared_browser.stop()
+                    total += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            return total / (1024 * 1024)
+        except Exception:
+            return 0.0
+
+    def _check_memory_and_reset(self, portal: str, browser: BrowserManager) -> Optional[BrowserManager]:
+        """Check browser memory usage and reset if over limit. Returns None if reset needed."""
+        mem_mb = self._get_browser_memory_mb(browser)
+        if mem_mb <= 0:
+            return browser
+        self.logger.info(f"[{portal}] Browser memory: {mem_mb:.0f} MB (limit: {BROWSER_MEMORY_LIMIT_MB} MB)")
+        if mem_mb > BROWSER_MEMORY_LIMIT_MB:
+            self.logger.warning(f"[{portal}] Memory {mem_mb:.0f} MB exceeds {BROWSER_MEMORY_LIMIT_MB} MB - resetting browser")
+            try:
+                browser.stop()
+            except Exception:
+                pass
+            BaseExtractor._portal_browsers.pop(portal, None)
+            return None
+        return browser
+
+    def _get_or_create_browser(self) -> BrowserManager:
+        """Get or create a dedicated browser for this portal."""
+        portal = self.config.name
+        existing = BaseExtractor._portal_browsers.get(portal)
+
+        if existing is not None:
+            try:
+                existing.driver.current_url
+                # Check memory before reusing
+                checked = self._check_memory_and_reset(portal, existing)
+                if checked is not None:
+                    self.logger.info(f"[{portal}] Reusing dedicated browser")
+                    return checked
+                # Memory too high, fall through to create new one
+            except WebDriverException:
+                self.logger.info(f"[{portal}] Browser died, creating new one")
+                try:
+                    existing.stop()
                 except Exception:
                     pass
-                BaseExtractor._shared_browser = None
+                BaseExtractor._portal_browsers.pop(portal, None)
 
         browser = BrowserManager(headless=self.headless)
         browser.start()
-        BaseExtractor._shared_browser = browser
+        BaseExtractor._portal_browsers[portal] = browser
+        self.logger.info(f"[{portal}] Created dedicated browser")
         return browser
 
     def run(self, max_retries: int = 3, keep_session: bool = True) -> dict:
@@ -185,23 +230,30 @@ class BaseExtractor(ABC):
                         self.logger.warning(f"Logout error (non-critical): {e}")
 
                 result["status"] = "success"
+                # Log memory usage after successful extraction
+                mem_mb = self._get_browser_memory_mb(self.browser)
+                if mem_mb > 0:
+                    result["memory_mb"] = round(mem_mb, 1)
                 self.logger.info(
                     f"Extraction complete: {result['tickets_found']} found, "
                     f"{result['tickets_new']} new, {result['tickets_updated']} updated, "
                     f"{result['tickets_completed']} completed"
+                    f"{f', memory: {mem_mb:.0f}MB' if mem_mb > 0 else ''}"
                 )
                 break
 
             except Exception as e:
                 self.logger.error(f"Extraction failed: {e}")
                 result["error"] = str(e)
-                # Kill shared browser on error so next attempt starts fresh
-                if BaseExtractor._shared_browser is not None:
+                # Kill this portal's browser on error so next attempt starts fresh
+                portal = self.config.name
+                existing = BaseExtractor._portal_browsers.get(portal)
+                if existing is not None:
                     try:
-                        BaseExtractor._shared_browser.stop()
+                        existing.stop()
                     except Exception:
                         pass
-                    BaseExtractor._shared_browser = None
+                    BaseExtractor._portal_browsers.pop(portal, None)
                 self.browser = None
                 if attempt < max_retries - 1:
                     self.logger.info(f"Retrying in 5 seconds...")

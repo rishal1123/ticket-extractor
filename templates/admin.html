@@ -484,18 +484,18 @@
 
 <!-- Config Tab -->
 <div class="tab-pane fade" id="config-content" role="tabpanel">
-    <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
         <h5 class="mb-0"><i class="bi bi-sliders me-2"></i>Configuration</h5>
-        <div>
+        <div class="d-flex flex-wrap gap-1">
             <input type="file" id="envFileInput" accept=".env,.txt" class="d-none" onchange="uploadEnvFile(this)">
-            <button class="btn btn-outline-info btn-sm me-2" onclick="document.getElementById('envFileInput').click()">
-                <i class="bi bi-upload me-1"></i>Upload .env
+            <button class="btn btn-outline-info btn-sm" onclick="document.getElementById('envFileInput').click()">
+                <i class="bi bi-upload me-1"></i><span class="d-none d-sm-inline">Upload .env</span>
             </button>
-            <button class="btn btn-outline-secondary btn-sm me-2" onclick="loadConfig()">
-                <i class="bi bi-arrow-clockwise me-1"></i>Reload
+            <button class="btn btn-outline-secondary btn-sm" onclick="loadConfig()">
+                <i class="bi bi-arrow-clockwise me-1"></i><span class="d-none d-sm-inline">Reload</span>
             </button>
             <button class="btn btn-primary btn-sm" onclick="saveConfig()" id="saveConfigBtn">
-                <i class="bi bi-save me-1"></i>Save Changes
+                <i class="bi bi-save me-1"></i>Save
             </button>
         </div>
     </div>

@@ -167,7 +167,7 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                 <div class="col-12 mt-3">
                     <div class="section-title"><i class="bi bi-box-arrow-in-right"></i> Znuny Details</div>
                     <div class="row g-2 mb-3">
-                        <div class="col-md-3">
+                        <div class="col-6 col-md-3">
                             <div class="info-card">
                                 <div class="label">Znuny Ticket #</div>
                                 <div class="value">
@@ -177,19 +177,19 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-6 col-md-3">
                             <div class="info-card">
                                 <div class="label">Created By</div>
                                 <div class="value">${ticket.znuny_created_by || '-'}</div>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-6 col-md-3">
                             <div class="info-card">
                                 <div class="label">Time to Create</div>
                                 <div class="value">${timeToCreate !== '-' ? `<span class="badge bg-info">${timeToCreate}</span>` : '-'}</div>
                             </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-6 col-md-3">
                             <div class="info-card">
                                 <div class="label">Time to Complete</div>
                                 <div class="value">${timeToComplete !== '-' ? `<span class="badge bg-success">${timeToComplete}</span>` : '-'}</div>
@@ -244,7 +244,7 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                                     <th>Date</th>
                                     <th>Time</th>
                                     <th>Assigned To</th>
-                                    <th>Type</th>
+                                    <th class="d-none d-sm-table-cell">Type</th>
                                     <th>Status</th>
                                     <th>Duration</th>
                                 </tr>
@@ -255,7 +255,7 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                                         <td>${v.visit_date || '-'}</td>
                                         <td><code>${v.scheduled_time || '-'}</code></td>
                                         <td><strong>${v.assigned_to || '-'}</strong></td>
-                                        <td>${v.site_type || '-'}</td>
+                                        <td class="d-none d-sm-table-cell">${v.site_type || '-'}</td>
                                         <td>
                                             <span class="badge bg-${v.status === 'completed' ? 'success' : 'warning'}">
                                                 ${v.status}
@@ -468,13 +468,13 @@ function renderTicketRow(ticket, onClick) {
         <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
         <td><strong>${ticket.ticket_id}</strong></td>
         <td class="text-truncate" style="max-width: 150px;" title="${ticket.customer_name || ''}">${ticket.customer_name || '-'}</td>
-        <td class="text-truncate" style="max-width: 180px;" title="${ticket.address || ''}">${ticket.address || '-'}</td>
-        <td>${ticket.ticket_type || '-'}</td>
-        <td>${ticket.status || '-'}</td>
-        <td><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
+        <td class="text-truncate d-none d-md-table-cell" style="max-width: 180px;" title="${ticket.address || ''}">${ticket.address || '-'}</td>
+        <td class="d-none d-lg-table-cell">${ticket.ticket_type || '-'}</td>
+        <td class="d-none d-sm-table-cell">${ticket.status || '-'}</td>
+        <td class="d-none d-md-table-cell"><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
         <td class="znuny-status">${znunyIcon}</td>
         <td>${timeToCreate}</td>
-        <td><small>${ticket.znuny_created_by || '-'}</small></td>
+        <td class="d-none d-sm-table-cell"><small>${ticket.znuny_created_by || '-'}</small></td>
     `;
     return row;
 }

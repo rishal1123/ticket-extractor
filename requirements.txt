@@ -2,6 +2,7 @@
 selenium==4.17.2
 python-dotenv==1.0.1
 schedule==1.2.1
+psutil==5.9.8
 
 # Web framework
 fastapi==0.109.2

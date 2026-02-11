@@ -12,7 +12,7 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/tickets.db
     restart: unless-stopped
-    shm_size: '2gb'
+    shm_size: '4gb'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
       interval: 30s

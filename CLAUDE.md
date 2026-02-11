@@ -14,7 +14,7 @@ Extractor/
 ├── app.py               # MVC FastAPI app (alternative entry point)
 ├── dashboard.py         # FastAPI web server (port 8000) - main controller
 ├── database.py          # SQLite database operations (Repository)
-├── config.py            # Configuration from .env + APP_VERSION
+├── config.py            # Configuration from DB + .env fallback + APP_VERSION
 ├── znuny_client.py      # Selenium-based Znuny integration
 │
 ├── models/              # Data Models
@@ -25,7 +25,7 @@ Extractor/
 │   ├── extraction_service.py  # Portal extraction logic
 │   ├── znuny_service.py       # Znuny sync logic
 │   ├── stats_service.py       # Statistics/analytics
-│   ├── config_service.py      # Configuration management (.env)
+│   ├── config_service.py      # Configuration management (DB-stored)
 │   └── scheduler_service.py   # Background job scheduling
 │
 ├── controllers/         # Controller Layer - HTTP Handlers
@@ -58,8 +58,8 @@ Extractor/
 │   ├── browser.py       # Selenium browser manager
 │   └── logger.py        # Logging utilities
 │
-├── tickets.db           # SQLite database
-├── .env                 # Environment variables (credentials)
+├── tickets.db           # SQLite database (includes credentials in app_settings)
+├── .env                 # Environment variables (local dev fallback only)
 ├── Dockerfile           # Docker container configuration
 └── docker-compose.yml   # Docker Compose orchestration
 ```
@@ -217,7 +217,7 @@ Business logic separated from HTTP handlers:
 | `ExtractionService` | extraction_service.py | Run portal extractions |
 | `ZnunyService` | znuny_service.py | Znuny sync, ticket checking, article fetch |
 | `StatsService` | stats_service.py | Dashboard stats, staff metrics, reports |
-| `ConfigService` | config_service.py | Environment config management |
+| `ConfigService` | config_service.py | DB-stored config management |
 | `SchedulerService` | scheduler_service.py | Background job scheduling, extraction timing |
 
 ### 5. Controllers Layer (controllers/)
@@ -263,6 +263,10 @@ HTTP route handlers (MVC app only):
 | `/api/admin/trigger-extraction` | POST | Manually trigger extraction |
 | `/api/admin/scheduler-status` | GET | Get scheduler status |
 | `/api/admin/login-summary` | GET | Login statistics summary |
+| `/api/config` | GET | Get config (passwords masked) |
+| `/api/config/raw` | GET | Get config (passwords unmasked) |
+| `/api/config` | POST | Save config to DB |
+| `/api/config/upload` | POST | Upload .env file to populate DB |
 
 ### 7. Znuny Integration (znuny_client.py)
 
@@ -276,37 +280,33 @@ Uses Selenium to interact with Znuny web interface:
 - `ZnunyArticle` - Article/note data structure
 - `ZnunyTicketDetails` - Full ticket details
 
-### 8. Configuration (.env)
+### 8. Configuration (DB-stored)
 
-```env
-# Portal credentials
-DHIRAAGU_URL=https://afas.dhiraagu.com.mv/login
-DHIRAAGU_USERNAME=xxx
-DHIRAAGU_PASSWORD=xxx
+Portal credentials and settings are stored in the SQLite database (`app_settings` table) with a `cfg_` key prefix. The `.env` file serves as a fallback for local development.
 
-OOREDOO_URL=https://www.ooredoo.mv/webapps/FMS/public/tickets
-OOREDOO_USERNAME=xxx
-OOREDOO_PASSWORD=xxx
+**Config priority:** Database → `.env` file → default value
 
-ROL_URL=https://support.rol.net.mv/staff/index.php
-ROL_USERNAME=xxx
-ROL_PASSWORD=xxx
-
-MEDIANET_URL=https://app.crm.com/crm/service-requests-board
-MEDIANET_USERNAME=xxx
-MEDIANET_PASSWORD=xxx
-
-# Znuny API
-ZNUNY_URL=https://10.241.1.110
-ZNUNY_USERNAME=xxx
-ZNUNY_PASSWORD=xxx
-
-# Settings
-EXTRACTION_INTERVAL_MINUTES=5
-ZNUNY_SYNC_INTERVAL_MINUTES=1
-DASHBOARD_HOST=0.0.0.0
-DASHBOARD_PORT=8000
+**Config keys in `app_settings` table:**
 ```
+cfg_DHIRAAGU_URL, cfg_DHIRAAGU_USERNAME, cfg_DHIRAAGU_PASSWORD
+cfg_OOREDOO_URL, cfg_OOREDOO_USERNAME, cfg_OOREDOO_PASSWORD
+cfg_ROL_URL, cfg_ROL_USERNAME, cfg_ROL_PASSWORD
+cfg_MEDIANET_URL, cfg_MEDIANET_USERNAME, cfg_MEDIANET_PASSWORD
+cfg_ZNUNY_URL, cfg_ZNUNY_USERNAME, cfg_ZNUNY_PASSWORD
+cfg_EXTRACTION_INTERVAL_MINUTES, cfg_ZNUNY_SYNC_INTERVAL_MINUTES
+cfg_DASHBOARD_HOST, cfg_DASHBOARD_PORT
+```
+
+**How credentials are populated:**
+1. **Upload .env file** via Admin → Config tab → "Upload .env" button
+2. **Manual edit** via Admin → Config tab form fields
+3. **Fallback**: `.env` file values via `os.getenv()` (local dev only)
+
+**Architecture note:** `config.py` uses raw `sqlite3` to read from `app_settings` (not the `Database` class) to avoid circular imports, since `database.py` imports `Config` for `DATABASE_PATH`.
+
+**Auto-restart:** After uploading .env or saving config, extractions automatically restart with new credentials.
+
+**Credential guard:** Extractions are skipped if no portal credentials exist in the database yet.
 
 ## Important Timestamps
 
@@ -371,37 +371,32 @@ rmdir /s /q extractors\__pycache__
 ### Quick Start
 
 ```bash
-# Copy example env file and configure
-cp .env.example .env
-# Edit .env with your credentials
-
 # Build and run
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker logs ticket-extractor -f
 
 # Stop
-docker-compose down
+docker compose down
 ```
 
-### Configuration
+### First-Time Setup
 
-Create a `.env` file from the example template:
-```bash
-cp .env.example .env
-```
+1. Deploy the container: `docker compose up -d`
+2. Open `http://server:8003/admin` → Config tab
+3. Upload your `.env` file (or manually enter credentials)
+4. Extractions start automatically after credentials are saved
 
-Edit `.env` with your portal credentials. Changes to `.env` persist on the host and are loaded on container restart.
+No `.env` file mount needed - credentials are stored in the SQLite database inside the persistent volume.
 
 ### Persistent Volumes
 
 | Volume | Purpose |
 |--------|---------|
-| `extractor_data:/app/data` | Named volume for persistent data (database, logs) |
-| `./.env:/app/.env:ro` | Environment config (read-only in container) |
+| `extractor_data:/app/data` | Named volume for persistent data (database with credentials, logs) |
 
-The database is stored at `/app/data/tickets.db` inside the container, persisted via the named volume `ticket-extractor-data`.
+The database is stored at `/app/data/tickets.db` inside the container, persisted via the named volume `ticket-extractor-data`. Credentials are stored in the `app_settings` table within this database.
 
 **Backup the database:**
 ```bash
@@ -411,14 +406,15 @@ docker cp ticket-extractor:/app/data/tickets.db ./backup_tickets.db
 **Restore database:**
 ```bash
 docker cp ./backup_tickets.db ticket-extractor:/app/data/tickets.db
-docker-compose restart
+docker compose restart
 ```
 
 ### Docker Compose Features
 
-- Chrome with Selenium for web scraping
-- Named volume for persistent database (`ticket-extractor-data`)
-- Environment loaded from `.env` file (persists across restarts)
+- Chrome with Selenium for web scraping (built-in driver management)
+- Named volume for persistent database and credentials (`ticket-extractor-data`)
+- Credentials stored in DB (no `.env` file mount needed)
+- Port mapping: 8003 (host) → 8000 (container)
 - Automatic restart on failure
 - 2GB shared memory for Chrome stability
 - Health check with auto-restart on failure
@@ -427,8 +423,9 @@ docker-compose restart
 ### Updating Configuration
 
 To update credentials or settings:
-1. Edit `.env` on the host machine
-2. Restart the container: `docker-compose restart`
+1. Open Admin → Config tab in the web UI
+2. Edit fields or upload a new `.env` file
+3. Extractions restart automatically with new credentials
 
 ## Scheduler
 
@@ -443,6 +440,7 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - Znuny sync uses a threading lock to prevent overlap (if sync takes >1 min, next cycle is skipped)
 - Both jobs run immediately on startup, then repeat at their configured intervals
 - The scheduler is started automatically via the FastAPI lifespan in `app.py`
+- **Credential guard:** Jobs skip execution if no portal credentials exist in the database
 
 ## Portal-Specific Notes
 
@@ -495,8 +493,9 @@ All times are in **Maldives Time (UTC+5)** - see `MVT` constant in `database.py`
 
 ## Browser Management
 
-- Uses Selenium with Chrome WebDriver
-- `webdriver_manager` auto-downloads correct driver version
+- Uses Selenium 4.17+ with Chrome WebDriver
+- Selenium's built-in driver management (SeleniumManager) handles chromedriver automatically
+- No external `webdriver_manager` package needed
 - Headless mode used for scheduled extractions
 - Sessions persisted per-portal for efficiency
 

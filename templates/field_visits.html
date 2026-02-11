@@ -196,9 +196,9 @@
                     <tr>
                         <th>Staff</th>
                         <th class="text-center">Total</th>
-                        <th class="text-center">Completed</th>
-                        <th class="text-center">Pending</th>
-                        <th class="text-center">Avg Time</th>
+                        <th class="text-center d-none d-sm-table-cell">Done</th>
+                        <th class="text-center d-none d-sm-table-cell">Pending</th>
+                        <th class="text-center">Avg</th>
                         <th class="text-center d-none d-md-table-cell">Min</th>
                         <th class="text-center d-none d-md-table-cell">Max</th>
                     </tr>
@@ -224,13 +224,13 @@
                     <tr>
                         <th>Date</th>
                         <th>Time</th>
-                        <th>Assigned To</th>
+                        <th>Assigned</th>
                         <th class="d-none d-md-table-cell">Provider</th>
-                        <th class="d-none d-md-table-cell">Site Type</th>
+                        <th class="d-none d-lg-table-cell">Site Type</th>
                         <th>Status</th>
                         <th class="text-center d-none d-lg-table-cell">Extracted</th>
-                        <th class="text-center">Duration</th>
-                        <th class="text-center">Znuny</th>
+                        <th class="text-center d-none d-sm-table-cell">Duration</th>
+                        <th class="text-center d-none d-sm-table-cell">Znuny</th>
                         <th class="text-center">Actions</th>
                     </tr>
                 </thead>
@@ -461,8 +461,8 @@ async function loadStaffStats() {
             <tr class="staff-row">
                 <td><strong>${s.assigned_to}</strong></td>
                 <td class="text-center">${s.total_visits}</td>
-                <td class="text-center visit-completed">${s.completed}</td>
-                <td class="text-center visit-pending">${s.pending}</td>
+                <td class="text-center d-none d-sm-table-cell visit-completed">${s.completed}</td>
+                <td class="text-center d-none d-sm-table-cell visit-pending">${s.pending}</td>
                 <td class="text-center">${s.avg_time_minutes ? formatDuration(s.avg_time_minutes) : '--'}</td>
                 <td class="text-center d-none d-md-table-cell">${s.min_time_minutes ? formatDuration(s.min_time_minutes) : '--'}</td>
                 <td class="text-center d-none d-md-table-cell">${s.max_time_minutes ? formatDuration(s.max_time_minutes) : '--'}</td>
@@ -511,17 +511,17 @@ async function loadVisits() {
                     <td class="d-none d-md-table-cell">
                         ${v.service_provider ? `<span class="provider-badge ${providerClass}">${v.service_provider}</span>` : '--'}
                     </td>
-                    <td class="d-none d-md-table-cell">${v.site_type || '--'}</td>
+                    <td class="d-none d-lg-table-cell">${v.site_type || '--'}</td>
                     <td><span class="${statusClass}"><i class="bi bi-${v.status === 'completed' ? 'check-circle' : 'hourglass-split'} me-1"></i>${v.status}</span></td>
                     <td class="text-center d-none d-lg-table-cell small text-muted">
                         ${v.created_at ? formatExtractedTime(v.created_at) : '--'}
                     </td>
-                    <td class="text-center">
+                    <td class="text-center d-none d-sm-table-cell">
                         ${v.time_taken_minutes !== null
                             ? `<span class="time-badge ${timeClass}">${formatDuration(v.time_taken_minutes)}</span>`
                             : '--'}
                     </td>
-                    <td class="text-center">
+                    <td class="text-center d-none d-sm-table-cell">
                         ${v.znuny_url
                             ? `<a href="${v.znuny_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-1" title="Open in Znuny"><i class="bi bi-box-arrow-up-right"></i></a>`
                             : '--'}
