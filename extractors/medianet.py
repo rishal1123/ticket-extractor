@@ -13,6 +13,9 @@ class MedianetExtractor(BaseExtractor):
     Tickets don't disappear when completed - they move to "Closed" status.
     """
 
+    # SPA-heavy portal needs more memory headroom (default 800MB)
+    MEMORY_LIMIT_MB = 1500
+
     # ============================================================
     # CSS SELECTORS
     # ============================================================

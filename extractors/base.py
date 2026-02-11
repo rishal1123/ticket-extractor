@@ -12,9 +12,8 @@ from database import Database
 from utils.browser import BrowserManager
 from utils.logger import get_logger
 
-# Memory threshold in MB - reset browser if Chromium exceeds this
-# Playwright Chromium typically uses 300-600 MB per browser; SPA-heavy portals (Medianet) can reach 600+
-BROWSER_MEMORY_LIMIT_MB = 800
+# Default memory threshold in MB - subclasses can override via MEMORY_LIMIT_MB
+DEFAULT_MEMORY_LIMIT_MB = 800
 # Directory for persistent browser sessions
 SESSIONS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "browser_sessions")
 
@@ -26,6 +25,8 @@ class BaseExtractor(ABC):
     _portal_browsers: dict[str, BrowserManager] = {}
     # Track consecutive 0-ticket extraction cycles per portal
     _consecutive_zero_counts: dict = {}
+    # Memory limit per browser - override in subclass for heavier portals
+    MEMORY_LIMIT_MB = DEFAULT_MEMORY_LIMIT_MB
 
     def __init__(self, config: PortalConfig, db: Database, headless: bool = False):
         self.config = config
@@ -102,12 +103,12 @@ class BaseExtractor(ABC):
         mem_mb = self._get_browser_memory_mb(browser)
         if mem_mb <= 0:
             return browser
-        self.logger.info(f"[{portal}] Browser memory: {mem_mb:.0f} MB (limit: {BROWSER_MEMORY_LIMIT_MB} MB)")
-        if mem_mb > BROWSER_MEMORY_LIMIT_MB:
-            self.logger.warning(f"[{portal}] Memory {mem_mb:.0f} MB exceeds {BROWSER_MEMORY_LIMIT_MB} MB - resetting browser")
+        self.logger.info(f"[{portal}] Browser memory: {mem_mb:.0f} MB (limit: {self.MEMORY_LIMIT_MB} MB)")
+        if mem_mb > self.MEMORY_LIMIT_MB:
+            self.logger.warning(f"[{portal}] Memory {mem_mb:.0f} MB exceeds {self.MEMORY_LIMIT_MB} MB - resetting browser")
             self.db.log_system(
                 "warning", f"extractor.{portal}",
-                f"Browser memory {mem_mb:.0f} MB exceeds {BROWSER_MEMORY_LIMIT_MB} MB limit - resetting"
+                f"Browser memory {mem_mb:.0f} MB exceeds {self.MEMORY_LIMIT_MB} MB limit - resetting"
             )
             try:
                 browser.stop()
