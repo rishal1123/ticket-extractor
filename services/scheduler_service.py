@@ -198,6 +198,17 @@ class SchedulerService:
 
         logger.info("Znuny sync worker thread stopped")
 
+    def _cleanup_old_logs(self):
+        """Delete logs older than 2 days from all log tables."""
+        try:
+            db = Database()
+            results = db.clear_old_logs(days=2)
+            total = sum(results.values())
+            if total > 0:
+                logger.info(f"Cleaned up {total} old log entries: {results}")
+        except Exception as e:
+            logger.error(f"Log cleanup failed: {e}")
+
     def _extraction_job(self):
         """Signal the persistent extraction worker to run."""
         if self._extraction_event.is_set():
@@ -240,6 +251,10 @@ class SchedulerService:
             name="ZnunySyncWorker"
         )
         self._znuny_sync_thread.start()
+
+        # Clean up old logs on startup and daily
+        self._cleanup_old_logs()
+        schedule.every().day.at("00:00").do(self._cleanup_old_logs)
 
         # Schedule periodic jobs (just signal the persistent workers)
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)

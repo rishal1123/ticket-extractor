@@ -1972,17 +1972,26 @@ class Database:
                 "total": total
             }
 
-    def clear_old_logs(self, days: int = 30) -> int:
-        """Clear system logs older than specified days. Returns count deleted."""
+    def clear_old_logs(self, days: int = 2) -> dict:
+        """Clear all log tables older than specified days. Returns counts per table."""
+        results = {}
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM system_logs
-                WHERE created_at < datetime('now', ? || ' days')
-            """, (f"-{days}",))
-            deleted = cursor.rowcount
-            logger.info(f"Cleared {deleted} system logs older than {days} days")
-            return deleted
+            cutoff = f"-{days}"
+            for table, col in [
+                ("system_logs", "created_at"),
+                ("extraction_logs", "extracted_at"),
+                ("login_stats", "created_at"),
+            ]:
+                cursor.execute(f"""
+                    DELETE FROM {table}
+                    WHERE {col} < datetime('now', ? || ' days')
+                """, (cutoff,))
+                results[table] = cursor.rowcount
+        total = sum(results.values())
+        if total > 0:
+            logger.info(f"Cleared old logs ({days}d): {results}")
+        return results
 
     # ==================== App Settings ====================
 
