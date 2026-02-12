@@ -27,6 +27,8 @@ async def get_znuny_only_stats(db: Database = Depends(get_db)):
 async def get_znuny_only_tickets(
     state: Optional[str] = Query(None, description="Filter by state (open/closed)"),
     created_by: Optional[str] = Query(None, description="Filter by creator"),
+    queue: Optional[str] = Query(None, description="Filter by queue"),
+    owner: Optional[str] = Query(None, description="Filter by owner"),
     linked: Optional[str] = Query(None, description="Filter by ISP link (yes/no)"),
     date_filter: DateFilterParams = Depends(get_date_filter),
     limit: int = Query(100, ge=1, le=500),
@@ -37,6 +39,8 @@ async def get_znuny_only_tickets(
     result = db.get_znuny_only_tickets(
         state=state,
         created_by=created_by,
+        queue=queue,
+        owner=owner,
         date_from=date_filter.date_from,
         date_to=date_filter.date_to,
         linked=linked,
@@ -63,3 +67,19 @@ async def get_znuny_only_staff_names(db: Database = Depends(get_db)):
     """Get list of staff names who created Znuny-only tickets."""
     names = db.get_znuny_only_staff_names()
     return JSONResponse(content={"staff": names})
+
+
+@router.get("/queue-names")
+@handle_errors("get znuny queue names")
+async def get_znuny_queue_names(db: Database = Depends(get_db)):
+    """Get list of distinct queue names."""
+    names = db.get_znuny_queue_names()
+    return JSONResponse(content={"queues": names})
+
+
+@router.get("/owner-names")
+@handle_errors("get znuny owner names")
+async def get_znuny_owner_names(db: Database = Depends(get_db)):
+    """Get list of distinct owner names."""
+    names = db.get_znuny_owner_names()
+    return JSONResponse(content={"owners": names})

@@ -344,6 +344,9 @@ class ZnunyService:
             # (have znuny_ticket_id but no znuny_created_by)
             unsynced_isp = self.db.get_tickets_needing_znuny_details()
             if unsynced_isp:
+                # Build title lookup dict once (avoids linear scan per ticket)
+                open_tickets_map = {t["ticket_number"]: t.get("title") for t in self.znuny_client.get_open_tickets()}
+
                 logger.info(f"Syncing details for {len(unsynced_isp)} newly linked ISP tickets")
                 for ticket in unsynced_isp:
                     try:
@@ -357,8 +360,13 @@ class ZnunyService:
                                 znuny_address=details.address,
                                 znuny_url=details.znuny_url
                             )
+                            # Filter to only new articles using known_article_counts
+                            known = known_article_counts.get(ticket.znuny_ticket_id, {})
+                            max_known_num = known.get("max_num", 0) or 0
+                            articles_to_store = [a for a in details.articles if a.article_number > max_known_num] if max_known_num else details.articles
+
                             # Store articles
-                            for article in details.articles:
+                            for article in articles_to_store:
                                 self.db.upsert_znuny_article(
                                     ticket_id=ticket.id,
                                     znuny_ticket_id=ticket.znuny_ticket_id,
@@ -389,12 +397,27 @@ class ZnunyService:
                                         customer_name=site_visit.customer_name
                                     )
                                     results["site_visits_extracted"] += 1
+
+                            # Check for follow-up articles that complete pending site visits
+                            self._complete_site_visits_by_followup(
+                                ticket.znuny_ticket_id, details.articles
+                            )
+
+                            # Update known_article_counts so Step 2 doesn't re-process
+                            known_article_counts[ticket.znuny_ticket_id] = {
+                                "count": len(details.articles),
+                                "max_num": max(a.article_number for a in details.articles) if details.articles else 0
+                            }
+
                             # Also store in znuny_tickets table
                             last_art = details.articles[-1] if details.articles else None
                             self.db.upsert_znuny_only_ticket({
                                 "znuny_ticket_id": ticket.znuny_ticket_id,
-                                "title": next((t.get("title") for t in self.znuny_client.get_open_tickets()
-                                               if t["ticket_number"] == ticket.znuny_ticket_id), None),
+                                "title": open_tickets_map.get(ticket.znuny_ticket_id),
+                                "state": details.state,
+                                "queue": details.queue,
+                                "priority": details.priority,
+                                "owner": details.owner,
                                 "created_at": details.created_at,
                                 "created_by": details.created_by,
                                 "article_count": len(details.articles),
@@ -469,7 +492,7 @@ class ZnunyService:
             # Derive remaining pending visit IDs from Step 1.6 (no extra DB query needed)
             all_pending_visit_ids = pending_visit_ids - closed_with_pending
 
-            # Step 2: Process all open tickets
+            # Step 2: Process all open tickets (queue view data is embedded in ticket_info)
             for ticket_info in all_tickets:
                 try:
                     znuny_ticket_id = ticket_info["ticket_number"]
@@ -512,13 +535,15 @@ class ZnunyService:
 
                     # Always store/update in znuny_tickets (before any skip checks)
                     # This ensures ALL open tickets are catalogued with ISP link status
+                    # Sidebar-parsed data takes priority over queue view data from ticket_info
                     last_article = details.articles[-1] if details.articles else None
                     self.db.upsert_znuny_only_ticket({
                         "znuny_ticket_id": znuny_ticket_id,
                         "title": title,
-                        "state": ticket_info.get("state"),
-                        "queue": ticket_info.get("queue"),
-                        "priority": ticket_info.get("priority"),
+                        "state": details.state or ticket_info.get("state"),
+                        "queue": details.queue or ticket_info.get("queue"),
+                        "priority": details.priority or ticket_info.get("priority"),
+                        "owner": details.owner or ticket_info.get("owner"),
                         "created_at": details.created_at,
                         "created_by": details.created_by,
                         "closed_at": None,  # Open ticket

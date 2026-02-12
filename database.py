@@ -350,11 +350,19 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+            # Migration: Add owner column to znuny_tickets
+            try:
+                cursor.execute("ALTER TABLE znuny_tickets ADD COLUMN owner TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             # Indexes for znuny_tickets
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_state ON znuny_tickets(state)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_by ON znuny_tickets(created_by)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_created_at ON znuny_tickets(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_isp ON znuny_tickets(isp_ticket_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_queue ON znuny_tickets(queue)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_tickets_owner ON znuny_tickets(owner)")
 
             # --- All performance indexes (single consolidated block) ---
 
@@ -2015,12 +2023,13 @@ class Database:
                 "count": row["count"]
             } for row in cursor.fetchall()]
 
-            # Today's counts
+            # Today's counts (use MVT date, not UTC)
+            today_date = now_maldives().date().isoformat()
             cursor.execute("""
                 SELECT level, COUNT(*) as count FROM system_logs
-                WHERE DATE(created_at) = DATE('now')
+                WHERE DATE(created_at) = ?
                 GROUP BY level
-            """)
+            """, (today_date,))
             today = {row["level"]: row["count"] for row in cursor.fetchall()}
 
             # Total count
@@ -2092,20 +2101,40 @@ class Database:
             }
 
     def get_performance_thresholds(self) -> dict:
-        """Get performance threshold settings."""
+        """Get performance threshold settings (single query instead of 4)."""
+        defaults = {
+            "perf_threshold_good": "5",
+            "perf_threshold_warning": "10",
+            "perf_threshold_bad": "30",
+            "perf_threshold_critical": "60"
+        }
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?, ?)",
+                tuple(defaults.keys())
+            )
+            found = {row["key"]: row["value"] for row in cursor.fetchall()}
         return {
-            "good": int(self.get_setting("perf_threshold_good", "5")),
-            "warning": int(self.get_setting("perf_threshold_warning", "10")),
-            "bad": int(self.get_setting("perf_threshold_bad", "30")),
-            "critical": int(self.get_setting("perf_threshold_critical", "60"))
+            "good": int(found.get("perf_threshold_good", defaults["perf_threshold_good"])),
+            "warning": int(found.get("perf_threshold_warning", defaults["perf_threshold_warning"])),
+            "bad": int(found.get("perf_threshold_bad", defaults["perf_threshold_bad"])),
+            "critical": int(found.get("perf_threshold_critical", defaults["perf_threshold_critical"]))
         }
 
     def set_performance_thresholds(self, good: int, warning: int, bad: int, critical: int):
-        """Set performance threshold settings."""
-        self.set_setting("perf_threshold_good", str(good))
-        self.set_setting("perf_threshold_warning", str(warning))
-        self.set_setting("perf_threshold_bad", str(bad))
-        self.set_setting("perf_threshold_critical", str(critical))
+        """Set performance threshold settings (single transaction)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for key, val in [
+                ("perf_threshold_good", good), ("perf_threshold_warning", warning),
+                ("perf_threshold_bad", bad), ("perf_threshold_critical", critical)
+            ]:
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """, (key, str(val), now_maldives()))
 
     # ==================== Portal Config (DB-stored) ====================
 
@@ -2141,6 +2170,19 @@ class Database:
             """, (znuny_ticket_id,))
             return cursor.fetchone() is not None
 
+    def get_znuny_ticket_metadata(self, znuny_ticket_id: str) -> dict | None:
+        """Get queue/state/owner metadata for a Znuny ticket."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT state, queue, owner, priority FROM znuny_tickets WHERE znuny_ticket_id = ?",
+                (znuny_ticket_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {"state": row["state"], "queue": row["queue"], "owner": row["owner"], "priority": row["priority"]}
+            return None
+
     def upsert_znuny_only_ticket(self, data: dict) -> int:
         """Insert or update a Znuny ticket. Stores ALL Znuny tickets (ISP-linked and orphan)."""
         now = now_maldives()
@@ -2163,15 +2205,16 @@ class Database:
 
             cursor.execute("""
                 INSERT INTO znuny_tickets
-                    (znuny_ticket_id, title, state, queue, priority, created_at, created_by,
+                    (znuny_ticket_id, title, state, queue, priority, owner, created_at, created_by,
                      closed_at, time_to_close_minutes, article_count, last_article_by,
                      last_article_at, znuny_url, isp_ticket_id, first_seen_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(znuny_ticket_id) DO UPDATE SET
                     title = excluded.title,
-                    state = excluded.state,
-                    queue = excluded.queue,
-                    priority = excluded.priority,
+                    state = COALESCE(excluded.state, znuny_tickets.state),
+                    queue = COALESCE(excluded.queue, znuny_tickets.queue),
+                    priority = COALESCE(excluded.priority, znuny_tickets.priority),
+                    owner = COALESCE(excluded.owner, znuny_tickets.owner),
                     closed_at = excluded.closed_at,
                     time_to_close_minutes = excluded.time_to_close_minutes,
                     article_count = excluded.article_count,
@@ -2186,6 +2229,7 @@ class Database:
                 data.get("state"),
                 data.get("queue"),
                 data.get("priority"),
+                data.get("owner"),
                 data.get("created_at"),
                 data.get("created_by"),
                 data.get("closed_at"),
@@ -2201,6 +2245,7 @@ class Database:
             return cursor.lastrowid
 
     def get_znuny_only_tickets(self, state: str = None, created_by: str = None,
+                                queue: str = None, owner: str = None,
                                 date_from: str = None, date_to: str = None,
                                 linked: str = None,
                                 limit: int = 100, offset: int = 0) -> dict:
@@ -2223,6 +2268,14 @@ class Database:
             if created_by:
                 query += " AND LOWER(created_by) = LOWER(?)"
                 params.append(created_by)
+
+            if queue:
+                query += " AND LOWER(queue) = LOWER(?)"
+                params.append(queue)
+
+            if owner:
+                query += " AND LOWER(owner) = LOWER(?)"
+                params.append(owner)
 
             if date_from:
                 query += " AND DATE(created_at) >= ?"
@@ -2254,6 +2307,7 @@ class Database:
                 "state": row["state"],
                 "queue": row["queue"],
                 "priority": row["priority"],
+                "owner": row["owner"],
                 "created_at": row["created_at"],
                 "created_by": row["created_by"],
                 "closed_at": row["closed_at"],
@@ -2317,6 +2371,28 @@ class Database:
                 "today_new": today_new,
                 "avg_close_time_minutes": round(avg_close_time, 1) if avg_close_time else None
             }
+
+    def get_znuny_queue_names(self) -> list:
+        """Get distinct queue names from znuny_tickets."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT queue FROM znuny_tickets
+                WHERE queue IS NOT NULL AND queue != ''
+                ORDER BY queue
+            """)
+            return [row["queue"] for row in cursor.fetchall()]
+
+    def get_znuny_owner_names(self) -> list:
+        """Get distinct owner names from znuny_tickets."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT owner FROM znuny_tickets
+                WHERE owner IS NOT NULL AND owner != ''
+                ORDER BY owner
+            """)
+            return [row["owner"] for row in cursor.fetchall()]
 
     def get_znuny_only_staff_stats(self, date_from: str = None, date_to: str = None) -> list:
         """Get staff statistics for Znuny-only tickets."""
@@ -2674,6 +2750,7 @@ class Database:
                 "title": row["title"],
                 "state": row["state"],
                 "queue": row["queue"],
+                "owner": row["owner"],
                 "created_at": row["created_at"],
                 "created_by": row["created_by"],
                 "closed_at": row["closed_at"],

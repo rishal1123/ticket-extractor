@@ -237,11 +237,20 @@ async def get_tickets(
 @router.get("/tickets/{ticket_id}")
 @handle_errors("get ticket")
 async def get_ticket(ticket_id: int, db: Database = Depends(get_db)):
-    """Get a single ticket by ID."""
+    """Get a single ticket by ID, enriched with znuny_tickets metadata."""
     ticket = db.get_ticket_by_id(ticket_id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    return JSONResponse(content=_ticket_to_dict(ticket))
+    result = _ticket_to_dict(ticket)
+    # Enrich with znuny_tickets metadata (queue, state, owner)
+    if ticket.znuny_ticket_id:
+        zt = db.get_znuny_ticket_metadata(ticket.znuny_ticket_id)
+        if zt:
+            result["znuny_state"] = zt.get("state")
+            result["znuny_queue"] = zt.get("queue")
+            result["znuny_owner"] = zt.get("owner")
+            result["znuny_priority"] = zt.get("priority")
+    return JSONResponse(content=result)
 
 
 @router.post("/tickets/{ticket_id}/check-znuny")

@@ -59,6 +59,16 @@
     background-color: rgba(149, 165, 166, 0.15);
     color: #95a5a6;
 }
+.queue-badge {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.4rem;
+}
+.queue-dhiraagu { background-color: rgba(255, 152, 0, 0.15); color: #f57c00; }
+.queue-ooredoo { background-color: rgba(124, 58, 237, 0.15); color: #7c3aed; }
+.queue-rol { background-color: rgba(33, 150, 243, 0.15); color: #1976d2; }
+.queue-fieldworks { background-color: rgba(76, 175, 80, 0.15); color: #388e3c; }
+.queue-billing { background-color: rgba(233, 30, 99, 0.15); color: #c2185b; }
+.queue-default { background-color: rgba(149, 165, 166, 0.15); color: #7f8c8d; }
 @media (max-width: 768px) {
     .stat-icon {
         width: 40px;
@@ -156,6 +166,16 @@
                     <option value="">All Staff</option>
                 </select>
             </div>
+            <div class="col-auto">
+                <select class="form-select form-select-sm" id="queueFilter" onchange="applyFilters()">
+                    <option value="">All Queues</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <select class="form-select form-select-sm" id="ownerFilter" onchange="applyFilters()">
+                    <option value="">All Owners</option>
+                </select>
+            </div>
             <div class="col-auto ms-auto">
                 <button class="btn btn-outline-secondary btn-sm" onclick="refreshData()">
                     <i class="bi bi-arrow-clockwise me-1"></i><span class="d-none d-sm-inline">Refresh</span>
@@ -205,6 +225,8 @@
                         <th>Znuny ID</th>
                         <th>Title</th>
                         <th>State</th>
+                        <th class="d-none d-md-table-cell">Queue</th>
+                        <th class="d-none d-lg-table-cell">Owner</th>
                         <th class="text-center d-none d-sm-table-cell">ISP</th>
                         <th class="d-none d-sm-table-cell">Created By</th>
                         <th class="d-none d-md-table-cell">Created At</th>
@@ -215,7 +237,7 @@
                     </tr>
                 </thead>
                 <tbody id="ticketsTableBody">
-                    <tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr>
+                    <tr><td colspan="12" class="text-center text-muted py-4">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -233,6 +255,8 @@ const pageSize = 50;
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
     loadStaffNames();
+    loadQueueNames();
+    loadOwnerNames();
     setDateFilter('today');
     setInterval(refreshData, 30000);
 });
@@ -290,6 +314,34 @@ async function loadStaffNames() {
     }
 }
 
+async function loadQueueNames() {
+    try {
+        const response = await fetch('/api/znuny-only/queue-names');
+        const data = await response.json();
+        const select = document.getElementById('queueFilter');
+        select.innerHTML = '<option value="">All Queues</option>';
+        (data.queues || []).forEach(q => {
+            select.innerHTML += `<option value="${q}">${q}</option>`;
+        });
+    } catch (error) {
+        console.error('Error loading queue names:', error);
+    }
+}
+
+async function loadOwnerNames() {
+    try {
+        const response = await fetch('/api/znuny-only/owner-names');
+        const data = await response.json();
+        const select = document.getElementById('ownerFilter');
+        select.innerHTML = '<option value="">All Owners</option>';
+        (data.owners || []).forEach(o => {
+            select.innerHTML += `<option value="${o}">${o}</option>`;
+        });
+    } catch (error) {
+        console.error('Error loading owner names:', error);
+    }
+}
+
 async function loadStats() {
     try {
         const response = await fetch('/api/znuny-only/stats');
@@ -338,12 +390,25 @@ async function loadStaffStats() {
     }
 }
 
+function getQueueClass(queue) {
+    if (!queue) return 'queue-default';
+    const q = queue.toLowerCase();
+    if (q.includes('dhiraagu')) return 'queue-dhiraagu';
+    if (q.includes('ooredoo')) return 'queue-ooredoo';
+    if (q.includes('rol')) return 'queue-rol';
+    if (q.includes('field')) return 'queue-fieldworks';
+    if (q.includes('billing')) return 'queue-billing';
+    return 'queue-default';
+}
+
 async function loadTickets() {
     try {
         const dateRange = getDateRange(currentDateFilter);
         const state = document.getElementById('stateFilter').value;
         const staff = document.getElementById('staffFilter').value;
         const linked = document.getElementById('linkedFilter').value;
+        const queue = document.getElementById('queueFilter').value;
+        const owner = document.getElementById('ownerFilter').value;
 
         let url = `/api/znuny-only/tickets?limit=${pageSize}&offset=${(currentPage - 1) * pageSize}`;
         if (dateRange.from) url += `&date_from=${dateRange.from}`;
@@ -351,6 +416,8 @@ async function loadTickets() {
         if (state) url += `&state=${state}`;
         if (staff) url += `&created_by=${encodeURIComponent(staff)}`;
         if (linked) url += `&linked=${linked}`;
+        if (queue) url += `&queue=${encodeURIComponent(queue)}`;
+        if (owner) url += `&owner=${encodeURIComponent(owner)}`;
 
         const response = await fetch(url);
         const data = await response.json();
@@ -359,7 +426,7 @@ async function loadTickets() {
 
         const tbody = document.getElementById('ticketsTableBody');
         if (!data.tickets || data.tickets.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No tickets found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-4">No tickets found</td></tr>';
             document.getElementById('pagination').innerHTML = '';
             return;
         }
@@ -373,12 +440,17 @@ async function loadTickets() {
             const linkBadge = isLinked
                 ? '<span class="badge link-badge-yes"><i class="bi bi-link-45deg me-1"></i>Yes</span>'
                 : '<span class="badge link-badge-no">No</span>';
+            const queueBadge = t.queue
+                ? `<span class="badge queue-badge ${getQueueClass(t.queue)}">${escapeHtml(t.queue)}</span>`
+                : '<small class="text-muted">--</small>';
 
             return `
                 <tr>
                     <td><strong>${t.znuny_ticket_id}</strong></td>
                     <td class="text-truncate" style="max-width: 200px;" title="${escapeHtml(t.title || '')}">${t.title || '--'}</td>
-                    <td><span class="badge ${stateClass}"><i class="bi bi-${stateIcon} me-1"></i>${t.state || 'Open'}</span></td>
+                    <td><span class="badge ${stateClass}"><i class="bi bi-${stateIcon} me-1"></i>${escapeHtml(t.state || 'Open')}</span></td>
+                    <td class="d-none d-md-table-cell">${queueBadge}</td>
+                    <td class="d-none d-lg-table-cell"><small>${escapeHtml(t.owner || '--')}</small></td>
                     <td class="text-center d-none d-sm-table-cell">${linkBadge}</td>
                     <td class="d-none d-sm-table-cell">${t.created_by || '--'}</td>
                     <td class="d-none d-md-table-cell"><small>${formatDateTime(t.created_at)}</small></td>

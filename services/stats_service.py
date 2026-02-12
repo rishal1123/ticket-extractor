@@ -137,7 +137,7 @@ class StatsService:
         if not created_at or not znuny_created_at:
             return {"time_diff": None, "time_diff_minutes": None}
 
-        diff = created_at - znuny_created_at
+        diff = znuny_created_at - created_at
         time_diff_minutes = int(diff.total_seconds() / 60)
         hours, minutes = divmod(abs(time_diff_minutes), 60)
         days, hours = divmod(hours, 24)

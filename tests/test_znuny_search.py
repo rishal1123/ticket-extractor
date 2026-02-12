@@ -134,8 +134,8 @@ def search_via_toolbar(driver, search_term):
     """Search using the toolbar fulltext search."""
     print(f"\n=== Toolbar search for: {search_term} ===")
 
-    # Go back to dashboard
-    driver.get("https://10.241.1.110/otrs/index.pl?Action=AgentDashboard")
+    # Go to a known page for toolbar search
+    driver.get("https://10.241.1.110/otrs/index.pl?Action=AgentTicketQueue;QueueID=5;View=Small")
     time.sleep(2)
 
     try:

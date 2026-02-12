@@ -292,6 +292,8 @@ class SchedulerService:
         # Wake up workers so they can exit
         self._extraction_event.set()
         self._znuny_sync_event.set()
+        # Clear scheduled jobs to prevent duplicates on restart
+        schedule.clear()
         logger.info("Scheduler stop requested")
 
     def get_status(self) -> dict:

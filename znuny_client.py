@@ -26,8 +26,11 @@ ZNUNY_SESSION_DIR = os.path.join(os.path.dirname(__file__), "data", "browser_ses
 
 logger = get_logger("znuny")
 
-# Cache TTL in seconds (5 minutes)
+# Cache TTL in seconds (6 minutes)
 CACHE_TTL_SECONDS = 360
+
+# Max entries in ticket details cache before eviction
+MAX_DETAIL_CACHE_SIZE = 200
 
 
 @dataclass
@@ -52,6 +55,8 @@ class ZnunyTicketDetails:
     created_by: str
     owner: str
     state: str
+    queue: str = ""  # Queue assignment from sidebar
+    priority: str = ""  # Ticket priority from sidebar
     address: str = ""  # Address from phone ticket or first article
     znuny_url: str = ""  # Direct URL to ticket in Znuny
     articles: list[ZnunyArticle] = field(default_factory=list)
@@ -175,7 +180,6 @@ class ZnunyClient:
     # Znuny URLs
     BASE_URL = "https://10.241.1.110"
     LOGIN_URL = f"{BASE_URL}/otrs/index.pl"
-    DASHBOARD_URL = f"{BASE_URL}/otrs/index.pl?Action=AgentDashboard"
     SEARCH_URL = f"{BASE_URL}/otrs/index.pl?Action=AgentTicketSearch"
 
     # CSS Selectors
@@ -367,14 +371,14 @@ class ZnunyClient:
         self._setup_browser()
 
         if self._logged_in:
-            # Skip full dashboard verification if checked within last 60 seconds
+            # Skip full verification if checked within last 60 seconds
             if time.time() - ZnunyClient._shared_last_login_check < 60:
                 return True
-            # Full verification: navigate to dashboard
+            # Full verification: navigate to a queue page and check we're not on login
             try:
-                self.page.goto(self.DASHBOARD_URL)
-                time.sleep(2)
-                if "Dashboard" in self.page.title():
+                verify_url = f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketQueue;QueueID=5;View=Small"
+                self.page.goto(verify_url, wait_until="domcontentloaded")
+                if "Login" not in (self.page.title() or ""):
                     ZnunyClient._shared_last_login_check = time.time()
                     logger.info("Znuny session still active, skipping login")
                     return True
@@ -384,11 +388,10 @@ class ZnunyClient:
             logger.info("Znuny session expired, re-logging in...")
 
         try:
-            self.page.goto(self.LOGIN_URL)
-            time.sleep(2)
+            self.page.goto(self.LOGIN_URL, wait_until="domcontentloaded")
 
-            # Check if already on dashboard (session still valid from cookies)
-            if "Dashboard" in self.page.title():
+            # Check if already on an authenticated page (session still valid from cookies)
+            if "Login" not in (self.page.title() or ""):
                 self._logged_in = True
                 logger.info("Znuny session valid from cookies")
                 return True
@@ -402,14 +405,17 @@ class ZnunyClient:
             if password_field:
                 password_field.fill(self.password)
 
-            # Click login
+            # Click login and wait for navigation
             login_btn = self.page.query_selector(self.LOGIN_BUTTON_SELECTOR)
             if login_btn:
                 login_btn.click()
-            time.sleep(3)
+                try:
+                    self.page.wait_for_load_state("domcontentloaded", timeout=10000)
+                except Exception:
+                    pass
 
-            # Verify login
-            if "Dashboard" in self.page.title():
+            # Verify login — success if we're no longer on the login page
+            if "Login" not in (self.page.title() or ""):
                 self._logged_in = True
                 logger.info("Znuny login successful (new session)")
                 return True
@@ -430,9 +436,9 @@ class ZnunyClient:
 
     def get_open_tickets(self, force_refresh: bool = False) -> list[dict]:
         """
-        Get all open tickets from the dashboard widget.
-        Returns list of tickets with ticket_number and title.
-        Handles pagination to get all tickets.
+        Get all open tickets by scraping Znuny queue views (Small view).
+        Iterates through all known queues (QUEUE_IDS) with pagination support.
+        Returns list of tickets with ticket_number, title, href, state, queue, owner, priority.
         Uses TTL-based cache (5 min) to avoid repeated fetches.
         """
         # Return cached results if valid (TTL-based)
@@ -443,63 +449,97 @@ class ZnunyClient:
         if not self._login():
             return []
 
-        try:
-            self.page.goto(self.DASHBOARD_URL)
-            time.sleep(2)
+        all_tickets = []
+        seen = set()
 
-            all_tickets = []
-            page = 1
-            max_pages = 10  # Safety limit
+        for queue_id, queue_name in self.QUEUE_IDS.items():
+            try:
+                start_hit = 1
+                max_pages = 20  # Safety limit per queue
 
-            while page <= max_pages:
-                # Get tickets from current page of the Open Tickets widget
-                rows = self.page.query_selector_all("#Dashboard0130-TicketOpen tr.MasterAction")
+                for page_num in range(max_pages):
+                    url = f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketQueue;QueueID={queue_id};View=Small;Filter=All;StartHit={start_hit}"
+                    self.page.goto(url, wait_until="domcontentloaded")
 
-                for row in rows:
                     try:
-                        # Get ticket number from MasterActionLink
-                        link = row.query_selector("a.MasterActionLink")
-                        if not link:
-                            continue
-                        ticket_number = (link.text_content() or "").strip()
-                        href = link.get_attribute('href') or ""
+                        self.page.wait_for_selector("tr.MasterAction", timeout=5000)
+                    except Exception:
+                        break  # Empty queue or no rows on this page
 
-                        # Get title from the last td div
-                        title_divs = row.query_selector_all("td div[title]")
-                        title = ""
-                        if title_divs:
-                            title = title_divs[-1].get_attribute('title') or (title_divs[-1].text_content() or "")
+                    rows = self.page.query_selector_all("tr.MasterAction")
+                    if not rows:
+                        break
 
-                        if ticket_number:
+                    for row in rows:
+                        try:
+                            link = row.query_selector("a.MasterActionLink")
+                            if not link:
+                                continue
+                            ticket_number = (link.text_content() or "").strip()
+                            if not ticket_number or ticket_number in seen:
+                                continue
+                            seen.add(ticket_number)
+
+                            href = link.get_attribute("href") or ""
+                            cells = row.query_selector_all("td")
+
+                            # Small view columns (0-indexed):
+                            # 0=checkbox, 1=Priority, 2=NewArticle, 3=Ticket#, 4=Age,
+                            # 5=Sender, 6=Title, 7=State, 8=Lock, 9=Queue, 10=Owner, 11=CustomerID
+                            title = ""
+                            if len(cells) > 6:
+                                title_div = cells[6].query_selector("div[title]")
+                                if title_div:
+                                    title = title_div.get_attribute("title") or (title_div.text_content() or "").strip()
+
+                            state = (cells[7].text_content() or "").strip() if len(cells) > 7 else ""
+                            # Read actual queue from column 9 (includes sub-queue path)
+                            actual_queue = (cells[9].text_content() or "").strip() if len(cells) > 9 else ""
+                            owner = (cells[10].text_content() or "").strip() if len(cells) > 10 else ""
+                            priority = (cells[1].text_content() or "").strip() if len(cells) > 1 else ""
+
                             all_tickets.append({
                                 "ticket_number": ticket_number,
                                 "title": title,
-                                "href": href
+                                "href": href,
+                                "state": state,
+                                "queue": actual_queue or queue_name,
+                                "owner": owner,
+                                "priority": priority,
                             })
+                        except Exception:
+                            continue
+
+                    # Check for next page - find pagination links with higher StartHit
+                    next_start = None
+                    try:
+                        pagination_links = self.page.query_selector_all('a[href*="StartHit="]')
+                        for plink in pagination_links:
+                            phref = plink.get_attribute('href') or ''
+                            match = re.search(r'StartHit=(\d+)', phref)
+                            if match:
+                                hit_val = int(match.group(1))
+                                if hit_val > start_hit:
+                                    if next_start is None or hit_val < next_start:
+                                        next_start = hit_val
                     except Exception:
-                        continue
+                        pass
 
-                # Check for next page
-                next_page = page + 1
-                next_page_link = self.page.query_selector_all(
-                    f"#Dashboard0130-TicketOpenPage{next_page}"
-                )
+                    if next_start is None:
+                        break  # No more pages
 
-                if next_page_link and "Selected" not in (next_page_link[0].get_attribute("class") or ""):
-                    next_page_link[0].click()
-                    time.sleep(2)
-                    page += 1
-                else:
-                    break
+                    start_hit = next_start
+                    if page_num > 0:
+                        logger.debug(f"Queue {queue_name}: page {page_num + 2} (StartHit={start_hit})")
 
-            logger.info(f"Znuny dashboard: found {len(all_tickets)} open tickets")
-            self._open_tickets_cache = all_tickets
-            self._cache_timestamp = time.time()
-            return all_tickets
+            except Exception as e:
+                logger.error(f"Error scraping queue {queue_name} (ID={queue_id}): {e}")
+                continue
 
-        except Exception as e:
-            logger.error(f"Znuny get_open_tickets error: {e}")
-            return []
+        logger.info(f"Znuny queue views: found {len(all_tickets)} open tickets across {len(self.QUEUE_IDS)} queues")
+        self._open_tickets_cache = all_tickets
+        self._cache_timestamp = time.time()
+        return all_tickets
 
     def clear_cache(self):
         """Clear all caches (class-level)."""
@@ -508,13 +548,22 @@ class ZnunyClient:
         ZnunyClient._shared_details_cache = {}
         ZnunyClient._shared_last_login_check = 0
 
+    # Known Znuny queue IDs for queue view scraping
+    QUEUE_IDS = {
+        5: "*Dhiraagu",
+        7: "*Ooredoo",
+        9: "*ROL",
+        18: "Field Works",
+        28: "S - Billing Queries",
+    }
+
     def search_by_title(self, search_term: str) -> list[dict]:
         """
         Search for tickets by checking if search_term appears in any open ticket's title.
-        Uses cached dashboard data first, then falls back to Znuny search form.
+        Uses cached queue view data first, then falls back to Znuny search form.
         Returns list of matching tickets with ticket_number and title.
         """
-        # Get all open tickets from dashboard (uses cache)
+        # Get all open tickets from queue views (uses cache)
         all_tickets = self.get_open_tickets()
 
         if not all_tickets:
@@ -532,34 +581,27 @@ class ZnunyClient:
             logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
             return matching
 
-        # Fallback: use Znuny's search form to find tickets not in the dashboard widget
-        # (e.g. tickets in other queues, or with different title format)
-        logger.info(f"Znuny search for '{search_term}': not in dashboard, trying search form")
+        # Fallback: use Znuny's search form to find tickets not in queue views
+        # (e.g. tickets in unknown queues, or with different title format)
+        logger.info(f"Znuny search for '{search_term}': not in queue views, trying search form")
         fallback = self._search_via_form(search_term)
         if fallback:
             logger.info(f"Znuny search for '{search_term}': found {len(fallback)} via search form")
         else:
-            logger.info(f"Znuny search for '{search_term}': not found (dashboard + search form)")
+            logger.info(f"Znuny search for '{search_term}': not found (queue views + search form)")
         return fallback
 
     def _search_via_form(self, search_term: str) -> list[dict]:
         """
         Search Znuny using the search form as a fallback.
-        This finds tickets in ALL queues and states, not just the dashboard widget.
+        This finds tickets in ALL queues and states, not just the known queue views.
         """
         if not self._login():
             return []
 
         try:
             # Navigate to search page (loads AJAX dialog)
-            self.page.goto(self.SEARCH_URL)
-            time.sleep(2)
-
-            # Debug: screenshot search page
-            try:
-                self.page.screenshot(path=f"screenshots/znuny_search_debug.png")
-            except Exception:
-                pass
+            self.page.goto(self.SEARCH_URL, wait_until="domcontentloaded")
 
             # Wait for the search form to appear (may be in a dialog/overlay)
             title_field = None
@@ -594,7 +636,6 @@ class ZnunyClient:
 
             # Fill search term with wildcards
             title_field.fill(f"*{search_term}*")
-            time.sleep(0.5)
 
             # Submit the search form
             submitted = False
@@ -613,13 +654,13 @@ class ZnunyClient:
                 return []
 
             # Wait for results page to load
-            time.sleep(4)
-
-            # Debug: screenshot results
             try:
-                self.page.screenshot(path=f"screenshots/znuny_search_results.png")
+                self.page.wait_for_selector("tr.MasterAction", timeout=10000)
             except Exception:
-                pass
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
 
             page_title = self.page.title() or ""
             logger.info(f"Znuny search results: page title = '{page_title}'")
@@ -701,8 +742,11 @@ class ZnunyClient:
             href = ticket_info["href"]
             if href.startswith("/"):
                 href = self.BASE_URL + href
-            self.page.goto(href)
-            time.sleep(1.5)  # Reduced from 2s
+            self.page.goto(href, wait_until="domcontentloaded")
+            try:
+                self.page.wait_for_selector(".SidebarColumn", timeout=5000)
+            except Exception:
+                pass
 
             # Capture the ticket URL
             znuny_url = self.page.url
@@ -713,6 +757,8 @@ class ZnunyClient:
             created_by = ""
             owner = ""
             state = ""
+            queue = ""
+            priority = ""
 
             # Get sidebar content
             sidebar = self.page.query_selector_all(".SidebarColumn")
@@ -743,6 +789,16 @@ class ZnunyClient:
                 if state_match:
                     state = state_match.group(1).strip()
 
+                # Extract "Queue:" line
+                queue_match = re.search(r"Queue:\s*\n?([^\n]+)", sidebar_text)
+                if queue_match:
+                    queue = queue_match.group(1).strip()
+
+                # Extract "Priority:" line
+                priority_match = re.search(r"Priority:\s*\n?([^\n]+)", sidebar_text)
+                if priority_match:
+                    priority = priority_match.group(1).strip()
+
             # Parse articles from article overview table
             articles = []
             article_rows = self.page.query_selector_all(".WidgetSimple table tbody tr")
@@ -759,6 +815,18 @@ class ZnunyClient:
 
                         subject = (cells[5].text_content() or "").strip()
                         via_text = (cells[4].text_content() or "").strip()
+                        # Only click articles that need body content:
+                        # - Site visit / PM articles (for visit detail parsing)
+                        # - Phone articles (for address extraction)
+                        # - Internal notes (for staff tracking)
+                        # Email articles rarely have actionable content
+                        subject_lower = subject.lower()
+                        needs_body = (
+                            "site visit" in subject_lower
+                            or "preventative maintenance" in subject_lower
+                            or via_text == "Phone"
+                            or via_text == "Internal"
+                        )
                         article_data.append({
                             "num": int(article_num_text),
                             "sender": (cells[3].text_content() or "").strip(),
@@ -766,8 +834,7 @@ class ZnunyClient:
                             "subject": subject,
                             "created_str": (cells[6].text_content() or "").strip(),
                             "row": row,
-                            # Fetch body for all articles so they display in the modal
-                            "needs_body": True
+                            "needs_body": needs_body
                         })
                 except (IndexError, Exception):
                     continue
@@ -839,7 +906,10 @@ class ZnunyClient:
                 try:
                     # Click on the article row to open detail
                     data["row"].click()
-                    time.sleep(0.3)  # Reduced from 0.5s
+                    try:
+                        self.page.wait_for_selector("iframe[id^='Iframe'], .ArticleBody, .MessageBody", timeout=3000)
+                    except Exception:
+                        pass
 
                     # Look for the article header with "by [Staff Name]"
                     article_created_by = ""
@@ -929,6 +999,8 @@ class ZnunyClient:
                 created_by=created_by,
                 owner=owner,
                 state=state,
+                queue=queue,
+                priority=priority,
                 address=address,
                 znuny_url=znuny_url,
                 articles=articles
@@ -936,6 +1008,15 @@ class ZnunyClient:
 
             # Cache the details
             self._ticket_details_cache[ticket_number] = (details, time.time())
+
+            # Evict stale cache entries to prevent unbounded memory growth
+            if len(self._ticket_details_cache) > MAX_DETAIL_CACHE_SIZE:
+                cutoff = time.time() - CACHE_TTL_SECONDS * 2
+                stale = [k for k, (_, ts) in self._ticket_details_cache.items() if ts < cutoff]
+                for k in stale:
+                    del self._ticket_details_cache[k]
+                if stale:
+                    logger.debug(f"Evicted {len(stale)} stale entries from detail cache")
 
             return details
 

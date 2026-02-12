@@ -196,6 +196,34 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                             </div>
                         </div>
                     </div>
+                    ${(ticket.znuny_state || ticket.znuny_queue || ticket.znuny_owner || ticket.znuny_priority) ? `
+                    <div class="row g-2 mb-3">
+                        <div class="col-6 col-md-3">
+                            <div class="info-card">
+                                <div class="label">State</div>
+                                <div class="value">${ticket.znuny_state ? `<span class="badge bg-info">${escapeHtml(ticket.znuny_state)}</span>` : '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="info-card">
+                                <div class="label">Queue</div>
+                                <div class="value">${ticket.znuny_queue ? `<span class="badge bg-secondary">${escapeHtml(ticket.znuny_queue)}</span>` : '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="info-card">
+                                <div class="label">Owner</div>
+                                <div class="value">${escapeHtml(ticket.znuny_owner) || '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="info-card">
+                                <div class="label">Priority</div>
+                                <div class="value">${ticket.znuny_priority ? `<span class="badge bg-warning text-dark">${escapeHtml(ticket.znuny_priority)}</span>` : '-'}</div>
+                            </div>
+                        </div>
+                    </div>
+                    ` : ''}
                     ${ticket.znuny_address ? `
                     <div class="alert alert-warning py-2 mb-3">
                         <i class="bi bi-geo-alt me-1"></i>
