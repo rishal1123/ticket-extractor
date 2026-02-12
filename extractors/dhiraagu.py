@@ -74,6 +74,44 @@ class DhiraaguExtractor(BaseExtractor):
             self.logger.debug(f"Session check failed: {e}")
             return False
 
+    def fetch_completion_notes(self, missing_ticket_ids: set[str]) -> dict[str, str]:
+        """Fetch final notes for Dhiraagu tickets before marking complete."""
+        if not missing_ticket_ids:
+            return {}
+
+        notes_map = {}
+
+        # Get stored portal_urls from database (ticket_id != URL ID for Dhiraagu)
+        portal_urls = self.db.get_portal_urls_for_tickets("dhiraagu", list(missing_ticket_ids))
+        if not portal_urls:
+            self.logger.debug("No portal URLs found for completing tickets, skipping notes fetch")
+            return {}
+
+        self.logger.info(f"Fetching completion notes for {len(portal_urls)} Dhiraagu tickets")
+
+        for ticket_id, portal_url in portal_urls.items():
+            try:
+                notes_url = portal_url.split("?")[0] + "?activeRelationManager=notes"
+                self.navigate_to(notes_url, timeout=10000)
+                time.sleep(2)
+
+                notes = self._extract_notes_from_detail_page()
+                if notes:
+                    notes_map[ticket_id] = notes
+                    self.logger.debug(f"Fetched completion notes for ticket {ticket_id}")
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch notes for ticket {ticket_id}: {e}")
+                continue
+
+        # Navigate back to orders page to leave browser in clean state
+        try:
+            self.navigate_to(self.ORDERS_PAGE_URL)
+            time.sleep(1)
+        except Exception:
+            pass
+
+        return notes_map
+
     def login(self) -> bool:
         self.logger.info(f"Logging into Dhiraagu portal: {self.config.url}")
 

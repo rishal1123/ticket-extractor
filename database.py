@@ -886,6 +886,42 @@ class Database:
             )
             return {row["ticket_id"] for row in cursor.fetchall()}
 
+    def get_portal_urls_for_tickets(self, portal: str, ticket_ids: list[str]) -> dict[str, str]:
+        """Get portal_url for given ticket IDs. Returns {ticket_id: portal_url}."""
+        if not ticket_ids:
+            return {}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" * len(ticket_ids))
+            cursor.execute(
+                f"SELECT ticket_id, portal_url FROM tickets WHERE portal = ? AND ticket_id IN ({placeholders})",
+                [portal] + list(ticket_ids)
+            )
+            return {row["ticket_id"]: row["portal_url"] for row in cursor.fetchall() if row["portal_url"]}
+
+    def update_ticket_notes_bulk(self, portal: str, notes_map: dict[str, str]) -> int:
+        """Update notes for multiple tickets before marking them complete.
+
+        Args:
+            portal: Portal name
+            notes_map: {ticket_id: notes_text}
+
+        Returns: Number of tickets updated
+        """
+        if not notes_map:
+            return 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now = now_maldives()
+            count = 0
+            for ticket_id, notes in notes_map.items():
+                cursor.execute(
+                    "UPDATE tickets SET notes = ?, updated_at = ? WHERE portal = ? AND ticket_id = ?",
+                    (notes, now, portal, ticket_id)
+                )
+                count += cursor.rowcount
+            return count
+
     def mark_tickets_complete(self, portal: str, ticket_ids: list[str]) -> int:
         """Mark tickets as complete when they disappear from the portal."""
         if not ticket_ids:

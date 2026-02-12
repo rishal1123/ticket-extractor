@@ -87,6 +87,38 @@ class OoredooExtractor(BaseExtractor):
             self.logger.warning(f"Error checking login status: {e}")
             return False
 
+    def fetch_completion_notes(self, missing_ticket_ids: set[str]) -> dict[str, str]:
+        """Fetch final notes for Ooredoo tickets before marking complete."""
+        if not missing_ticket_ids:
+            return {}
+
+        notes_map = {}
+
+        self.logger.info(f"Fetching completion notes for {len(missing_ticket_ids)} Ooredoo tickets")
+
+        for ticket_id in missing_ticket_ids:
+            try:
+                detail_url = self.TICKET_DETAIL_URL.format(ticket_id=ticket_id)
+                self.navigate_to(detail_url, timeout=10000)
+                time.sleep(2)
+
+                notes = self._extract_notes_from_detail_page()
+                if notes:
+                    notes_map[ticket_id] = notes
+                    self.logger.debug(f"Fetched completion notes for ticket {ticket_id}")
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch notes for ticket {ticket_id}: {e}")
+                continue
+
+        # Navigate back to tickets page to leave browser in clean state
+        try:
+            self.navigate_to(self.TICKETS_URL)
+            time.sleep(1)
+        except Exception:
+            pass
+
+        return notes_map
+
     def login(self) -> bool:
         self.logger.info(f"Logging into Ooredoo portal: {self.config.url}")
 

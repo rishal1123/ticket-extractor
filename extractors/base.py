@@ -64,6 +64,20 @@ class BaseExtractor(ABC):
         """
         return False
 
+    def fetch_completion_notes(self, missing_ticket_ids: set[str]) -> dict[str, str]:
+        """Fetch final notes/comments for tickets about to be marked complete.
+
+        Override in portal-specific extractors that support this.
+        Default implementation returns empty dict (no notes fetched).
+
+        Args:
+            missing_ticket_ids: Set of ticket_ids that disappeared from the portal
+
+        Returns:
+            Dict mapping ticket_id -> notes text
+        """
+        return {}
+
     def ensure_logged_in(self) -> bool:
         """Ensure we are logged in, re-login if session expired."""
         if self.is_logged_in():
@@ -224,6 +238,15 @@ class BaseExtractor(ABC):
                     BaseExtractor._consecutive_zero_counts[portal_name] = 0
                     missing_ticket_ids = existing_ticket_ids - found_ticket_ids
                     if missing_ticket_ids:
+                        # Fetch final notes before marking complete
+                        try:
+                            completion_notes = self.fetch_completion_notes(missing_ticket_ids)
+                            if completion_notes:
+                                self.db.update_ticket_notes_bulk(self.config.name, completion_notes)
+                                self.logger.info(f"Updated notes for {len(completion_notes)} tickets before completion")
+                        except Exception as e:
+                            self.logger.warning(f"Error fetching completion notes (non-critical): {e}")
+
                         completed_count = self.db.mark_tickets_complete(
                             self.config.name, list(missing_ticket_ids)
                         )
@@ -238,6 +261,15 @@ class BaseExtractor(ABC):
 
                     if zero_count >= required_cycles:
                         # 3+ consecutive cycles with 0 tickets - safe to mark complete
+                        # Fetch final notes before marking complete
+                        try:
+                            completion_notes = self.fetch_completion_notes(existing_ticket_ids)
+                            if completion_notes:
+                                self.db.update_ticket_notes_bulk(self.config.name, completion_notes)
+                                self.logger.info(f"Updated notes for {len(completion_notes)} tickets before completion")
+                        except Exception as e:
+                            self.logger.warning(f"Error fetching completion notes (non-critical): {e}")
+
                         completed_count = self.db.mark_tickets_complete(
                             self.config.name, list(existing_ticket_ids)
                         )
