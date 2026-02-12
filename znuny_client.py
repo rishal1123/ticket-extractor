@@ -1135,7 +1135,9 @@ class ZnunyClient:
         Common title formats:
         - "Dhiraagu - New Service - TGR1A-802 / Service #: BB20213001 / Order ID: 0125858440"
         - "Ooredoo - Relocation - H09-15-07 / 152402"
+        - "Ooredoo - Fault - H09-15-07 / Ticket #: 153021"
         - "ROL - Fault - ROL250141"
+        - "Medianet - New Service - V3-A-1202 / Account #: 4662628672154865/ Ticket #: S34987"
         """
         result = {"portal": None, "ticket_id": None, "address": None}
 
@@ -1155,8 +1157,10 @@ class ZnunyClient:
 
         elif "ooredoo" in title_lower:
             result["portal"] = "ooredoo"
-            # Extract ticket number from "Ticket ID: XXXXXX" or after /
+            # Extract ticket number from "Ticket ID: XXXXXX", "Ticket #: XXXXXX", or after /
             ooredoo_match = re.search(r"Ticket\s*ID\W*(\d{5,})", title, re.IGNORECASE)
+            if not ooredoo_match:
+                ooredoo_match = re.search(r"Ticket\s*#[:\s]*(\d{5,})", title, re.IGNORECASE)
             if not ooredoo_match:
                 # Fallback: number directly after / (old format)
                 ooredoo_match = re.search(r"/\s*(\d{5,})", title)
