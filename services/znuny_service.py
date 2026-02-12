@@ -493,10 +493,11 @@ class ZnunyService:
             all_pending_visit_ids = pending_visit_ids - closed_with_pending
 
             # Step 2: Process all open tickets (queue view data is embedded in ticket_info)
-            for ticket_info in all_tickets:
+            for ticket_idx, ticket_info in enumerate(all_tickets, 1):
                 try:
                     znuny_ticket_id = ticket_info["ticket_number"]
                     title = ticket_info.get("title", "")
+                    ticket_start = time.time()
 
                     # Try to extract ISP ticket ID from title and link
                     isp_info = self.znuny_client.extract_isp_ticket_id_from_title(title)
@@ -526,11 +527,13 @@ class ZnunyService:
                     # Get ticket details with appropriate cache strategy:
                     # - Frequent-check tickets: bypass TTL cache (but article-count check still works)
                     # - Other tickets: use TTL cache (instant return within 5 min)
+                    logger.info(f"Step 2: ticket {ticket_idx}/{len(all_tickets)} {znuny_ticket_id} - fetching details")
                     details = self.znuny_client.get_ticket_details(
                         znuny_ticket_id,
                         bypass_cache=needs_frequent_check
                     )
                     if not details:
+                        logger.warning(f"Step 2: ticket {znuny_ticket_id} - no details returned ({time.time() - ticket_start:.1f}s)")
                         continue
 
                     # Always store/update in znuny_tickets (before any skip checks)
@@ -645,6 +648,9 @@ class ZnunyService:
                     logger.error(f"Error processing Znuny ticket {ticket_num}: {e}")
                     self.db.log_system("error", "znuny", f"Error processing ticket {ticket_num}: {e}")
                     results["errors"] += 1
+
+            # Step 2 complete
+            logger.info(f"Step 2 complete: processed={results['znuny_tickets_processed']}, skipped={results['znuny_tickets_skipped']}, errors={results['errors']}")
 
             # Step 3: Mark znuny_tickets as closed if no longer in open list
             if open_znuny_ids:

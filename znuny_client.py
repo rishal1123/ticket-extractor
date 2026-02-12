@@ -7,6 +7,7 @@ Fetches ticket details including creator, creation time, and article history.
 import os
 import time
 import re
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from dataclasses import dataclass, field
@@ -205,6 +206,8 @@ class ZnunyClient:
     _shared_open_tickets_cache = None
     _shared_cache_timestamp = None
     _shared_details_cache = {}  # {ticket_number: (ZnunyTicketDetails, timestamp)}
+    # Thread safety: protects all shared page operations
+    _page_lock = threading.RLock()
 
     def __init__(self):
         self.username = Config.get_znuny_username()
@@ -337,6 +340,7 @@ class ZnunyClient:
         else:
             ZnunyClient._shared_page = ZnunyClient._shared_context.new_page()
         ZnunyClient._shared_page.set_default_timeout(10000)
+        ZnunyClient._shared_page.set_default_navigation_timeout(15000)
         self._detect_browser_pid()
         logger.info(f"Znuny persistent browser started (session dir: {ZNUNY_SESSION_DIR})")
 
@@ -441,105 +445,110 @@ class ZnunyClient:
         Returns list of tickets with ticket_number, title, href, state, queue, owner, priority.
         Uses TTL-based cache (5 min) to avoid repeated fetches.
         """
-        # Return cached results if valid (TTL-based)
+        # Return cached results if valid (TTL-based) - no lock needed for cache read
         if not force_refresh and self._is_cache_valid():
             logger.debug(f"Using cached open tickets (age: {int(time.time() - self._cache_timestamp)}s)")
             return self._open_tickets_cache
 
-        if not self._login():
-            return []
+        with ZnunyClient._page_lock:
+            # Double-check cache inside lock (another thread may have populated it)
+            if not force_refresh and self._is_cache_valid():
+                return self._open_tickets_cache
 
-        all_tickets = []
-        seen = set()
+            if not self._login():
+                return []
 
-        for queue_id, queue_name in self.QUEUE_IDS.items():
-            try:
-                start_hit = 1
-                max_pages = 20  # Safety limit per queue
+            all_tickets = []
+            seen = set()
 
-                for page_num in range(max_pages):
-                    url = f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketQueue;QueueID={queue_id};View=Small;Filter=All;StartHit={start_hit}"
-                    self.page.goto(url, wait_until="domcontentloaded")
+            for queue_id, queue_name in self.QUEUE_IDS.items():
+                try:
+                    start_hit = 1
+                    max_pages = 20  # Safety limit per queue
 
-                    try:
-                        self.page.wait_for_selector("tr.MasterAction", timeout=5000)
-                    except Exception:
-                        break  # Empty queue or no rows on this page
+                    for page_num in range(max_pages):
+                        url = f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketQueue;QueueID={queue_id};View=Small;Filter=All;StartHit={start_hit}"
+                        self.page.goto(url, wait_until="domcontentloaded")
 
-                    rows = self.page.query_selector_all("tr.MasterAction")
-                    if not rows:
-                        break
-
-                    for row in rows:
                         try:
-                            link = row.query_selector("a.MasterActionLink")
-                            if not link:
-                                continue
-                            ticket_number = (link.text_content() or "").strip()
-                            if not ticket_number or ticket_number in seen:
-                                continue
-                            seen.add(ticket_number)
-
-                            href = link.get_attribute("href") or ""
-                            cells = row.query_selector_all("td")
-
-                            # Small view columns (0-indexed):
-                            # 0=checkbox, 1=Priority, 2=NewArticle, 3=Ticket#, 4=Age,
-                            # 5=Sender, 6=Title, 7=State, 8=Lock, 9=Queue, 10=Owner, 11=CustomerID
-                            title = ""
-                            if len(cells) > 6:
-                                title_div = cells[6].query_selector("div[title]")
-                                if title_div:
-                                    title = title_div.get_attribute("title") or (title_div.text_content() or "").strip()
-
-                            state = (cells[7].text_content() or "").strip() if len(cells) > 7 else ""
-                            # Read actual queue from column 9 (includes sub-queue path)
-                            actual_queue = (cells[9].text_content() or "").strip() if len(cells) > 9 else ""
-                            owner = (cells[10].text_content() or "").strip() if len(cells) > 10 else ""
-                            priority = (cells[1].text_content() or "").strip() if len(cells) > 1 else ""
-
-                            all_tickets.append({
-                                "ticket_number": ticket_number,
-                                "title": title,
-                                "href": href,
-                                "state": state,
-                                "queue": actual_queue or queue_name,
-                                "owner": owner,
-                                "priority": priority,
-                            })
+                            self.page.wait_for_selector("tr.MasterAction", timeout=5000)
                         except Exception:
-                            continue
+                            break  # Empty queue or no rows on this page
 
-                    # Check for next page - find pagination links with higher StartHit
-                    next_start = None
-                    try:
-                        pagination_links = self.page.query_selector_all('a[href*="StartHit="]')
-                        for plink in pagination_links:
-                            phref = plink.get_attribute('href') or ''
-                            match = re.search(r'StartHit=(\d+)', phref)
-                            if match:
-                                hit_val = int(match.group(1))
-                                if hit_val > start_hit:
-                                    if next_start is None or hit_val < next_start:
-                                        next_start = hit_val
-                    except Exception:
-                        pass
+                        rows = self.page.query_selector_all("tr.MasterAction")
+                        if not rows:
+                            break
 
-                    if next_start is None:
-                        break  # No more pages
+                        for row in rows:
+                            try:
+                                link = row.query_selector("a.MasterActionLink")
+                                if not link:
+                                    continue
+                                ticket_number = (link.text_content() or "").strip()
+                                if not ticket_number or ticket_number in seen:
+                                    continue
+                                seen.add(ticket_number)
 
-                    start_hit = next_start
-                    if page_num > 0:
-                        logger.debug(f"Queue {queue_name}: page {page_num + 2} (StartHit={start_hit})")
+                                href = link.get_attribute("href") or ""
+                                cells = row.query_selector_all("td")
 
-            except Exception as e:
-                logger.error(f"Error scraping queue {queue_name} (ID={queue_id}): {e}")
-                continue
+                                # Small view columns (0-indexed):
+                                # 0=checkbox, 1=Priority, 2=NewArticle, 3=Ticket#, 4=Age,
+                                # 5=Sender, 6=Title, 7=State, 8=Lock, 9=Queue, 10=Owner, 11=CustomerID
+                                title = ""
+                                if len(cells) > 6:
+                                    title_div = cells[6].query_selector("div[title]")
+                                    if title_div:
+                                        title = title_div.get_attribute("title") or (title_div.text_content() or "").strip()
 
-        logger.info(f"Znuny queue views: found {len(all_tickets)} open tickets across {len(self.QUEUE_IDS)} queues")
-        self._open_tickets_cache = all_tickets
-        self._cache_timestamp = time.time()
-        return all_tickets
+                                state = (cells[7].text_content() or "").strip() if len(cells) > 7 else ""
+                                # Read actual queue from column 9 (includes sub-queue path)
+                                actual_queue = (cells[9].text_content() or "").strip() if len(cells) > 9 else ""
+                                owner = (cells[10].text_content() or "").strip() if len(cells) > 10 else ""
+                                priority = (cells[1].text_content() or "").strip() if len(cells) > 1 else ""
+
+                                all_tickets.append({
+                                    "ticket_number": ticket_number,
+                                    "title": title,
+                                    "href": href,
+                                    "state": state,
+                                    "queue": actual_queue or queue_name,
+                                    "owner": owner,
+                                    "priority": priority,
+                                })
+                            except Exception:
+                                continue
+
+                        # Check for next page - find pagination links with higher StartHit
+                        next_start = None
+                        try:
+                            pagination_links = self.page.query_selector_all('a[href*="StartHit="]')
+                            for plink in pagination_links:
+                                phref = plink.get_attribute('href') or ''
+                                match = re.search(r'StartHit=(\d+)', phref)
+                                if match:
+                                    hit_val = int(match.group(1))
+                                    if hit_val > start_hit:
+                                        if next_start is None or hit_val < next_start:
+                                            next_start = hit_val
+                        except Exception:
+                            pass
+
+                        if next_start is None:
+                            break  # No more pages
+
+                        start_hit = next_start
+                        if page_num > 0:
+                            logger.debug(f"Queue {queue_name}: page {page_num + 2} (StartHit={start_hit})")
+
+                except Exception as e:
+                    logger.error(f"Error scraping queue {queue_name} (ID={queue_id}): {e}")
+                    continue
+
+            logger.info(f"Znuny queue views: found {len(all_tickets)} open tickets across {len(self.QUEUE_IDS)} queues")
+            self._open_tickets_cache = all_tickets
+            self._cache_timestamp = time.time()
+            return all_tickets
 
     def clear_cache(self):
         """Clear all caches (class-level)."""
@@ -596,10 +605,11 @@ class ZnunyClient:
         Search Znuny using the search form as a fallback.
         This finds tickets in ALL queues and states, not just the known queue views.
         """
-        if not self._login():
-            return []
-
+        ZnunyClient._page_lock.acquire()
         try:
+            if not self._login():
+                return []
+
             # Navigate to search page (loads AJAX dialog)
             self.page.goto(self.SEARCH_URL, wait_until="domcontentloaded")
 
@@ -699,6 +709,8 @@ class ZnunyClient:
         except Exception as e:
             logger.error(f"Znuny search form error: {e}")
             return []
+        finally:
+            ZnunyClient._page_lock.release()
 
     def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False,
                            bypass_cache: bool = False) -> ZnunyTicketDetails | None:
@@ -716,7 +728,7 @@ class ZnunyClient:
             skip_body_fetch: If True, skip fetching article bodies entirely (fastest mode)
             bypass_cache: If True, skip TTL cache (still uses article-count check)
         """
-        # Layer 1: TTL cache (fastest - no navigation needed)
+        # Layer 1: TTL cache (fastest - no navigation needed, no lock needed)
         cached_details = None
         cached_article_count = -1
         if ticket_number in self._ticket_details_cache:
@@ -726,10 +738,22 @@ class ZnunyClient:
                 logger.debug(f"Using cached details for ticket {ticket_number}")
                 return cached_details
 
-        if not self._login():
-            return None
-
+        ZnunyClient._page_lock.acquire()
         try:
+            if not self._login():
+                return None
+
+            return self._fetch_ticket_details(ticket_number, skip_body_fetch, cached_details, cached_article_count)
+        finally:
+            ZnunyClient._page_lock.release()
+
+    MAX_TICKET_PROCESS_SECONDS = 60  # Per-ticket time limit for article processing
+
+    def _fetch_ticket_details(self, ticket_number: str, skip_body_fetch: bool,
+                              cached_details, cached_article_count: int) -> ZnunyTicketDetails | None:
+        """Inner method for get_ticket_details - runs with page lock held."""
+        try:
+            ticket_process_start = time.time()
             # Find the ticket in cache to get its URL
             all_tickets = self.get_open_tickets()
             ticket_info = next((t for t in all_tickets if t["ticket_number"] == ticket_number), None)
@@ -850,11 +874,22 @@ class ZnunyClient:
                 logger.info(f"Ticket {ticket_number}: articles changed ({cached_article_count} -> {len(article_data)}), re-processing")
 
             # Layer 3: Full article parse (only when article count changed or first time)
-            # Process articles - only click ones that need body content
-            articles_needing_body = [d for d in article_data if d["needs_body"] and not skip_body_fetch]
+            # Separate articles: need body vs skipped
+            raw_needing_body = [d for d in article_data if d["needs_body"] and not skip_body_fetch]
             articles_skipped = [d for d in article_data if not d["needs_body"] or skip_body_fetch]
 
-            # First, add articles that don't need body (fast - no clicking)
+            # Only first Phone article needs body extraction
+            effective_body_articles = []
+            phone_seen = False
+            for d in raw_needing_body:
+                if d["via"] == "Phone":
+                    if phone_seen:
+                        articles_skipped.append(d)  # Extra phone → treat as skipped
+                        continue
+                    phone_seen = True
+                effective_body_articles.append(d)
+
+            # Add articles that don't need body (fast - no clicking)
             for data in articles_skipped:
                 article_created = None
                 time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
@@ -864,7 +899,6 @@ class ZnunyClient:
                     except ValueError:
                         pass
 
-                # For Internal articles, use sender as created_by
                 article_created_by = data["sender"] if data["via"] == "Internal" else ""
 
                 articles.append(ZnunyArticle(
@@ -875,98 +909,129 @@ class ZnunyClient:
                     created_at=article_created,
                     created_at_str=data["created_str"],
                     created_by=article_created_by,
-                    body=""  # No body needed for these
+                    body=""
                 ))
 
-            # Then click only articles that need body content (site visits + first Phone)
-            phone_article_processed = False
-            for data in articles_needing_body:
-                # Only process first Phone article (for address extraction)
-                if data["via"] == "Phone" and phone_article_processed:
-                    # Add without body
-                    article_created = None
-                    time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
-                    if time_match:
-                        try:
-                            article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
-                        except ValueError:
-                            pass
-                    articles.append(ZnunyArticle(
-                        article_number=data["num"],
-                        sender=data["sender"],
-                        via=data["via"],
-                        subject=data["subject"],
-                        created_at=article_created,
-                        created_at_str=data["created_str"],
-                        created_by="",
-                        body=""
-                    ))
-                    continue
-
+            # Batch extract article bodies in a single page.evaluate() call
+            # Eliminates per-article Playwright CDP round-trips (click → wait → extract)
+            body_results = {}
+            if effective_body_articles:
+                body_article_nums = [d["num"] for d in effective_body_articles]
+                extract_start = time.time()
                 try:
-                    # Click on the article row to open detail
-                    data["row"].click()
+                    self.page.set_default_timeout(30000)  # Allow time for batch
+                    body_results = self.page.evaluate("""(articleNums) => {
+                        return new Promise(async (resolve) => {
+                            const results = {};
+                            const table = document.querySelector('.WidgetSimple table tbody');
+                            if (!table) { resolve(results); return; }
+                            const rows = Array.from(table.querySelectorAll('tr'));
+
+                            // Helper: extract body from current article content area
+                            const getBody = () => {
+                                const iframes = document.querySelectorAll(
+                                    '.ArticleMailContentHTMLWrapper iframe, .ArticleMailContent iframe, iframe[id^="Iframe"]'
+                                );
+                                for (const iframe of iframes) {
+                                    try {
+                                        const doc = iframe.contentDocument ||
+                                            (iframe.contentWindow && iframe.contentWindow.document);
+                                        if (doc && doc.body) {
+                                            const text = doc.body.textContent.trim();
+                                            if (text) return text;
+                                        }
+                                    } catch(e) {}
+                                }
+                                const bodyEl = document.querySelector('.ArticleBody, .MessageBody');
+                                if (bodyEl) return bodyEl.textContent.trim();
+                                return '';
+                            };
+
+                            for (const num of articleNums) {
+                                let targetRow = null;
+                                for (const row of rows) {
+                                    const cells = row.querySelectorAll('td');
+                                    if (cells.length >= 7 && cells[0].textContent.trim() === String(num)) {
+                                        targetRow = row;
+                                        break;
+                                    }
+                                }
+                                if (!targetRow) continue;
+
+                                // Capture previous body to detect content change
+                                const prevBody = getBody();
+
+                                // Click to expand article (triggers OTRS AJAX load)
+                                targetRow.click();
+
+                                // Poll for body content to change (up to 3s per article)
+                                let body = '';
+                                let createdBy = '';
+                                const start = Date.now();
+
+                                while (Date.now() - start < 3000) {
+                                    await new Promise(r => setTimeout(r, 150));
+                                    const currentBody = getBody();
+                                    if (currentBody && currentBody !== prevBody) {
+                                        body = currentBody;
+                                        break;
+                                    }
+                                }
+                                // Fallback: use whatever content is there after timeout
+                                if (!body) body = getBody();
+
+                                // Extract "by Staff" from article header
+                                const headers = document.querySelectorAll('.WidgetSimple h2');
+                                for (const h of headers) {
+                                    const match = h.textContent.match(/\\bby\\s+([A-Za-z][A-Za-z\\s]+?)\\s*$/m);
+                                    if (match) {
+                                        createdBy = match[1].trim();
+                                        break;
+                                    }
+                                }
+
+                                results[String(num)] = { body: body || '', createdBy: createdBy || '' };
+                            }
+
+                            resolve(results);
+                        });
+                    }""", body_article_nums) or {}
+                except Exception as e:
+                    logger.warning(f"Ticket {ticket_number}: batch body extraction failed: {e}")
+                    body_results = {}
+                finally:
+                    self.page.set_default_timeout(10000)
+
+                extract_time = time.time() - extract_start
+                extracted_count = sum(1 for r in body_results.values() if r.get("body"))
+                logger.info(f"Ticket {ticket_number}: batch extracted {extracted_count}/{len(effective_body_articles)} bodies in {extract_time:.1f}s")
+
+            # Build ZnunyArticle objects for articles with body content
+            for data in effective_body_articles:
+                article_created = None
+                time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
+                if time_match:
                     try:
-                        self.page.wait_for_selector("iframe[id^='Iframe'], .ArticleBody, .MessageBody", timeout=3000)
-                    except Exception:
+                        article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
+                    except ValueError:
                         pass
 
-                    # Look for the article header with "by [Staff Name]"
-                    article_created_by = ""
-                    article_headers = self.page.query_selector_all(".WidgetSimple h2")
-                    for header in article_headers:
-                        header_text = (header.text_content() or "")
-                        by_match = re.search(r'\bby\s+([A-Za-z][A-Za-z\s]+)$', header_text, re.MULTILINE)
-                        if by_match:
-                            article_created_by = by_match.group(1).strip()
-                            break
+                result = body_results.get(str(data["num"]), {})
+                body = result.get("body", "")
+                article_created_by = result.get("createdBy", "")
+                if not article_created_by and data["via"] == "Internal":
+                    article_created_by = data["sender"]
 
-                    if not article_created_by and data["via"] == "Internal":
-                        article_created_by = data["sender"]
-
-                    # Get the article body content from iframe
-                    body = ""
-                    try:
-                        iframes = self.page.query_selector_all(".ArticleMailContentHTMLWrapper iframe, .ArticleMailContent iframe, iframe[id^='Iframe']")
-                        if iframes:
-                            frame = iframes[0].content_frame()
-                            if frame:
-                                body_elem = frame.query_selector("body")
-                                if body_elem:
-                                    body = (body_elem.text_content() or "").strip()
-
-                        if not body:
-                            body_elements = self.page.query_selector_all(".ArticleBody, .MessageBody")
-                            if body_elements:
-                                body = (body_elements[0].text_content() or "").strip()
-                    except Exception as e:
-                        logger.debug(f"Error extracting article body: {e}")
-
-                    article_created = None
-                    time_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", data["created_str"])
-                    if time_match:
-                        try:
-                            article_created = datetime.strptime(time_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
-                        except ValueError:
-                            pass
-
-                    articles.append(ZnunyArticle(
-                        article_number=data["num"],
-                        sender=data["sender"],
-                        via=data["via"],
-                        subject=data["subject"],
-                        created_at=article_created,
-                        created_at_str=data["created_str"],
-                        created_by=article_created_by,
-                        body=body
-                    ))
-
-                    if data["via"] == "Phone":
-                        phone_article_processed = True
-
-                except Exception as e:
-                    logger.debug(f"Error parsing article {data.get('num', '?')}: {e}")
-                    continue
+                articles.append(ZnunyArticle(
+                    article_number=data["num"],
+                    sender=data["sender"],
+                    via=data["via"],
+                    subject=data["subject"],
+                    created_at=article_created,
+                    created_at_str=data["created_str"],
+                    created_by=article_created_by,
+                    body=body
+                ))
 
             # Sort articles by number (newest first - descending)
             articles.sort(key=lambda a: a.article_number, reverse=True)
@@ -989,8 +1054,8 @@ class ZnunyClient:
                     if address:
                         break
 
-            clicks_made = len([d for d in articles_needing_body if not (d["via"] == "Phone" and phone_article_processed)])
-            logger.info(f"Fetched details for ticket {ticket_number}: created by {created_by}, {len(articles)} articles ({clicks_made} clicked), address={address[:30] if address else 'none'}")
+            bodies_extracted = sum(1 for r in body_results.values() if r.get("body"))
+            logger.info(f"Fetched details for ticket {ticket_number}: created by {created_by}, {len(articles)} articles ({bodies_extracted}/{len(effective_body_articles)} bodies), address={address[:30] if address else 'none'}")
 
             details = ZnunyTicketDetails(
                 ticket_number=ticket_number,
