@@ -441,7 +441,7 @@ Uses Playwright to interact with Znuny web interface at `https://10.241.1.110`:
 **Class-level shared state** (persists across sync cycles):
 - `_shared_playwright`, `_shared_context`, `_shared_page` - Browser session
 - `_shared_logged_in`, `_shared_last_login_check` - Login state (60s verification TTL)
-- `_shared_open_tickets_cache`, `_shared_cache_timestamp` - Dashboard cache (5min TTL)
+- `_shared_open_tickets_cache`, `_shared_cache_timestamp` - Service view cache (5min TTL)
 - `_shared_details_cache` - Per-ticket detail cache
 
 ### 9. Configuration (DB-stored)
@@ -619,6 +619,7 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - **Credential guard:** Jobs skip execution if no portal credentials exist in the database
 - **Operating hours:** Configurable daily schedule (default 7 AM - 10 PM MVT). Jobs are skipped outside hours. Configure via Admin → Config → Operating Hours.
 - **Staleness watchdog:** Every 5 min (during operating hours), checks each portal's last successful extraction. If any is >15 min old, kills all Playwright browsers (portal + Znuny) and triggers immediate re-extraction/sync.
+- **Visual indicators:** Dashboard and admin portal cards show stale state (red pulsing border when >15 min old) and paused state (dimmed/grayed when outside operating hours).
 
 ## Portal-Specific Notes
 
@@ -816,9 +817,14 @@ A site visit is marked as **completed** when any of these occur:
 
 The Znuny integration uses several optimization strategies:
 
+### Service View Fetching
+- Uses `AgentTicketService` with `ServiceID=1` to fetch all ISP tickets in a single view (replaces per-queue iteration)
+- Single page load with pagination instead of iterating 5+ queue pages
+- Finds all tickets across all queues that belong to the OAN service
+
 ### TTL-Based Caching
 - **Cache TTL**: 5 minutes (configurable via `CACHE_TTL_SECONDS = 360`)
-- Open tickets list cached to avoid repeated dashboard fetches
+- Open tickets list cached to avoid repeated service view fetches
 - Ticket details cached per-ticket with TTL validation
 - Login verification cached for 60 seconds
 
@@ -841,13 +847,13 @@ The Znuny integration uses several optimization strategies:
 
 ### Sync Cycle Steps
 - **Step 0**: Sync newly linked ISP tickets (detail fetch for recently matched)
-- **Step 1**: Get open tickets from Znuny dashboard (cached)
+- **Step 1**: Get open tickets from Znuny service view (cached)
 - **Step 1.5**: Check unchecked ISP tickets against Znuny
 - **Step 1.6**: Handle closed tickets with pending site visits
 - **Step 2**: Process all open tickets (3-layer caching per ticket)
 - **Step 3**: Mark closed Znuny tickets
 
-**Results:** Steady-state sync cycle runs in ~18 seconds (down from ~2.5 minutes).
+**Results:** Steady-state sync cycle runs in ~1-2 minutes (down from ~2.5 minutes with queue iteration). Initial fetch is a single page load via service view.
 
 ## Portal & Znuny URLs
 
