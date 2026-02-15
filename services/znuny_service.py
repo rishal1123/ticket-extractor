@@ -304,6 +304,7 @@ class ZnunyService:
         0. Sync ISP tickets just linked to Znuny (new tickets needing initial details)
         1. Get open tickets from Znuny dashboard (5-min cache)
         1.5. Check unchecked ISP tickets against open tickets list
+        1.7. Check completed ISP tickets (not in Znuny) by account number in closed tickets
         1.6. Handle closed tickets with pending site visits
         2. For each open ticket:
            a. Link to ISP tickets if applicable
@@ -453,6 +454,52 @@ class ZnunyService:
                             logger.info(f"Found {ticket.portal}/{ticket.ticket_id} in Znuny as {znuny_id}")
                     except Exception as e:
                         logger.error(f"Error checking ticket {ticket.id}: {e}")
+                        results["errors"] += 1
+
+            # Step 1.7: Check completed ISP tickets not in Znuny by account number
+            # These tickets disappeared from the portal but were never found in Znuny.
+            # Search closed Znuny tickets by customer account as a last-chance check.
+            # After 3 failed attempts, mark ticket as "Rejected on Portal".
+            completed_not_in_znuny = self.db.get_completed_not_in_znuny()
+            if completed_not_in_znuny:
+                logger.info(f"Checking {len(completed_not_in_znuny)} completed ISP tickets by account in Znuny closed tickets")
+                for ticket in completed_not_in_znuny:
+                    try:
+                        matches = self.znuny_client.search_closed_by_account(
+                            ticket.account, ticket.ticket_id
+                        )
+                        if matches:
+                            match = matches[0]
+                            znuny_id = match["ticket_number"]
+                            self.db.update_znuny_status(ticket.id, True, znuny_id)
+                            # Store creation time and URL from search results
+                            self.db.update_znuny_details(
+                                ticket.id,
+                                znuny_created_at=match.get("created_at"),
+                                znuny_url=match.get("znuny_url"),
+                            )
+                            results["isp_found"] += 1
+                            logger.info(
+                                f"Account search: {ticket.portal}/{ticket.ticket_id} found "
+                                f"in closed Znuny ticket {znuny_id}"
+                                f" (created: {match.get('created_at')})"
+                            )
+                        else:
+                            # Not found - increment search counter
+                            count = self.db.increment_znuny_search_count(ticket.id)
+                            if count >= 3:
+                                self.db.mark_ticket_rejected(ticket.id)
+                                logger.info(
+                                    f"Account search: {ticket.portal}/{ticket.ticket_id} not found "
+                                    f"after {count} attempts - marked as rejected on portal"
+                                )
+                            else:
+                                logger.info(
+                                    f"Account search: {ticket.portal}/{ticket.ticket_id} not found "
+                                    f"(attempt {count}/3)"
+                                )
+                    except Exception as e:
+                        logger.error(f"Error in account search for ticket {ticket.id}: {e}")
                         results["errors"] += 1
 
             # Step 1.6: Check for closed tickets with pending site visits

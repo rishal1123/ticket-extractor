@@ -161,6 +161,12 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+            # Add znuny_search_count column (migration) - tracks account search attempts
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN znuny_search_count INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             # Znuny articles table - stores article/note history from Znuny
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS znuny_articles (
@@ -658,6 +664,51 @@ class Database:
                 ORDER BY created_at DESC
             """)
             return [self._row_to_ticket(row) for row in cursor.fetchall()]
+
+    def get_completed_not_in_znuny(self, limit: int = 5) -> list[Ticket]:
+        """Get completed tickets not found in Znuny that have account numbers.
+
+        Excludes tickets already searched 3+ times (those get marked rejected).
+        Capped at `limit` per cycle.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM tickets
+                WHERE in_znuny = 0
+                AND completed_at IS NOT NULL
+                AND account IS NOT NULL AND account != ''
+                AND COALESCE(znuny_search_count, 0) < 3
+                ORDER BY completed_at DESC
+                LIMIT ?
+            """, (limit,))
+            return [self._row_to_ticket(row) for row in cursor.fetchall()]
+
+    def increment_znuny_search_count(self, ticket_id: int) -> int:
+        """Increment the account search counter for a ticket. Returns new count."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE tickets
+                SET znuny_search_count = COALESCE(znuny_search_count, 0) + 1,
+                    updated_at = ?
+                WHERE id = ?
+            """, (now_maldives(), ticket_id))
+            cursor.execute("SELECT znuny_search_count FROM tickets WHERE id = ?", (ticket_id,))
+            row = cursor.fetchone()
+            return row["znuny_search_count"] if row else 0
+
+    def mark_ticket_rejected(self, ticket_id: int):
+        """Mark a ticket as rejected on portal (not found in Znuny after 3 searches)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE tickets
+                SET status = 'Rejected on Portal',
+                    updated_at = ?
+                WHERE id = ?
+            """, (now_maldives(), ticket_id))
+            logger.info(f"Marked ticket {ticket_id} as rejected on portal")
 
     def get_sync_status_counts(self) -> dict:
         """Get Znuny sync status counts in a single query."""

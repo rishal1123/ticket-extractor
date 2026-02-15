@@ -13,9 +13,9 @@ Extractor/
 ├── main.py              # CLI entry point, runs extraction + dashboard
 ├── app.py               # MVC FastAPI app (recommended entry point)
 ├── dashboard.py         # Legacy entry point (deprecated, redirects to app.py)
-├── database.py          # SQLite database operations (Repository, ~2700 lines)
+├── database.py          # SQLite database operations (Repository, ~2970 lines)
 ├── config.py            # Configuration from DB + .env fallback + APP_VERSION
-├── znuny_client.py      # Playwright-based Znuny integration (~940 lines)
+├── znuny_client.py      # Playwright-based Znuny integration (~1400 lines)
 │
 ├── models/              # Data Models
 │   └── ticket.py        # Ticket dataclass with serialization
@@ -192,6 +192,7 @@ Key functions available to all pages:
 | znuny_address | TEXT | Address from Znuny phone ticket |
 | znuny_url | TEXT | Direct URL to ticket in Znuny |
 | portal_url | TEXT | Direct URL to ticket in ISP portal |
+| znuny_search_count | INTEGER | Account search attempts for closed Znuny tickets (max 3) |
 | created_at | DATETIME | When ticket was first extracted (entered to extractor) |
 | updated_at | DATETIME | Last update time |
 | completed_at | DATETIME | When ticket was marked complete |
@@ -211,33 +212,46 @@ Key functions available to all pages:
 | created_by | TEXT | Staff who created article |
 | body | TEXT | Article content |
 
-**znuny_tickets table:** Orphan Znuny-only tickets (not linked to ISP portals).
+**znuny_tickets table:** All Znuny tickets (both ISP-linked and orphan).
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER | Primary key |
 | znuny_ticket_id | TEXT | Znuny ticket number (UNIQUE) |
 | title | TEXT | Ticket title/subject |
 | state | TEXT | open / closed |
+| queue | TEXT | Queue assignment |
+| priority | TEXT | Ticket priority |
+| owner | TEXT | Ticket owner/assignee |
 | created_at | DATETIME | Znuny creation time |
 | created_by | TEXT | Staff who created ticket |
 | closed_at | DATETIME | When ticket was closed |
-| isp_ticket_id | INTEGER | FK to tickets.id (if later linked) |
+| time_to_close_minutes | REAL | Duration from creation to close |
+| article_count | INTEGER | Number of articles |
+| last_article_by | TEXT | Who created last article |
+| last_article_at | DATETIME | When last article was created |
+| znuny_url | TEXT | Direct URL to Znuny ticket |
+| isp_ticket_id | INTEGER | FK to tickets.id (if linked to ISP portal) |
+| first_seen_at | DATETIME | When first discovered by sync |
+| updated_at | DATETIME | Last update time |
 
 **site_visits table:** OAN Site Visit tracking.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER | Primary key |
+| ticket_id | INTEGER | FK to tickets.id (ISP portal ticket) |
 | znuny_ticket_id | TEXT | Parent Znuny ticket number |
 | article_id | INTEGER | Article number (UNIQUE with znuny_ticket_id) |
-| portal_ticket_id | TEXT | Linked ISP portal ticket ID |
-| visit_date | TEXT | Scheduled visit date (YYYY-MM-DD) |
+| site_type | TEXT | Type of site |
+| service_provider | TEXT | ISP provider name |
 | scheduled_time | TEXT | Scheduled time slot |
 | assigned_to | TEXT | Staff assigned to visit |
-| service_provider | TEXT | ISP provider name |
-| site_type | TEXT | Type of site |
-| status | TEXT | pending / completed |
+| visit_date | DATE | Scheduled visit date (YYYY-MM-DD) |
+| article_created_at | DATETIME | When the site visit article was created |
 | ticket_completed_at | DATETIME | When ticket was closed/completed |
-| time_taken_minutes | REAL | Duration in minutes |
+| time_taken_minutes | INTEGER | Duration in minutes |
+| status | TEXT | pending / completed |
+| address | TEXT | Customer address |
+| customer_name | TEXT | Customer name |
 | znuny_url | TEXT | Direct URL to Znuny ticket |
 | created_at | DATETIME | When first extracted (MVT timezone) |
 | updated_at | DATETIME | Last update time |
@@ -419,9 +433,11 @@ HTTP route handlers with dependency injection:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/znuny-only/stats` | GET | Summary stats |
-| `/api/znuny-only/tickets` | GET | List with filters (state, creator, linked) |
+| `/api/znuny-only/tickets` | GET | List with filters (state, creator, linked, queue, owner) |
 | `/api/znuny-only/staff-stats` | GET | Stats by creator |
 | `/api/znuny-only/staff-names` | GET | Staff who created Znuny-only tickets |
+| `/api/znuny-only/queue-names` | GET | Distinct queue names |
+| `/api/znuny-only/owner-names` | GET | Distinct owner names |
 
 ### 8. Znuny Integration (znuny_client.py)
 
@@ -429,20 +445,31 @@ Uses Playwright to interact with Znuny web interface at `https://10.241.1.110`:
 - Searches tickets by title containing portal ticket ID
 - Fetches ticket details: creator, creation time, articles
 - Extracts site visits from "OAN Site Visit Arranged" articles
+- Searches closed tickets by customer account number (CUIC two-step approach)
 - 3-layer caching for optimized sync cycles
 
 **Key Classes:**
 - `ZnunyClient` - Main client with class-level shared state (browser, caches persist across instances)
-- `ZnunyArticle` - Article/note data structure
-- `ZnunyTicketDetails` - Full ticket details with articles list
-- `SiteVisit` - Parsed site visit data
+- `ZnunyArticle` - Article/note data structure (article_number, sender, via, subject, created_at, created_by, body)
+- `ZnunyTicketDetails` - Full ticket details with articles list (includes owner, state, queue, priority, total_article_count)
+- `SiteVisit` - Parsed site visit data (includes address, customer_name)
 - `ZnunyClientSync` - Backward compat wrapper
+
+**Key Methods:**
+- `get_open_tickets()` - Get open tickets from service view (cached 5 min)
+- `search_by_title()` - Search tickets by title in service view cache + search form fallback
+- `check_ticket_sync()` - Check if ISP ticket exists in Znuny
+- `get_ticket_details()` - 3-layer cached detail fetching
+- `search_closed_by_account()` - Search closed tickets via Customer User Information Center
+- `extract_isp_ticket_id_from_title()` - Parse ISP portal/ticket_id from Znuny title
+- `get_site_visit_tickets()` - Get tickets with "site visit" in title
 
 **Class-level shared state** (persists across sync cycles):
 - `_shared_playwright`, `_shared_context`, `_shared_page` - Browser session
 - `_shared_logged_in`, `_shared_last_login_check` - Login state (60s verification TTL)
 - `_shared_open_tickets_cache`, `_shared_cache_timestamp` - Service view cache (5min TTL)
-- `_shared_details_cache` - Per-ticket detail cache
+- `_shared_details_cache` - Per-ticket detail cache (max 200 entries)
+- `_page_lock` - RLock for thread-safe page operations
 
 ### 9. Configuration (DB-stored)
 
@@ -835,9 +862,10 @@ The Znuny integration uses several optimization strategies:
 
 ### Selective Article Processing
 - Only clicks articles that need body content:
-  - Site visit articles (subject contains "site visit")
+  - Site visit articles (subject contains "site visit" or "preventative maintenance")
   - First Phone article (for address extraction)
 - Other articles use basic info from table (no clicking needed)
+- Articles stored for ALL Znuny tickets (not just ISP-linked) to enable change tracking
 
 ### Smart Skip Logic
 - Skips tickets that are already fully synced
@@ -848,12 +876,23 @@ The Znuny integration uses several optimization strategies:
 ### Sync Cycle Steps
 - **Step 0**: Sync newly linked ISP tickets (detail fetch for recently matched)
 - **Step 1**: Get open tickets from Znuny service view (cached)
-- **Step 1.5**: Check unchecked ISP tickets against Znuny
+- **Step 1.5**: Check unchecked ISP tickets against Znuny open list + search form
+- **Step 1.7**: Account search for completed ISP tickets not found in Znuny (5 per cycle, 3-strike rejection)
 - **Step 1.6**: Handle closed tickets with pending site visits
 - **Step 2**: Process all open tickets (3-layer caching per ticket)
 - **Step 3**: Mark closed Znuny tickets
 
-**Results:** Steady-state sync cycle runs in ~1-2 minutes (down from ~2.5 minutes with queue iteration). Initial fetch is a single page load via service view.
+### Account Search (Step 1.7)
+When ISP tickets disappear from the portal but weren't found in Znuny open tickets, searches closed Znuny tickets by customer account number:
+1. Navigate to Customer User Information Center (`AgentCustomerUserInformationCenter;CustomerUserID={account}`)
+2. Parse Customer IDs table to get the actual Znuny CustomerID
+3. Search closed tickets by CustomerID (`AgentTicketSearch;Subaction=Search;StateType=Closed;CustomerID={customer_id}`)
+4. Match ISP ticket ID in Znuny ticket titles
+- **Rate limited**: 5 tickets per sync cycle
+- **3-strike rule**: After 3 failed searches, ticket is marked as "Rejected on Portal"
+- **Tracked by**: `znuny_search_count` column on tickets table
+
+**Results:** Steady-state sync cycle runs in ~2-3 minutes including account searches. Step 2 completes in <2s when all cache hits.
 
 ## Portal & Znuny URLs
 

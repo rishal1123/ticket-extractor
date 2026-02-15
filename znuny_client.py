@@ -704,6 +704,137 @@ class ZnunyClient:
         finally:
             ZnunyClient._page_lock.release()
 
+    def search_closed_by_account(self, account: str, ticket_id: str = None) -> list[dict]:
+        """Search closed Znuny tickets by customer account number.
+
+        Two-step approach:
+        1. Navigate to Customer User Info Center to get the CustomerID
+        2. Search closed tickets by CustomerID
+
+        Returns list of matching tickets with ticket_number, title, href, created_at.
+        If ticket_id is provided, only returns results whose title contains it.
+        """
+        ZnunyClient._page_lock.acquire()
+        try:
+            if not self._login():
+                return []
+
+            # Step 1: Get CustomerID from Customer User Information Center
+            cuic_url = (
+                f"{self.BASE_URL}/otrs/index.pl?"
+                f"Action=AgentCustomerUserInformationCenter;CustomerUserID={account}"
+            )
+            self.page.goto(cuic_url, wait_until="domcontentloaded", timeout=15000)
+            time.sleep(2)
+
+            # Parse Customer IDs table (first DataTable)
+            tables = self.page.query_selector_all("table.DataTable")
+            customer_id = None
+            closed_count = 0
+            if tables:
+                data_rows = tables[0].query_selector_all("tr")
+                for row in data_rows[1:]:  # skip header
+                    cells = row.query_selector_all("td")
+                    if len(cells) >= 4:
+                        customer_id = (cells[0].text_content() or "").strip()
+                        try:
+                            closed_count = int((cells[3].text_content() or "0").strip())
+                        except ValueError:
+                            closed_count = 0
+                        break  # Use first customer ID
+
+            if not customer_id or closed_count == 0:
+                logger.info(f"Account search for {account}: no closed tickets (CustomerID={customer_id}, closed={closed_count})")
+                return []
+
+            # Step 2: Search closed tickets by CustomerID
+            search_url = (
+                f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketSearch;"
+                f"Subaction=Search;StateType=Closed;CustomerID={customer_id}"
+            )
+            self.page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+
+            # Wait for results
+            try:
+                self.page.wait_for_selector("tr.MasterAction", timeout=10000)
+            except Exception:
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+
+            # Parse results
+            results = []
+            result_rows = self.page.query_selector_all("tr.MasterAction")
+            logger.info(f"Account search for {account}: CustomerID={customer_id}, {len(result_rows)} closed tickets")
+
+            for row in result_rows:
+                try:
+                    link = row.query_selector("a.MasterActionLink")
+                    if not link:
+                        continue
+                    ticket_number = (link.text_content() or "").strip()
+                    href = link.get_attribute("href") or ""
+
+                    # Get full title from MasterActionLink title attribute or div[title]
+                    title = link.get_attribute("title") or ""
+                    if not title:
+                        title_divs = row.query_selector_all("td div[title]")
+                        # Title is typically the div with the longest title attr
+                        for div in title_divs:
+                            div_title = div.get_attribute("title") or ""
+                            if len(div_title) > len(title):
+                                title = div_title
+
+                    # Extract creation time from row cells
+                    # Znuny search results have a "Created" column with format MM/DD/YYYY HH:MM
+                    created_at = None
+                    cells = row.query_selector_all("td")
+                    for cell in cells:
+                        cell_text = (cell.text_content() or "").strip()
+                        date_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", cell_text)
+                        if date_match:
+                            try:
+                                created_at = datetime.strptime(date_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
+                            except ValueError:
+                                pass
+                            break
+
+                    if ticket_number:
+                        znuny_url = f"{self.BASE_URL}{href}" if href and not href.startswith("http") else href
+                        results.append({
+                            "ticket_number": ticket_number,
+                            "title": title,
+                            "href": href,
+                            "created_at": created_at,
+                            "znuny_url": znuny_url,
+                        })
+                except Exception:
+                    continue
+
+            # Filter by ticket_id if provided
+            if ticket_id and results:
+                filtered = [r for r in results if ticket_id in r["title"]]
+                if filtered:
+                    logger.info(f"Account search: matched ticket_id {ticket_id} in {len(filtered)} closed tickets")
+                    return filtered
+                # Fallback: try extract_isp_ticket_id_from_title for each result
+                for r in results:
+                    extracted = self.extract_isp_ticket_id_from_title(r["title"])
+                    if extracted["ticket_id"] == ticket_id:
+                        logger.info(f"Account search: matched via title parser: {r['ticket_number']}")
+                        return [r]
+                logger.info(f"Account search: {len(results)} closed tickets for {account} but none match {ticket_id}")
+                return []
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Closed ticket search by account failed: {e}")
+            return []
+        finally:
+            ZnunyClient._page_lock.release()
+
     def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False,
                            bypass_cache: bool = False) -> ZnunyTicketDetails | None:
         """
