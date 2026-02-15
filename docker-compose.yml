@@ -1,6 +1,8 @@
 services:
   extractor:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: ticket-extractor
     ports:
       - "8003:8000"

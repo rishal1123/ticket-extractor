@@ -24,11 +24,14 @@ COPY . .
 # Create data directories for persistent volumes
 RUN mkdir -p /app/data /app/data/browser_sessions
 
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
+
 # Expose port
 EXPOSE 8000
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Run the application
-CMD ["python", "app.py"]
+# Run entrypoint (DB check + app start)
+CMD ["/app/entrypoint.sh"]
