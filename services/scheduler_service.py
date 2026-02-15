@@ -12,6 +12,7 @@ reused across cycles (Playwright objects are bound to their creator thread).
 
 import time
 import threading
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import psutil
@@ -19,6 +20,8 @@ import schedule
 
 from database import Database
 from config import Config
+
+MVT = timezone(timedelta(hours=5))
 from services.znuny_service import ZnunyService
 from services.extraction_service import ExtractionService
 from utils.logger import get_logger
@@ -154,6 +157,18 @@ class SchedulerService:
             db.log_system("error", "znuny", f"Znuny sync failed: {e}")
             raise
 
+    def _is_within_operating_hours(self) -> bool:
+        """Check if current MVT time is within configured operating hours."""
+        try:
+            db = Database()
+            hours = db.get_operating_hours()
+            if not hours["enabled"]:
+                return True
+            current_hour = datetime.now(MVT).hour
+            return hours["start_hour"] <= current_hour < hours["end_hour"]
+        except Exception:
+            return True  # Default to running if check fails
+
     def _extraction_worker_loop(self):
         """Persistent extraction worker - stays alive between cycles.
 
@@ -168,6 +183,10 @@ class SchedulerService:
             if not self._extraction_event.is_set():
                 continue
             self._extraction_event.clear()
+
+            if not self._is_within_operating_hours():
+                logger.info("Portal extraction skipped - outside operating hours")
+                continue
 
             try:
                 self.run_portal_extraction()
@@ -189,6 +208,10 @@ class SchedulerService:
                 continue
             self._znuny_sync_event.clear()
 
+            if not self._is_within_operating_hours():
+                logger.info("Znuny sync skipped - outside operating hours")
+                continue
+
             try:
                 self.run_znuny_sync()
             except Exception as e:
@@ -208,6 +231,62 @@ class SchedulerService:
                 logger.info(f"Cleaned up {total} old log entries: {results}")
         except Exception as e:
             logger.error(f"Log cleanup failed: {e}")
+
+    def _staleness_watchdog(self):
+        """Check if any portal's last extraction is stale and reset browsers."""
+        if not self._is_within_operating_hours():
+            return
+
+        try:
+            db = Database()
+            last_extractions = db.get_last_extraction_per_portal()
+            if not last_extractions:
+                return
+
+            now = datetime.now(MVT)
+            stale_threshold_minutes = 15
+            stale_portals = []
+
+            for portal, info in last_extractions.items():
+                extracted_at_str = info.get("extracted_at")
+                if not extracted_at_str:
+                    continue
+                extracted_at = datetime.fromisoformat(str(extracted_at_str))
+                if extracted_at.tzinfo is None:
+                    extracted_at = extracted_at.replace(tzinfo=MVT)
+                age_minutes = (now - extracted_at).total_seconds() / 60
+                if age_minutes > stale_threshold_minutes:
+                    stale_portals.append((portal, age_minutes))
+
+            if not stale_portals:
+                return
+
+            stale_info = ", ".join(f"{p} ({m:.0f}min)" for p, m in stale_portals)
+            logger.warning(f"Stale portals detected: {stale_info} - resetting all browsers")
+            db.log_system("warning", "scheduler", f"Stale portals: {stale_info} - resetting browsers")
+
+            # Kill all portal browsers
+            from extractors.base import BaseExtractor
+            for portal_name in list(BaseExtractor._portal_browsers.keys()):
+                browser = BaseExtractor._portal_browsers.pop(portal_name, None)
+                if browser:
+                    try:
+                        browser.stop()
+                    except Exception:
+                        pass
+                    logger.info(f"Killed browser for {portal_name}")
+
+            # Kill Znuny browser
+            from znuny_client import ZnunyClient
+            ZnunyClient.force_close()
+
+            # Trigger immediate re-extraction and sync
+            self._extraction_event.set()
+            self._znuny_sync_event.set()
+            logger.info("Browser reset complete - triggered immediate extraction and sync")
+
+        except Exception as e:
+            logger.error(f"Staleness watchdog error: {e}")
 
     def _extraction_job(self):
         """Signal the persistent extraction worker to run."""
@@ -259,6 +338,7 @@ class SchedulerService:
         # Schedule periodic jobs (just signal the persistent workers)
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
+        schedule.every(5).minutes.do(self._staleness_watchdog)
 
         # Run both immediately on start
         self._extraction_job()
@@ -298,12 +378,20 @@ class SchedulerService:
 
     def get_status(self) -> dict:
         """Get scheduler status."""
-        return {
+        status = {
             "running": self.is_running,
             "extraction_interval_minutes": self._extraction_interval,
             "znuny_sync_interval_minutes": self._znuny_sync_interval,
             "thread_alive": self._thread.is_alive() if self._thread else False
         }
+        try:
+            db = Database()
+            hours = db.get_operating_hours()
+            status["operating_hours"] = hours
+            status["within_operating_hours"] = self._is_within_operating_hours()
+        except Exception:
+            pass
+        return status
 
 
 # Global scheduler instance

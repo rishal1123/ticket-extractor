@@ -2172,6 +2172,43 @@ class Database:
                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 """, (key, str(val), now_maldives()))
 
+    # ==================== Operating Hours ====================
+
+    def get_operating_hours(self) -> dict:
+        """Get operating hours settings."""
+        defaults = {
+            "operating_hours_enabled": "0",
+            "operating_hours_start": "7",
+            "operating_hours_end": "22"
+        }
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?)",
+                tuple(defaults.keys())
+            )
+            found = {row["key"]: row["value"] for row in cursor.fetchall()}
+        return {
+            "enabled": found.get("operating_hours_enabled", defaults["operating_hours_enabled"]) == "1",
+            "start_hour": int(found.get("operating_hours_start", defaults["operating_hours_start"])),
+            "end_hour": int(found.get("operating_hours_end", defaults["operating_hours_end"]))
+        }
+
+    def set_operating_hours(self, enabled: bool, start_hour: int, end_hour: int):
+        """Set operating hours settings."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for key, val in [
+                ("operating_hours_enabled", "1" if enabled else "0"),
+                ("operating_hours_start", str(start_hour)),
+                ("operating_hours_end", str(end_hour))
+            ]:
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """, (key, val, now_maldives()))
+
     # ==================== Portal Config (DB-stored) ====================
 
     def get_config_settings(self) -> dict:

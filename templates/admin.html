@@ -705,6 +705,46 @@
             </div>
         </div>
 
+        <!-- Operating Hours -->
+        <div class="col-12">
+            <div class="config-section">
+                <h6><i class="bi bi-clock me-1"></i>Operating Hours (Daily Schedule)</h6>
+                <p class="text-muted small mb-3">Define the hours when extraction and Znuny sync jobs are allowed to run. Jobs will be skipped outside these hours.</p>
+                <div class="row g-3 align-items-center">
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="operating_hours_enabled">
+                            <label class="form-check-label" for="operating_hours_enabled">
+                                <strong>Enable Operating Hours</strong>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small fw-bold">Start Time</label>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-sunrise"></i></span>
+                            <input type="number" class="form-control text-center" id="operating_hours_start" min="0" max="23" value="7">
+                            <span class="input-group-text">:00</span>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small fw-bold">End Time</label>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-sunset"></i></span>
+                            <input type="number" class="form-control text-center" id="operating_hours_end" min="0" max="23" value="22">
+                            <span class="input-group-text">:00</span>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <div class="alert alert-info small mb-0 py-2">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Jobs run from <strong>Start</strong> to <strong>End - 1</strong> hour daily (MVT). Example: 7 to 22 = 7:00 AM to 9:59 PM.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Security Settings -->
         <div class="col-12 col-md-6">
             <div class="config-section">
@@ -1407,6 +1447,16 @@ async function loadConfig() {
             document.getElementById('perf_bad').value = threshData.thresholds.bad || 30;
             document.getElementById('perf_critical').value = threshData.thresholds.critical || 60;
         }
+
+        // Load operating hours
+        const hoursResponse = await fetch('/api/settings/operating-hours');
+        const hoursData = await hoursResponse.json();
+
+        if (hoursData.hours) {
+            document.getElementById('operating_hours_enabled').checked = hoursData.hours.enabled;
+            document.getElementById('operating_hours_start').value = hoursData.hours.start_hour ?? 7;
+            document.getElementById('operating_hours_end').value = hoursData.hours.end_hour ?? 22;
+        }
     } catch (error) {
         console.error('Error loading config:', error);
         alert('Error loading configuration');
@@ -1452,10 +1502,25 @@ async function saveConfig() {
 
         const threshData = await threshResponse.json();
 
-        if (data.success && threshData.success) {
+        // Save operating hours
+        const hours = {
+            enabled: document.getElementById('operating_hours_enabled').checked,
+            start_hour: parseInt(document.getElementById('operating_hours_start').value) || 7,
+            end_hour: parseInt(document.getElementById('operating_hours_end').value) || 22
+        };
+
+        const hoursResponse = await fetch('/api/settings/operating-hours', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(hours)
+        });
+
+        const hoursData = await hoursResponse.json();
+
+        if (data.success && threshData.success && hoursData.success) {
             alert('Configuration saved successfully!\n\nNote: Some changes may require a server restart.');
         } else {
-            alert('Failed to save: ' + (data.message || threshData.message || 'Unknown error'));
+            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving config:', error);

@@ -39,13 +39,17 @@ async def get_scheduler_status():
         if jobs:
             next_run = str(jobs[0].next_run) if jobs[0].next_run else None
 
-        return JSONResponse(content={
+        result = {
             "running": status["running"],
             "extraction_interval_minutes": status["extraction_interval_minutes"],
             "znuny_sync_interval_minutes": status["znuny_sync_interval_minutes"],
             "jobs_count": len(jobs),
             "next_run": next_run
-        })
+        }
+        if "operating_hours" in status:
+            result["operating_hours"] = status["operating_hours"]
+            result["within_operating_hours"] = status.get("within_operating_hours", True)
+        return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error getting scheduler status: {e}")
         return JSONResponse(content={
@@ -211,6 +215,28 @@ async def update_performance_thresholds(request: Request, db: Database = Depends
     )
     logger.info(f"Performance thresholds updated: {data}")
     return JSONResponse(content=success_response("Thresholds saved"))
+
+
+@settings_router.get("/operating-hours")
+@handle_errors("get operating hours")
+async def get_operating_hours(db: Database = Depends(get_db)):
+    """Get operating hours settings."""
+    hours = db.get_operating_hours()
+    return JSONResponse(content={"success": True, "hours": hours})
+
+
+@settings_router.post("/operating-hours")
+@handle_errors("update operating hours")
+async def update_operating_hours(request: Request, db: Database = Depends(get_db)):
+    """Update operating hours settings."""
+    data = await request.json()
+    db.set_operating_hours(
+        enabled=bool(data.get("enabled", False)),
+        start_hour=int(data.get("start_hour", 7)),
+        end_hour=int(data.get("end_hour", 22))
+    )
+    logger.info(f"Operating hours updated: enabled={data.get('enabled')}, {data.get('start_hour')}:00-{data.get('end_hour')}:00")
+    return JSONResponse(content=success_response("Operating hours saved"))
 
 
 @settings_router.get("")
