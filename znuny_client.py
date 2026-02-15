@@ -61,6 +61,7 @@ class ZnunyTicketDetails:
     address: str = ""  # Address from phone ticket or first article
     znuny_url: str = ""  # Direct URL to ticket in Znuny
     articles: list[ZnunyArticle] = field(default_factory=list)
+    total_article_count: int = 0  # Total articles on page (before filtering)
 
 
 @dataclass
@@ -721,10 +722,10 @@ class ZnunyClient:
         """
         # Layer 1: TTL cache (fastest - no navigation needed, no lock needed)
         cached_details = None
-        cached_article_count = -1
+        cached_max_article_num = -1
         if ticket_number in self._ticket_details_cache:
             cached_details, cache_time = self._ticket_details_cache[ticket_number]
-            cached_article_count = len(cached_details.articles)
+            cached_max_article_num = max((a.article_number for a in cached_details.articles), default=0)
             if not bypass_cache and time.time() - cache_time < CACHE_TTL_SECONDS:
                 logger.debug(f"Using cached details for ticket {ticket_number}")
                 return cached_details
@@ -734,14 +735,14 @@ class ZnunyClient:
             if not self._login():
                 return None
 
-            return self._fetch_ticket_details(ticket_number, skip_body_fetch, cached_details, cached_article_count)
+            return self._fetch_ticket_details(ticket_number, skip_body_fetch, cached_details, cached_max_article_num)
         finally:
             ZnunyClient._page_lock.release()
 
     MAX_TICKET_PROCESS_SECONDS = 60  # Per-ticket time limit for article processing
 
     def _fetch_ticket_details(self, ticket_number: str, skip_body_fetch: bool,
-                              cached_details, cached_article_count: int) -> ZnunyTicketDetails | None:
+                              cached_details, cached_max_article_num: int) -> ZnunyTicketDetails | None:
         """Inner method for get_ticket_details - runs with page lock held."""
         try:
             ticket_process_start = time.time()
@@ -854,17 +855,29 @@ class ZnunyClient:
                 except (IndexError, Exception):
                     continue
 
-            # Layer 2: Article count check (skip parsing if unchanged)
-            if cached_details and len(article_data) == cached_article_count:
-                logger.debug(f"Ticket {ticket_number}: {len(article_data)} articles (unchanged), using cache")
+            # Layer 2: Check max article number (skip parsing if no new articles)
+            total_on_page = len(article_data)
+            current_max_num = max((d["num"] for d in article_data), default=0)
+            if cached_details and current_max_num == cached_max_article_num:
+                logger.debug(f"Ticket {ticket_number}: {total_on_page} articles, max #{current_max_num} (unchanged), using cache")
                 # Refresh cache timestamp
                 self._ticket_details_cache[ticket_number] = (cached_details, time.time())
                 return cached_details
 
-            if cached_article_count >= 0:
-                logger.info(f"Ticket {ticket_number}: articles changed ({cached_article_count} -> {len(article_data)}), re-processing")
+            if cached_max_article_num >= 0:
+                logger.info(f"Ticket {ticket_number}: new articles (max #{cached_max_article_num} -> #{current_max_num}), re-processing")
 
-            # Layer 3: Full article parse (only when article count changed or first time)
+            # Filter articles: keep only last article, Phone, and site visit articles
+            if article_data:
+                article_data = [
+                    d for d in article_data
+                    if d["num"] == current_max_num
+                    or d["via"] == "Phone"
+                    or "site visit" in d["subject"].lower()
+                    or "preventative maintenance" in d["subject"].lower()
+                ]
+
+            # Layer 3: Full article parse (only when new articles detected or first time)
             # Separate articles: need body vs skipped
             raw_needing_body = [d for d in article_data if d["needs_body"] and not skip_body_fetch]
             articles_skipped = [d for d in article_data if not d["needs_body"] or skip_body_fetch]
@@ -1046,7 +1059,7 @@ class ZnunyClient:
                         break
 
             bodies_extracted = sum(1 for r in body_results.values() if r.get("body"))
-            logger.info(f"Fetched details for ticket {ticket_number}: created by {created_by}, {len(articles)} articles ({bodies_extracted}/{len(effective_body_articles)} bodies), address={address[:30] if address else 'none'}")
+            logger.info(f"Fetched details for ticket {ticket_number}: created by {created_by}, {len(articles)} articles (filtered from {total_on_page}, {bodies_extracted} bodies), address={address[:30] if address else 'none'}")
 
             details = ZnunyTicketDetails(
                 ticket_number=ticket_number,
@@ -1059,7 +1072,8 @@ class ZnunyClient:
                 priority=priority,
                 address=address,
                 znuny_url=znuny_url,
-                articles=articles
+                articles=articles,
+                total_article_count=total_on_page
             )
 
             # Cache the details
