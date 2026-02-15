@@ -438,10 +438,13 @@ class ZnunyClient:
         age = time.time() - self._cache_timestamp
         return age < CACHE_TTL_SECONDS
 
+    # Service View: all ISP/site-visit tickets in one view (replaces per-queue iteration)
+    SERVICE_ID = 1  # OAN service - covers all ISP queues + Field Works
+
     def get_open_tickets(self, force_refresh: bool = False) -> list[dict]:
         """
-        Get all open tickets by scraping Znuny queue views (Small view).
-        Iterates through all known queues (QUEUE_IDS) with pagination support.
+        Get all open tickets from the Znuny Service View (Small view).
+        Uses ServiceID to fetch all ISP tickets in a single view with pagination.
         Returns list of tickets with ticket_number, title, href, state, queue, owner, priority.
         Uses TTL-based cache (5 min) to avoid repeated fetches.
         """
@@ -460,92 +463,89 @@ class ZnunyClient:
 
             all_tickets = []
             seen = set()
+            start_hit = 1
+            max_pages = 20  # Safety limit
 
-            for queue_id, queue_name in self.QUEUE_IDS.items():
+            for page_num in range(max_pages):
+                url = (
+                    f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketService"
+                    f";ServiceID={self.SERVICE_ID};Filter=All;View=Small"
+                    f";SortBy=Age;OrderBy=Up;StartHit={start_hit}"
+                )
+                self.page.goto(url, wait_until="domcontentloaded")
+
                 try:
-                    start_hit = 1
-                    max_pages = 20  # Safety limit per queue
+                    self.page.wait_for_selector("tr.MasterAction", timeout=5000)
+                except Exception:
+                    break  # Empty or no rows on this page
 
-                    for page_num in range(max_pages):
-                        url = f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketQueue;QueueID={queue_id};View=Small;Filter=All;StartHit={start_hit}"
-                        self.page.goto(url, wait_until="domcontentloaded")
+                rows = self.page.query_selector_all("tr.MasterAction")
+                if not rows:
+                    break
 
-                        try:
-                            self.page.wait_for_selector("tr.MasterAction", timeout=5000)
-                        except Exception:
-                            break  # Empty queue or no rows on this page
+                for row in rows:
+                    try:
+                        link = row.query_selector("a.MasterActionLink")
+                        if not link:
+                            continue
+                        ticket_number = (link.text_content() or "").strip()
+                        if not ticket_number or ticket_number in seen:
+                            continue
+                        seen.add(ticket_number)
 
-                        rows = self.page.query_selector_all("tr.MasterAction")
-                        if not rows:
-                            break
+                        href = link.get_attribute("href") or ""
+                        cells = row.query_selector_all("td")
 
-                        for row in rows:
-                            try:
-                                link = row.query_selector("a.MasterActionLink")
-                                if not link:
-                                    continue
-                                ticket_number = (link.text_content() or "").strip()
-                                if not ticket_number or ticket_number in seen:
-                                    continue
-                                seen.add(ticket_number)
+                        # Small view columns (0-indexed):
+                        # 0=checkbox, 1=Priority, 2=NewArticle, 3=Ticket#, 4=Age,
+                        # 5=Sender, 6=Title, 7=State, 8=Lock, 9=Queue, 10=Owner,
+                        # 11=CustomerID, 12=Service (service view only)
+                        title = ""
+                        if len(cells) > 6:
+                            title_div = cells[6].query_selector("div[title]")
+                            if title_div:
+                                title = title_div.get_attribute("title") or (title_div.text_content() or "").strip()
 
-                                href = link.get_attribute("href") or ""
-                                cells = row.query_selector_all("td")
+                        state = (cells[7].text_content() or "").strip() if len(cells) > 7 else ""
+                        queue = (cells[9].text_content() or "").strip() if len(cells) > 9 else ""
+                        owner = (cells[10].text_content() or "").strip() if len(cells) > 10 else ""
+                        priority = (cells[1].text_content() or "").strip() if len(cells) > 1 else ""
 
-                                # Small view columns (0-indexed):
-                                # 0=checkbox, 1=Priority, 2=NewArticle, 3=Ticket#, 4=Age,
-                                # 5=Sender, 6=Title, 7=State, 8=Lock, 9=Queue, 10=Owner, 11=CustomerID
-                                title = ""
-                                if len(cells) > 6:
-                                    title_div = cells[6].query_selector("div[title]")
-                                    if title_div:
-                                        title = title_div.get_attribute("title") or (title_div.text_content() or "").strip()
+                        all_tickets.append({
+                            "ticket_number": ticket_number,
+                            "title": title,
+                            "href": href,
+                            "state": state,
+                            "queue": queue,
+                            "owner": owner,
+                            "priority": priority,
+                        })
+                    except Exception:
+                        continue
 
-                                state = (cells[7].text_content() or "").strip() if len(cells) > 7 else ""
-                                # Read actual queue from column 9 (includes sub-queue path)
-                                actual_queue = (cells[9].text_content() or "").strip() if len(cells) > 9 else ""
-                                owner = (cells[10].text_content() or "").strip() if len(cells) > 10 else ""
-                                priority = (cells[1].text_content() or "").strip() if len(cells) > 1 else ""
+                # Check for next page
+                next_start = None
+                try:
+                    pagination_links = self.page.query_selector_all('a[href*="StartHit="]')
+                    for plink in pagination_links:
+                        phref = plink.get_attribute('href') or ''
+                        match = re.search(r'StartHit=(\d+)', phref)
+                        if match:
+                            hit_val = int(match.group(1))
+                            if hit_val > start_hit:
+                                if next_start is None or hit_val < next_start:
+                                    next_start = hit_val
+                except Exception:
+                    pass
 
-                                all_tickets.append({
-                                    "ticket_number": ticket_number,
-                                    "title": title,
-                                    "href": href,
-                                    "state": state,
-                                    "queue": actual_queue or queue_name,
-                                    "owner": owner,
-                                    "priority": priority,
-                                })
-                            except Exception:
-                                continue
+                if next_start is None:
+                    break  # No more pages
 
-                        # Check for next page - find pagination links with higher StartHit
-                        next_start = None
-                        try:
-                            pagination_links = self.page.query_selector_all('a[href*="StartHit="]')
-                            for plink in pagination_links:
-                                phref = plink.get_attribute('href') or ''
-                                match = re.search(r'StartHit=(\d+)', phref)
-                                if match:
-                                    hit_val = int(match.group(1))
-                                    if hit_val > start_hit:
-                                        if next_start is None or hit_val < next_start:
-                                            next_start = hit_val
-                        except Exception:
-                            pass
+                start_hit = next_start
+                logger.debug(f"Service view: page {page_num + 2} (StartHit={start_hit})")
 
-                        if next_start is None:
-                            break  # No more pages
-
-                        start_hit = next_start
-                        if page_num > 0:
-                            logger.debug(f"Queue {queue_name}: page {page_num + 2} (StartHit={start_hit})")
-
-                except Exception as e:
-                    logger.error(f"Error scraping queue {queue_name} (ID={queue_id}): {e}")
-                    continue
-
-            logger.info(f"Znuny queue views: found {len(all_tickets)} open tickets across {len(self.QUEUE_IDS)} queues")
+            pages_fetched = page_num + 1 if all_tickets else 0
+            logger.info(f"Znuny service view: found {len(all_tickets)} open tickets ({pages_fetched} page{'s' if pages_fetched != 1 else ''})")
             self._open_tickets_cache = all_tickets
             self._cache_timestamp = time.time()
             return all_tickets
@@ -557,22 +557,13 @@ class ZnunyClient:
         ZnunyClient._shared_details_cache = {}
         ZnunyClient._shared_last_login_check = 0
 
-    # Known Znuny queue IDs for queue view scraping
-    QUEUE_IDS = {
-        5: "*Dhiraagu",
-        7: "*Ooredoo",
-        9: "*ROL",
-        18: "Field Works",
-        28: "S - Billing Queries",
-    }
-
     def search_by_title(self, search_term: str) -> list[dict]:
         """
         Search for tickets by checking if search_term appears in any open ticket's title.
-        Uses cached queue view data first, then falls back to Znuny search form.
+        Uses cached service view data first, then falls back to Znuny search form.
         Returns list of matching tickets with ticket_number and title.
         """
-        # Get all open tickets from queue views (uses cache)
+        # Get all open tickets from service view (uses cache)
         all_tickets = self.get_open_tickets()
 
         if not all_tickets:
@@ -590,20 +581,20 @@ class ZnunyClient:
             logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
             return matching
 
-        # Fallback: use Znuny's search form to find tickets not in queue views
-        # (e.g. tickets in unknown queues, or with different title format)
-        logger.info(f"Znuny search for '{search_term}': not in queue views, trying search form")
+        # Fallback: use Znuny's search form to find tickets not in service view
+        # (e.g. tickets in other services, or with different title format)
+        logger.info(f"Znuny search for '{search_term}': not in service view, trying search form")
         fallback = self._search_via_form(search_term)
         if fallback:
             logger.info(f"Znuny search for '{search_term}': found {len(fallback)} via search form")
         else:
-            logger.info(f"Znuny search for '{search_term}': not found (queue views + search form)")
+            logger.info(f"Znuny search for '{search_term}': not found (service view + search form)")
         return fallback
 
     def _search_via_form(self, search_term: str) -> list[dict]:
         """
         Search Znuny using the search form as a fallback.
-        This finds tickets in ALL queues and states, not just the known queue views.
+        This finds tickets in ALL queues and states, not just the service view.
         """
         ZnunyClient._page_lock.acquire()
         try:

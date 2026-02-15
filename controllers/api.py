@@ -280,6 +280,8 @@ async def get_ticket_znuny_articles(ticket_id: int, db: Database = Depends(get_d
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     articles = db.get_znuny_articles(ticket_id=ticket_id)
+    if not articles and ticket.znuny_ticket_id:
+        articles = db.get_znuny_articles(znuny_ticket_id=ticket.znuny_ticket_id)
     service = get_stats_service()
     time_info = service.calculate_time_to_create(ticket.created_at, ticket.znuny_created_at)
 

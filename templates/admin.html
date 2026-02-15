@@ -23,6 +23,20 @@
 .portal-ooredoo { border-color: #9b59b6; }
 .portal-rol { border-color: #3498db; }
 .portal-medianet { border-color: #1abc9c; }
+.portal-card.stale {
+    border-color: #dc3545 !important;
+    background: #fff5f5;
+    animation: pulse-stale 2s infinite;
+}
+.portal-card.paused {
+    border-color: #6c757d !important;
+    background: #f8f9fa;
+    opacity: 0.75;
+}
+@keyframes pulse-stale {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 8px rgba(220, 53, 69, 0.3); }
+}
 .event-badge {
     font-size: 0.7rem;
     padding: 0.2rem 0.4rem;
@@ -864,13 +878,18 @@ async function refreshAll() {
     ]);
 }
 
+let schedulerData = {};
+
 async function loadSchedulerStatus() {
     try {
         const response = await fetch('/api/admin/scheduler-status');
         const data = await response.json();
+        schedulerData = data;
 
         const statusEl = document.getElementById('schedulerStatus');
-        if (data.running) {
+        if (!data.within_operating_hours && data.operating_hours?.enabled) {
+            statusEl.innerHTML = '<span class="badge bg-warning text-dark"><i class="bi bi-pause-circle me-1"></i>Paused</span>';
+        } else if (data.running) {
             statusEl.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Running</span>';
         } else {
             statusEl.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Stopped</span>';
@@ -909,8 +928,12 @@ async function triggerExtraction() {
 
 async function loadLoginSummary() {
     try {
-        const response = await fetch('/api/admin/login-summary');
-        const data = await response.json();
+        const [summaryResponse, logsResponse] = await Promise.all([
+            fetch('/api/admin/login-summary'),
+            fetch('/api/extraction-logs?limit=20')
+        ]);
+        const data = await summaryResponse.json();
+        const logsData = await logsResponse.json();
 
         document.getElementById('todayLogins').textContent = data.today?.logins || 0;
         document.getElementById('todayReused').textContent = data.today?.sessions_reused || 0;
@@ -919,25 +942,56 @@ async function loadLoginSummary() {
         const reuseRate = totalEvents > 0 ? Math.round((data.today?.sessions_reused || 0) / totalEvents * 100) : 0;
         document.getElementById('sessionReuseRate').textContent = reuseRate + '%';
 
-        renderPortalStatusCards(data);
+        // Build per-portal last extraction map
+        const lastExtraction = {};
+        if (logsData.logs) {
+            for (const log of logsData.logs) {
+                if (!lastExtraction[log.portal]) {
+                    lastExtraction[log.portal] = log;
+                }
+            }
+        }
+
+        await renderPortalStatusCards(data, lastExtraction);
         renderLoginStatsTable(data);
     } catch (error) {
         console.error('Error loading login summary:', error);
     }
 }
 
-function renderPortalStatusCards(data) {
+async function renderPortalStatusCards(data, lastExtraction) {
     const portals = ['dhiraagu', 'ooredoo', 'rol', 'medianet'];
     const container = document.getElementById('portalStatusCards');
+    const isPaused = schedulerData.operating_hours?.enabled && !schedulerData.within_operating_hours;
+    const startHour = schedulerData.operating_hours?.start_hour ?? 7;
+    const startLabel = startHour === 0 ? '12:00 AM' : startHour < 12 ? `${startHour}:00 AM` : startHour === 12 ? '12:00 PM' : `${startHour - 12}:00 PM`;
 
-    container.innerHTML = portals.map(portal => {
+    let html = portals.map(portal => {
         const stats = data.by_portal?.[portal] || {};
         const lastEvent = data.last_events?.[portal];
         const lastEventTime = lastEvent?.created_at ? formatTime(lastEvent.created_at) : '--';
+        const lastLog = lastExtraction?.[portal];
+
+        // Check staleness: >15 min since last extraction
+        let isStale = false;
+        let ageMinutes = 0;
+        if (lastLog?.extracted_at && !isPaused) {
+            const extractedAt = new Date(lastLog.extracted_at);
+            ageMinutes = Math.round((Date.now() - extractedAt.getTime()) / 60000);
+            if (ageMinutes > 15) isStale = true;
+        }
+
+        const cardClass = isPaused ? 'paused' : isStale ? 'stale' : '';
+        let statusLine = '';
+        if (isPaused) {
+            statusLine = `<div class="small text-muted mt-1"><i class="bi bi-pause-circle me-1"></i>Paused until ${startLabel}</div>`;
+        } else if (isStale) {
+            statusLine = `<div class="small text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>Stale (${ageMinutes}m ago)</div>`;
+        }
 
         return `
             <div class="col-6 col-md-3">
-                <div class="portal-card portal-${portal}">
+                <div class="portal-card portal-${portal} ${cardClass}">
                     <div class="d-flex justify-content-between align-items-start">
                         <div>
                             <h6 class="mb-0 text-capitalize">${portal}</h6>
@@ -952,10 +1006,55 @@ function renderPortalStatusCards(data) {
                             <div class="small text-muted">${lastEventTime}</div>
                         </div>
                     </div>
+                    ${statusLine}
                 </div>
             </div>
         `;
     }).join('');
+
+    // Znuny sync card
+    try {
+        const znunyResp = await fetch('/api/znuny-sync-status');
+        const znuny = await znunyResp.json();
+        let znunyStale = false;
+        let znunyAge = 0;
+        if (znuny.last_sync_time && !isPaused) {
+            const syncAt = new Date(znuny.last_sync_time);
+            znunyAge = Math.round((Date.now() - syncAt.getTime()) / 60000);
+            if (znunyAge > 15) znunyStale = true;
+        }
+        const znunyClass = isPaused ? 'paused' : znunyStale ? 'stale' : '';
+        let znunyStatus = '';
+        if (isPaused) {
+            znunyStatus = `<div class="small text-muted mt-1"><i class="bi bi-pause-circle me-1"></i>Paused until ${startLabel}</div>`;
+        } else if (znunyStale) {
+            znunyStatus = `<div class="small text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>Stale (${znunyAge}m ago)</div>`;
+        }
+        const lastSyncTime = znuny.last_sync_time ? formatTime(znuny.last_sync_time) : '--';
+        html += `
+            <div class="col-6 col-md-3">
+                <div class="portal-card ${znunyClass}" style="border-color: #2c3e50;">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="mb-0">Znuny</h6>
+                            <div class="small text-muted">
+                                ${znuny.in_znuny || 0}/${znuny.total_active || 0} synced
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-info" style="font-size: 0.6rem;">
+                                ${znuny.not_in_znuny || 0} pending
+                            </span>
+                            <div class="small text-muted">${lastSyncTime}</div>
+                        </div>
+                    </div>
+                    ${znunyStatus}
+                </div>
+            </div>
+        `;
+    } catch (e) { /* ignore */ }
+
+    container.innerHTML = html;
 }
 
 function renderLoginStatsTable(data) {

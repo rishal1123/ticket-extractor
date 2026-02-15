@@ -294,7 +294,7 @@ All extractors inherit from `BaseExtractor` and implement:
 
 **Session persistence:** Playwright persistent browser contexts stored in `data/browser_sessions/{portal}/` survive browser restarts and memory resets.
 
-**Completion tracking:** When a ticket disappears from the portal, it's automatically marked as complete (with 3-cycle debounce for zero-ticket results).
+**Completion tracking:** When a ticket disappears from the portal, it's automatically marked as complete (with 3-cycle debounce for zero-ticket results). For Dhiraagu and Ooredoo, the system navigates to each ticket's detail page to capture final notes/comments before marking complete (via `fetch_completion_notes()` override).
 
 **Error recovery:** After 3 failed extraction attempts, session directory is cleared for a completely fresh start on the next cycle.
 
@@ -403,6 +403,7 @@ HTTP route handlers with dependency injection:
 | `/api/admin/report-portal-stats` | GET | Portal stats for reports |
 | `/api/settings` | GET | Get all app settings |
 | `/api/settings/performance-thresholds` | GET/POST | Get/update performance thresholds |
+| `/api/settings/operating-hours` | GET/POST | Get/update operating hours schedule |
 
 **Field Visits Endpoints:**
 | Endpoint | Method | Description |
@@ -458,6 +459,7 @@ cfg_MEDIANET_URL, cfg_MEDIANET_USERNAME, cfg_MEDIANET_PASSWORD
 cfg_ZNUNY_URL, cfg_ZNUNY_USERNAME, cfg_ZNUNY_PASSWORD
 cfg_EXTRACTION_INTERVAL_MINUTES, cfg_ZNUNY_SYNC_INTERVAL_MINUTES
 cfg_DASHBOARD_HOST, cfg_DASHBOARD_PORT
+operating_hours_enabled, operating_hours_start, operating_hours_end
 ```
 
 **How credentials are populated:**
@@ -471,7 +473,7 @@ cfg_DASHBOARD_HOST, cfg_DASHBOARD_PORT
 
 **Credential guard:** Extractions are skipped if no portal credentials exist in the database yet.
 
-**Current version:** `APP_VERSION = "1.2.0"` in `config.py`
+**Current version:** `APP_VERSION = "1.6.0"` in `config.py`
 
 ## Important Timestamps
 
@@ -605,6 +607,7 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 |-----|-----------------|-----------------|-------------|
 | **Portal Extraction** | 5 min | `EXTRACTION_INTERVAL_MINUTES` | Extracts tickets from all configured ISP portals |
 | **Znuny Sync** | 3 min | `ZNUNY_SYNC_INTERVAL_MINUTES` | Checks ISP tickets in Znuny, syncs details & site visits |
+| **Staleness Watchdog** | 5 min | N/A | Resets all browsers if any portal's last extraction is >15 min old |
 | **Log Cleanup** | Daily at midnight | N/A | Deletes logs older than 2 days from all log tables |
 
 **Architecture:**
@@ -614,6 +617,8 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - Both jobs run immediately on startup, then repeat at configured intervals
 - Memory monitoring: logs per-portal and total browser memory usage after each extraction
 - **Credential guard:** Jobs skip execution if no portal credentials exist in the database
+- **Operating hours:** Configurable daily schedule (default 7 AM - 10 PM MVT). Jobs are skipped outside hours. Configure via Admin → Config → Operating Hours.
+- **Staleness watchdog:** Every 5 min (during operating hours), checks each portal's last successful extraction. If any is >15 min old, kills all Playwright browsers (portal + Znuny) and triggers immediate re-extraction/sync.
 
 ## Portal-Specific Notes
 
@@ -782,6 +787,7 @@ Merge duplicate staff names when the same person uses different names:
 - Portal credential sections (Dhiraagu, Ooredoo, ROL, Medianet, Znuny) with toggle password visibility
 - App settings (Extraction interval, Dashboard host/port)
 - Performance thresholds (Good/Warning/Late/Critical minutes)
+- Operating hours (Enable/disable, Start hour, End hour) - daily schedule for extraction & sync
 - Security section (Change admin password)
 - Upload .env file button
 
@@ -855,7 +861,7 @@ The Znuny integration uses several optimization strategies:
 
 ## Static File Versioning
 
-- `APP_VERSION` is defined in `config.py` (currently `"1.2.0"`)
+- `APP_VERSION` is defined in `config.py` (currently `"1.6.0"`)
 - Templates use `?v={{ app_version }}` query strings on static file URLs
 - Global `fetch()` override in `common.js` adds `cache: 'no-store'` to all local API calls
 - When you update static files, increment `APP_VERSION` to bust browser cache

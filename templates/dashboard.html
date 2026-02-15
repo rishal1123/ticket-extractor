@@ -74,6 +74,20 @@
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
+.stat-card.stale {
+    border-color: #dc3545 !important;
+    border-left-color: #dc3545 !important;
+    background: #fff5f5 !important;
+    animation: pulse-stale 2s infinite;
+}
+.stat-card.paused {
+    opacity: 0.65;
+    filter: grayscale(40%);
+}
+@keyframes pulse-stale {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 8px rgba(220, 53, 69, 0.3); }
+}
 {% endblock %}
 
 {% block content %}
@@ -377,13 +391,24 @@ function openPortal(portal) {
     }
 }
 
+// Scheduler state for stale/paused detection
+let schedulerData = {};
+
+async function loadSchedulerData() {
+    try {
+        const resp = await fetch('/api/admin/scheduler-status');
+        schedulerData = await resp.json();
+    } catch (e) { /* ignore */ }
+}
+
 // Callbacks for ticket modal actions
 const ticketCallbacks = {
     onUpdate: () => { loadStats(); loadTickets(); }
 };
 
 // Initialize
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadSchedulerData();
     loadStats();
     loadTickets();
     loadDelayedTickets();
@@ -591,22 +616,51 @@ async function loadZnunySyncStatus() {
         const cardEl = document.getElementById('notInZnunyCard');
         const syncInfoEl = document.getElementById('znunySyncInfo');
 
+        const isPaused = schedulerData?.operating_hours?.enabled && !schedulerData?.within_operating_hours;
+        const startHour = schedulerData?.operating_hours?.start_hour ?? 7;
+        const startLabel = startHour === 0 ? '12:00 AM' : startHour < 12 ? `${startHour}:00 AM` : startHour === 12 ? '12:00 PM' : `${startHour - 12}:00 PM`;
+
+        // Check Znuny sync staleness
+        let isStale = false;
+        let ageMinutes = 0;
+        if (status.last_sync_time && !isPaused) {
+            const syncAt = new Date(status.last_sync_time);
+            ageMinutes = Math.round((Date.now() - syncAt.getTime()) / 60000);
+            if (ageMinutes > 15) isStale = true;
+        }
+
         notInZnunyEl.textContent = notInZnuny;
 
-        // Change card background based on count - green when 0, red when > 0
-        const lastSyncTime = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
-        if (notInZnuny === 0) {
-            cardEl.style.backgroundColor = '#27ae60';
+        // Apply paused/stale classes
+        cardEl.classList.remove('stale', 'paused');
+        if (isPaused) {
+            cardEl.classList.add('paused');
+            cardEl.style.backgroundColor = '#6c757d';
+            syncInfoEl.innerHTML = `<small><i class="bi bi-pause-circle"></i> Paused until ${startLabel}</small>`;
+        } else if (isStale) {
+            cardEl.classList.add('stale');
+            cardEl.style.backgroundColor = '#dc3545';
+            const lastSyncTime = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
             syncInfoEl.innerHTML = `
-                <span class="extraction-status success">OK</span>
-                <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>
+                <span class="extraction-status failed">Stale</span>
+                <span class="d-block" style="opacity: 0.8;">${lastSyncTime} (${ageMinutes}m)</span>
             `;
         } else {
-            cardEl.style.backgroundColor = '#dc3545';
-            syncInfoEl.innerHTML = `
-                <span class="extraction-status failed">Pending</span>
-                <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>
-            `;
+            // Normal state - green when 0, red when > 0
+            const lastSyncTime = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
+            if (notInZnuny === 0) {
+                cardEl.style.backgroundColor = '#27ae60';
+                syncInfoEl.innerHTML = `
+                    <span class="extraction-status success">OK</span>
+                    <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>
+                `;
+            } else {
+                cardEl.style.backgroundColor = '#dc3545';
+                syncInfoEl.innerHTML = `
+                    <span class="extraction-status failed">Pending</span>
+                    <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>
+                `;
+            }
         }
     } catch (error) {
         console.error('Error loading Znuny sync status:', error);
@@ -700,6 +754,7 @@ async function syncAllZnunyDetails() {
 }
 
 function refreshAll() {
+    loadSchedulerData();
     loadStats();
     loadTickets();
     loadDelayedTickets();
@@ -725,8 +780,36 @@ function updateExtractionInfo(portal, info) {
     const el = document.getElementById(portal + 'Extraction');
     if (!el) return;
 
+    const card = el.closest('.stat-card');
+    const isPaused = schedulerData?.operating_hours?.enabled && !schedulerData?.within_operating_hours;
+    const startHour = schedulerData?.operating_hours?.start_hour ?? 7;
+    const startLabel = startHour === 0 ? '12:00 AM' : startHour < 12 ? `${startHour}:00 AM` : startHour === 12 ? '12:00 PM' : `${startHour - 12}:00 PM`;
+
+    // Check staleness
+    let isStale = false;
+    let ageMinutes = 0;
+    if (info?.extracted_at && !isPaused) {
+        const extractedAt = new Date(info.extracted_at);
+        ageMinutes = Math.round((Date.now() - extractedAt.getTime()) / 60000);
+        if (ageMinutes > 15) isStale = true;
+    }
+
+    // Apply card classes
+    if (card) {
+        card.classList.remove('stale', 'paused');
+        if (isPaused) card.classList.add('paused');
+        else if (isStale) card.classList.add('stale');
+    }
+
+    let statusLine = '';
+    if (isPaused) {
+        statusLine = `<small class="d-block text-muted mt-1"><i class="bi bi-pause-circle"></i> Paused until ${startLabel}</small>`;
+    } else if (isStale) {
+        statusLine = `<small class="d-block text-danger mt-1"><i class="bi bi-exclamation-triangle"></i> Stale (${ageMinutes}m)</small>`;
+    }
+
     if (!info) {
-        el.innerHTML = '<small class="text-muted">No extraction</small>';
+        el.innerHTML = `<small class="text-muted">No extraction</small>${statusLine}`;
         return;
     }
 
@@ -737,6 +820,7 @@ function updateExtractionInfo(portal, info) {
     el.innerHTML = `
         <small class="extraction-status ${statusClass}">${statusText}</small>
         <small class="text-muted d-block" title="${info.extracted_at || ''}">${timeStr}</small>
+        ${statusLine}
     `;
 }
 {% endblock %}
