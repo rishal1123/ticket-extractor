@@ -72,6 +72,7 @@ Extractor/
 │   └── browser_sessions/# Playwright persistent browser contexts per portal
 │
 ├── .env                 # Environment variables (local dev fallback only)
+├── entrypoint.sh        # Docker entrypoint (DB migration check + app start)
 ├── Dockerfile           # Docker container configuration (Playwright + Chromium)
 └── docker-compose.yml   # Docker Compose orchestration
 ```
@@ -445,7 +446,7 @@ Uses Playwright to interact with Znuny web interface at `https://10.241.1.110`:
 - Searches tickets by title containing portal ticket ID
 - Fetches ticket details: creator, creation time, articles
 - Extracts site visits from "OAN Site Visit Arranged" articles
-- Searches closed tickets by customer account number (CUIC two-step approach)
+- Searches tickets by account number via Fulltext search + Preview view
 - 3-layer caching for optimized sync cycles
 
 **Key Classes:**
@@ -460,7 +461,8 @@ Uses Playwright to interact with Znuny web interface at `https://10.241.1.110`:
 - `search_by_title()` - Search tickets by title in service view cache + search form fallback
 - `check_ticket_sync()` - Check if ISP ticket exists in Znuny
 - `get_ticket_details()` - 3-layer cached detail fetching
-- `search_closed_by_account()` - Search closed tickets via Customer User Information Center
+- `search_closed_by_account()` - Search tickets by account via Fulltext search + Preview view
+- `_parse_zoom_page_for_search()` - Parse single ticket from zoom page (auto-redirect)
 - `extract_isp_ticket_id_from_title()` - Parse ISP portal/ticket_id from Znuny title
 - `get_site_visit_tickets()` - Get tickets with "site visit" in title
 
@@ -594,6 +596,7 @@ Key points:
 - Uses `playwright install-deps chromium` for system dependencies (separate from browser download)
 - Then `playwright install chromium` for the browser binary
 - `curl` installed for healthcheck
+- `entrypoint.sh` runs DB migration check (`Database()` init) before starting the app
 - `shm_size: '2gb'` in docker-compose for Chromium stability
 
 ### Persistent Volumes
@@ -883,14 +886,16 @@ The Znuny integration uses several optimization strategies:
 - **Step 3**: Mark closed Znuny tickets
 
 ### Account Search (Step 1.7)
-When ISP tickets disappear from the portal but weren't found in Znuny open tickets, searches closed Znuny tickets by customer account number:
-1. Navigate to Customer User Information Center (`AgentCustomerUserInformationCenter;CustomerUserID={account}`)
-2. Parse Customer IDs table to get the actual Znuny CustomerID
-3. Search closed tickets by CustomerID (`AgentTicketSearch;Subaction=Search;StateType=Closed;CustomerID={customer_id}`)
-4. Match ISP ticket ID in Znuny ticket titles
+When ISP tickets disappear from the portal but weren't found in Znuny open tickets, searches Znuny tickets by account number using the dashboard Fulltext search:
+1. Navigate to Znuny dashboard, fill `#Fulltext` ("Any Search") field with account number
+2. Switch to Large/Preview view to get Created date from results
+3. Parse `li.MasterAction` items for ticket number, title, created time, and URL
+4. If single result, Znuny auto-redirects to zoom page — parsed via `_parse_zoom_page_for_search()`
+5. Match ISP ticket ID in Znuny ticket titles
 - **Rate limited**: 5 tickets per sync cycle
 - **3-strike rule**: After 3 failed searches, ticket is marked as "Rejected on Portal"
 - **Tracked by**: `znuny_search_count` column on tickets table
+- **Data extracted**: `znuny_created_at` and `znuny_url` stored via `update_znuny_details()`
 
 **Results:** Steady-state sync cycle runs in ~2-3 minutes including account searches. Step 2 completes in <2s when all cache hits.
 
