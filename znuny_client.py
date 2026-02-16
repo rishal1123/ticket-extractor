@@ -705,13 +705,13 @@ class ZnunyClient:
             ZnunyClient._page_lock.release()
 
     def search_closed_by_account(self, account: str, ticket_id: str = None) -> list[dict]:
-        """Search closed Znuny tickets by customer account number.
+        """Search Znuny tickets by account number using Fulltext search.
 
-        Two-step approach:
-        1. Navigate to Customer User Info Center to get the CustomerID
-        2. Search closed tickets by CustomerID
+        Uses the dashboard 'Any Search' field with Large/Preview view to find
+        tickets matching the account number. Extracts ticket number, title,
+        creation time, and URL from search results.
 
-        Returns list of matching tickets with ticket_number, title, href, created_at.
+        Returns list of matching tickets with ticket_number, title, href, created_at, znuny_url.
         If ticket_id is provided, only returns results whose title contains it.
         """
         ZnunyClient._page_lock.acquire()
@@ -719,96 +719,76 @@ class ZnunyClient:
             if not self._login():
                 return []
 
-            # Step 1: Get CustomerID from Customer User Information Center
-            cuic_url = (
-                f"{self.BASE_URL}/otrs/index.pl?"
-                f"Action=AgentCustomerUserInformationCenter;CustomerUserID={account}"
-            )
-            self.page.goto(cuic_url, wait_until="domcontentloaded", timeout=15000)
+            # Navigate to dashboard
+            dashboard_url = f"{self.BASE_URL}/otrs/index.pl?Action=AgentDashboard"
+            self.page.goto(dashboard_url, wait_until="domcontentloaded", timeout=15000)
             time.sleep(2)
 
-            # Parse Customer IDs table (first DataTable)
-            tables = self.page.query_selector_all("table.DataTable")
-            customer_id = None
-            closed_count = 0
-            if tables:
-                data_rows = tables[0].query_selector_all("tr")
-                for row in data_rows[1:]:  # skip header
-                    cells = row.query_selector_all("td")
-                    if len(cells) >= 4:
-                        customer_id = (cells[0].text_content() or "").strip()
-                        try:
-                            closed_count = int((cells[3].text_content() or "0").strip())
-                        except ValueError:
-                            closed_count = 0
-                        break  # Use first customer ID
-
-            if not customer_id or closed_count == 0:
-                logger.info(f"Account search for {account}: no closed tickets (CustomerID={customer_id}, closed={closed_count})")
+            # Fill Fulltext search and submit
+            fulltext = self.page.query_selector("#Fulltext")
+            if not fulltext:
+                logger.warning("Account search: Fulltext search field not found on dashboard")
                 return []
 
-            # Step 2: Search closed tickets by CustomerID
-            search_url = (
-                f"{self.BASE_URL}/otrs/index.pl?Action=AgentTicketSearch;"
-                f"Subaction=Search;StateType=Closed;CustomerID={customer_id}"
-            )
-            self.page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+            fulltext.fill(account)
+            fulltext.press("Enter")
+            time.sleep(3)
 
-            # Wait for results
-            try:
-                self.page.wait_for_selector("tr.MasterAction", timeout=10000)
-            except Exception:
-                try:
-                    self.page.wait_for_load_state("networkidle", timeout=5000)
-                except Exception:
-                    pass
+            # Check if redirected to a single ticket zoom page
+            if "AgentTicketZoom" in self.page.url:
+                return self._parse_zoom_page_for_search(ticket_id)
 
-            # Parse results
+            # Switch to Large/Preview view for Created date
+            large_link = self.page.query_selector("a.Large")
+            if large_link:
+                large_link.click()
+                time.sleep(3)
+
+            # Parse Large/Preview view items
             results = []
-            result_rows = self.page.query_selector_all("tr.MasterAction")
-            logger.info(f"Account search for {account}: CustomerID={customer_id}, {len(result_rows)} closed tickets")
+            items = self.page.query_selector_all("li.MasterAction")
+            logger.info(f"Account search for '{account}': {len(items)} results")
 
-            for row in result_rows:
+            if not items:
+                return []
+
+            for item in items:
                 try:
-                    link = row.query_selector("a.MasterActionLink")
+                    # Ticket number + title from h2 > a.MasterActionLink
+                    # Format: "Ticket#2026020228000035 — Title here"
+                    link = item.query_selector("a.MasterActionLink")
                     if not link:
                         continue
-                    ticket_number = (link.text_content() or "").strip()
+
+                    link_text = (link.text_content() or "").strip()
+                    title = link.get_attribute("title") or ""
                     href = link.get_attribute("href") or ""
 
-                    # Get full title from MasterActionLink title attribute or div[title]
-                    title = link.get_attribute("title") or ""
-                    if not title:
-                        title_divs = row.query_selector_all("td div[title]")
-                        # Title is typically the div with the longest title attr
-                        for div in title_divs:
-                            div_title = div.get_attribute("title") or ""
-                            if len(div_title) > len(title):
-                                title = div_title
+                    ticket_match = re.search(r"Ticket#(\d+)", link_text)
+                    ticket_number = ticket_match.group(1) if ticket_match else ""
+                    if not ticket_number:
+                        continue
 
-                    # Extract creation time from row cells
-                    # Znuny search results have a "Created" column with format MM/DD/YYYY HH:MM
+                    # Extract Created time from div.Infos: "<label>Created</label>MM/DD/YYYY HH:MM:SS"
                     created_at = None
-                    cells = row.query_selector_all("td")
-                    for cell in cells:
-                        cell_text = (cell.text_content() or "").strip()
-                        date_match = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", cell_text)
-                        if date_match:
+                    infos = item.query_selector("div.Infos")
+                    if infos:
+                        infos_text = infos.text_content() or ""
+                        created_match = re.search(r"Created\s*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", infos_text)
+                        if created_match:
                             try:
-                                created_at = datetime.strptime(date_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
+                                created_at = datetime.strptime(created_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
                             except ValueError:
                                 pass
-                            break
 
-                    if ticket_number:
-                        znuny_url = f"{self.BASE_URL}{href}" if href and not href.startswith("http") else href
-                        results.append({
-                            "ticket_number": ticket_number,
-                            "title": title,
-                            "href": href,
-                            "created_at": created_at,
-                            "znuny_url": znuny_url,
-                        })
+                    znuny_url = f"{self.BASE_URL}{href}" if href and not href.startswith("http") else href
+                    results.append({
+                        "ticket_number": ticket_number,
+                        "title": title,
+                        "href": href,
+                        "created_at": created_at,
+                        "znuny_url": znuny_url,
+                    })
                 except Exception:
                     continue
 
@@ -816,7 +796,7 @@ class ZnunyClient:
             if ticket_id and results:
                 filtered = [r for r in results if ticket_id in r["title"]]
                 if filtered:
-                    logger.info(f"Account search: matched ticket_id {ticket_id} in {len(filtered)} closed tickets")
+                    logger.info(f"Account search: matched ticket_id {ticket_id} in {len(filtered)} results")
                     return filtered
                 # Fallback: try extract_isp_ticket_id_from_title for each result
                 for r in results:
@@ -824,16 +804,70 @@ class ZnunyClient:
                     if extracted["ticket_id"] == ticket_id:
                         logger.info(f"Account search: matched via title parser: {r['ticket_number']}")
                         return [r]
-                logger.info(f"Account search: {len(results)} closed tickets for {account} but none match {ticket_id}")
+                logger.info(f"Account search: {len(results)} results for '{account}' but none match {ticket_id}")
                 return []
 
             return results
 
         except Exception as e:
-            logger.error(f"Closed ticket search by account failed: {e}")
+            logger.error(f"Account search by fulltext failed: {e}")
             return []
         finally:
             ZnunyClient._page_lock.release()
+
+    def _parse_zoom_page_for_search(self, ticket_id: str = None) -> list[dict]:
+        """Parse a single ticket from zoom page when search auto-redirects.
+
+        When Fulltext search matches exactly one ticket, Znuny redirects
+        directly to the ticket zoom page instead of showing search results.
+        """
+        try:
+            url = self.page.url
+
+            # Ticket number from page title: "2026020228000035 - Zoom - Ticket - Znuny"
+            page_title = self.page.title() or ""
+            ticket_number_match = re.match(r"(\d+)", page_title)
+            ticket_number = ticket_number_match.group(1) if ticket_number_match else ""
+            if not ticket_number:
+                return []
+
+            # Title from ticket header h1: "Ticket#XXXX — Title here"
+            title = ""
+            title_el = self.page.query_selector("h1")
+            if title_el:
+                h1_text = (title_el.text_content() or "").strip()
+                # Strip "Ticket#XXXX — " prefix to get just the title
+                title_sep = re.split(r"\s*[—–-]\s*", h1_text, maxsplit=1)
+                title = title_sep[1] if len(title_sep) > 1 else h1_text
+
+            # Check ticket_id filter
+            if ticket_id and ticket_id not in title and ticket_id not in page_title:
+                logger.info(f"Account search: zoom redirect to {ticket_number} but doesn't match {ticket_id}")
+                return []
+
+            # Parse Created time from sidebar
+            created_at = None
+            sidebar = self.page.query_selector_all(".SidebarColumn")
+            if sidebar:
+                sidebar_text = sidebar[0].text_content() or ""
+                created_match = re.search(r"Created:\s*\n?(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", sidebar_text)
+                if created_match:
+                    try:
+                        created_at = datetime.strptime(created_match.group(1), "%m/%d/%Y %H:%M").replace(tzinfo=MALDIVES_TZ)
+                    except ValueError:
+                        pass
+
+            logger.info(f"Account search: zoom redirect to ticket {ticket_number} (created: {created_at})")
+            return [{
+                "ticket_number": ticket_number,
+                "title": title,
+                "href": url,
+                "created_at": created_at,
+                "znuny_url": url,
+            }]
+        except Exception as e:
+            logger.error(f"Failed to parse zoom page for search: {e}")
+            return []
 
     def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False,
                            bypass_cache: bool = False) -> ZnunyTicketDetails | None:
