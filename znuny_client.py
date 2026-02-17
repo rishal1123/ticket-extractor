@@ -89,11 +89,12 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     Time: 1130
     Assigned to: @maah
     """
-    # Check if this is a site visit article (Arranged, Pending, or Preventative Maintenance)
+    # Check if this is a site visit article (Arranged or Preventative Maintenance)
+    # Note: "OAN Site Visit Pending" articles are skipped - they are status notifications
+    # with empty assigned_to/scheduled_time that duplicate the "Arranged" articles
     subject_lower = article.subject.lower() if article.subject else ""
     is_site_visit = (
         "oan site visit arranged" in subject_lower
-        or "oan site visit pending" in subject_lower
         or "preventative maintenance - site visit" in subject_lower
         or "preventative maintenance -" in subject_lower  # fallback for variations
     )
@@ -113,12 +114,12 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     if site_match:
         site_type = site_match.group(1).strip()
 
-    # Service Provider (from body, or infer from subject for Pending articles)
+    # Service Provider (from body, or infer from subject)
     provider_match = re.search(r"Service Provider:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
     if provider_match:
         service_provider = provider_match.group(1).strip()
     elif not service_provider:
-        # Try to infer from subject (e.g., "*Dhiraagu OAN Site Visit Pending" or "Ooredoo OAN...")
+        # Try to infer from subject (e.g., "Ooredoo OAN Site Visit Arranged")
         for provider in ("dhiraagu", "ooredoo", "rol", "medianet"):
             if provider in subject_lower:
                 service_provider = provider.capitalize()
@@ -327,23 +328,28 @@ class ZnunyClient:
                 self._logged_in = False
 
         os.makedirs(ZNUNY_SESSION_DIR, exist_ok=True)
-        ZnunyClient._shared_playwright = sync_playwright().start()
-        ZnunyClient._shared_context = ZnunyClient._shared_playwright.chromium.launch_persistent_context(
-            ZNUNY_SESSION_DIR,
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            viewport={"width": 1920, "height": 1080},
-            ignore_https_errors=True  # CRITICAL: Znuny uses self-signed cert
-        )
-        # Persistent context may already have a page
-        if ZnunyClient._shared_context.pages:
-            ZnunyClient._shared_page = ZnunyClient._shared_context.pages[0]
-        else:
-            ZnunyClient._shared_page = ZnunyClient._shared_context.new_page()
-        ZnunyClient._shared_page.set_default_timeout(10000)
-        ZnunyClient._shared_page.set_default_navigation_timeout(15000)
-        self._detect_browser_pid()
-        logger.info(f"Znuny persistent browser started (session dir: {ZNUNY_SESSION_DIR})")
+        try:
+            ZnunyClient._shared_playwright = sync_playwright().start()
+            ZnunyClient._shared_context = ZnunyClient._shared_playwright.chromium.launch_persistent_context(
+                ZNUNY_SESSION_DIR,
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                viewport={"width": 1920, "height": 1080},
+                ignore_https_errors=True  # CRITICAL: Znuny uses self-signed cert
+            )
+            # Persistent context may already have a page
+            if ZnunyClient._shared_context.pages:
+                ZnunyClient._shared_page = ZnunyClient._shared_context.pages[0]
+            else:
+                ZnunyClient._shared_page = ZnunyClient._shared_context.new_page()
+            ZnunyClient._shared_page.set_default_timeout(10000)
+            ZnunyClient._shared_page.set_default_navigation_timeout(15000)
+            self._detect_browser_pid()
+            logger.info(f"Znuny persistent browser started (session dir: {ZNUNY_SESSION_DIR})")
+        except Exception as e:
+            logger.error(f"Failed to start Znuny browser: {e}")
+            self._close_browser_resources()
+            raise
 
     def _close_browser_resources(self):
         """Close Playwright persistent context and driver safely."""
@@ -370,6 +376,10 @@ class ZnunyClient:
                 pass
             ZnunyClient._shared_playwright = None
         ZnunyClient._shared_browser_pid = None
+        # Clear caches on browser reset to avoid stale data
+        ZnunyClient._shared_open_tickets_cache = None
+        ZnunyClient._shared_cache_timestamp = None
+        ZnunyClient._shared_details_cache = {}
 
     def _login(self) -> bool:
         """Login to Znuny, reusing existing session if valid."""
@@ -618,7 +628,7 @@ class ZnunyClient:
 
             # Try alternate selectors if direct didn't work
             if not title_field:
-                for selector in ["#Title", "input#Title", "[name='Title']", "input[name='Fulltext']"]:
+                for selector in ["#Title", "input#Title", "[name='Title']"]:
                     try:
                         title_field = self.page.wait_for_selector(selector, timeout=3000, state="visible")
                         if title_field:
@@ -722,7 +732,7 @@ class ZnunyClient:
             # Navigate to dashboard
             dashboard_url = f"{self.BASE_URL}/otrs/index.pl?Action=AgentDashboard"
             self.page.goto(dashboard_url, wait_until="domcontentloaded", timeout=15000)
-            time.sleep(2)
+            self.page.wait_for_selector("#Fulltext", timeout=10000)
 
             # Fill Fulltext search and submit
             fulltext = self.page.query_selector("#Fulltext")
@@ -732,7 +742,7 @@ class ZnunyClient:
 
             fulltext.fill(account)
             fulltext.press("Enter")
-            time.sleep(3)
+            self.page.wait_for_load_state("domcontentloaded", timeout=15000)
 
             # Check if redirected to a single ticket zoom page
             if "AgentTicketZoom" in self.page.url:
@@ -742,7 +752,7 @@ class ZnunyClient:
             large_link = self.page.query_selector("a.Large")
             if large_link:
                 large_link.click()
-                time.sleep(3)
+                self.page.wait_for_load_state("domcontentloaded", timeout=10000)
 
             # Parse Large/Preview view items
             results = []
@@ -1246,7 +1256,7 @@ class ZnunyClient:
 
             # Evict stale cache entries to prevent unbounded memory growth
             if len(self._ticket_details_cache) > MAX_DETAIL_CACHE_SIZE:
-                cutoff = time.time() - CACHE_TTL_SECONDS * 2
+                cutoff = time.time() - CACHE_TTL_SECONDS
                 stale = [k for k, (_, ts) in self._ticket_details_cache.items() if ts < cutoff]
                 for k in stale:
                     del self._ticket_details_cache[k]

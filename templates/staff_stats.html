@@ -265,7 +265,7 @@ let currentFilter = 'today';
 document.addEventListener('DOMContentLoaded', function() {
     setDateFilter('today', false);
     loadStaffStats();
-    setInterval(loadStaffStats, 30000);
+    setInterval(() => { if (!document.hidden) loadStaffStats(); }, 30000);
 });
 
 function setDateFilter(filter, autoLoad = true) {
@@ -476,10 +476,5 @@ function exportCSV() {
     window.location.href = url;
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+// escapeHtml() is provided by common.js
 {% endblock %}

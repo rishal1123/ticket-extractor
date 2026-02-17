@@ -76,8 +76,8 @@
         <div class="col-12 col-md-auto d-flex align-items-center flex-wrap gap-2">
             <strong class="text-muted small"><i class="bi bi-calendar me-1"></i>Date:</strong>
             <div class="btn-group btn-group-sm" role="group">
-                <button type="button" class="btn btn-outline-primary date-filter active" data-filter="all" onclick="setDateFilter('all')">All</button>
-                <button type="button" class="btn btn-outline-primary date-filter" data-filter="today" onclick="setDateFilter('today')">Today</button>
+                <button type="button" class="btn btn-outline-primary date-filter" data-filter="all" onclick="setDateFilter('all')">All</button>
+                <button type="button" class="btn btn-outline-primary date-filter active" data-filter="today" onclick="setDateFilter('today')">Today</button>
                 <button type="button" class="btn btn-outline-primary date-filter" data-filter="yesterday" onclick="setDateFilter('yesterday')">Yest.</button>
                 <button type="button" class="btn btn-outline-primary date-filter" data-filter="week" onclick="setDateFilter('week')">7 Days</button>
             </div>
@@ -133,7 +133,7 @@
 {% block script %}
 let currentPage = 0;
 const pageSize = 50;
-let currentDateFilter = 'all';
+let currentDateFilter = 'today';
 let currentTimeFilter = 0;
 let ticketsCache = [];
 
@@ -151,8 +151,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') loadTickets();
     });
 
-    // Auto-refresh every 30 seconds
-    setInterval(loadTickets, 30000);
+    // Auto-refresh every 30 seconds (skip if tab hidden or already loading)
+    let _refreshing = false;
+    setInterval(async () => {
+        if (document.hidden || _refreshing) return;
+        _refreshing = true;
+        try { await loadTickets(); } finally { _refreshing = false; }
+    }, 30000);
 });
 
 function setDateFilter(filter) {

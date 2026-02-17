@@ -64,8 +64,9 @@ class Database:
 
     @contextmanager
     def _get_connection(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()
@@ -417,6 +418,22 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_level ON system_logs(level)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_system_logs_source ON system_logs(source)")
+
+            # Migration: Clean up duplicate site visits (same ticket+date, different articles)
+            # Keep the row with assigned_to data, delete the empty one
+            cursor.execute("""
+                DELETE FROM site_visits WHERE id IN (
+                    SELECT s1.id FROM site_visits s1
+                    INNER JOIN site_visits s2
+                        ON s1.znuny_ticket_id = s2.znuny_ticket_id
+                        AND s1.visit_date = s2.visit_date
+                        AND s1.article_id != s2.article_id
+                    WHERE (s1.assigned_to IS NULL OR s1.assigned_to = '')
+                      AND s2.assigned_to IS NOT NULL AND s2.assigned_to != ''
+                )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"Cleaned up {cursor.rowcount} duplicate site visit rows")
 
             logger.info("Database initialized successfully")
 
@@ -1640,9 +1657,24 @@ class Database:
                           visit_date: str, article_created_at: datetime,
                           ticket_id: int = None, znuny_url: str = None,
                           address: str = None, customer_name: str = None) -> int:
-        """Insert or update a site visit record."""
+        """Insert or update a site visit record.
+
+        Dedup: if a visit already exists for the same ticket+date from a different
+        article that has richer data (non-empty assigned_to), skip this insert.
+        """
         now = now_maldives()
         with self._get_connection() as conn:
+            # Dedup check: skip if a better record already exists for same ticket+date
+            if visit_date:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id FROM site_visits
+                    WHERE znuny_ticket_id = ? AND visit_date = ? AND article_id != ?
+                      AND assigned_to IS NOT NULL AND assigned_to != ''
+                """, (znuny_ticket_id, visit_date, article_id))
+                if cursor.fetchone():
+                    # A richer visit record already exists for this ticket+date
+                    return 0
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO site_visits

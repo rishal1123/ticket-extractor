@@ -184,7 +184,7 @@ class StatsService:
         for t in tickets:
             time_to_create = ""
             if t.created_at and t.znuny_created_at:
-                diff = (t.created_at - t.znuny_created_at).total_seconds() / 60
+                diff = (t.znuny_created_at - t.created_at).total_seconds() / 60
                 time_to_create = str(round(diff, 1))
 
             customer = (t.customer_name or "").replace(",", ";")

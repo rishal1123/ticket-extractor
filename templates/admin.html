@@ -1293,12 +1293,7 @@ async function clearOldLogs() {
     }
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+// escapeHtml() is provided by common.js
 
 // Config Functions
 const configKeys = [
@@ -1344,7 +1339,7 @@ async function loadStaffList() {
                 <td class="text-center"><span class="badge bg-info">${s.articles || 0}</span></td>
                 <td class="text-center"><span class="badge bg-warning text-dark">${s.site_visits || 0}</span></td>
                 <td class="text-center">
-                    <button class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="selectForMerge('${escapeHtml(s.name)}')" title="Select for merge">
+                    <button class="btn btn-outline-secondary btn-sm py-0 px-1" data-staff="${escapeHtml(s.name)}" onclick="selectForMerge(this.dataset.staff)" title="Select for merge">
                         <i class="bi bi-check2"></i>
                     </button>
                 </td>

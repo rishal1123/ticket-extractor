@@ -112,6 +112,15 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function sanitizeUrl(url) {
+    if (!url) return '';
+    try {
+        const parsed = new URL(url, window.location.origin);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url;
+    } catch (e) {}
+    return '';
+}
+
 // Ticket detail modal - shared between dashboard and tickets page
 async function showTicketDetail(ticketId, callbacks = {}) {
     showLoading(true);
@@ -124,9 +133,13 @@ async function showTicketDetail(ticketId, callbacks = {}) {
             fetch(`/api/tickets/${ticketId}/site-visits`)
         ]);
 
+        if (!ticketResponse.ok) {
+            throw new Error(`Failed to load ticket: ${ticketResponse.status}`);
+        }
+
         const ticketData = await ticketResponse.json();
-        const znunyData = await znunyResponse.json();
-        const siteVisitsData = await siteVisitsResponse.json();
+        const znunyData = znunyResponse.ok ? await znunyResponse.json() : { articles: [] };
+        const siteVisitsData = siteVisitsResponse.ok ? await siteVisitsResponse.json() : { visits: [] };
 
         const ticket = ticketData.ticket || ticketData;
 
@@ -171,8 +184,8 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                             <div class="info-card">
                                 <div class="label">Znuny Ticket #</div>
                                 <div class="value">
-                                    ${ticket.znuny_url
-                                        ? `<a href="${ticket.znuny_url}" target="_blank" class="text-decoration-none">${ticket.znuny_ticket_id} <i class="bi bi-box-arrow-up-right small"></i></a>`
+                                    ${sanitizeUrl(ticket.znuny_url)
+                                        ? `<a href="${sanitizeUrl(ticket.znuny_url)}" target="_blank" class="text-decoration-none">${ticket.znuny_ticket_id} <i class="bi bi-box-arrow-up-right small"></i></a>`
                                         : (ticket.znuny_ticket_id || '-')}
                                 </div>
                             </div>
@@ -333,8 +346,8 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                             <div class="info-card">
                                 <div class="label">Ticket ID</div>
                                 <div class="value">
-                                    ${ticket.portal_url
-                                        ? `<a href="${ticket.portal_url}" target="_blank" class="text-decoration-none">${ticket.ticket_id} <i class="bi bi-box-arrow-up-right small"></i></a>`
+                                    ${sanitizeUrl(ticket.portal_url)
+                                        ? `<a href="${sanitizeUrl(ticket.portal_url)}" target="_blank" class="text-decoration-none">${ticket.ticket_id} <i class="bi bi-box-arrow-up-right small"></i></a>`
                                         : ticket.ticket_id}
                                 </div>
                             </div>
@@ -354,13 +367,13 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                         <div class="col-12">
                             <div class="info-card">
                                 <div class="label">Customer</div>
-                                <div class="value">${ticket.customer_name || '-'}</div>
+                                <div class="value">${escapeHtml(ticket.customer_name) || '-'}</div>
                             </div>
                         </div>
                         <div class="col-12">
                             <div class="info-card">
                                 <div class="label">Address</div>
-                                <div class="value">${ticket.address || '-'}</div>
+                                <div class="value">${escapeHtml(ticket.address) || '-'}</div>
                             </div>
                         </div>
                     </div>
@@ -508,14 +521,14 @@ function renderTicketRow(ticket, onClick) {
     row.innerHTML = `
         <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
         <td><strong>${ticket.ticket_id}</strong></td>
-        <td class="text-truncate" style="max-width: 150px;" title="${ticket.customer_name || ''}">${ticket.customer_name || '-'}</td>
-        <td class="text-truncate d-none d-md-table-cell" style="max-width: 180px;" title="${ticket.address || ''}">${ticket.address || '-'}</td>
-        <td class="d-none d-lg-table-cell">${ticket.ticket_type || '-'}</td>
-        <td class="d-none d-sm-table-cell">${ticket.status || '-'}</td>
+        <td class="text-truncate" style="max-width: 150px;" title="${escapeHtml(ticket.customer_name || '')}">${escapeHtml(ticket.customer_name) || '-'}</td>
+        <td class="text-truncate d-none d-md-table-cell" style="max-width: 180px;" title="${escapeHtml(ticket.address || '')}">${escapeHtml(ticket.address) || '-'}</td>
+        <td class="d-none d-lg-table-cell">${escapeHtml(ticket.ticket_type) || '-'}</td>
+        <td class="d-none d-sm-table-cell">${escapeHtml(ticket.status) || '-'}</td>
         <td class="d-none d-md-table-cell"><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
         <td class="znuny-status">${znunyIcon}</td>
         <td>${timeToCreate}</td>
-        <td class="d-none d-sm-table-cell"><small>${ticket.znuny_created_by || '-'}</small></td>
+        <td class="d-none d-sm-table-cell"><small>${escapeHtml(ticket.znuny_created_by) || '-'}</small></td>
     `;
     return row;
 }

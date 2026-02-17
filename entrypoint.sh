@@ -1,14 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Ticket Extractor - Startup ==="
-echo "Running database migration check..."
+echo "=== Ticket Extractor - Starting ==="
+echo "Python $(python --version 2>&1 | cut -d' ' -f2) | PID $$"
 
-python -c "
-from database import Database
-db = Database()
-print('Database check complete - all tables and columns verified')
-"
-
-echo "Starting application..."
 exec python app.py

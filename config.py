@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Application version - update this when deploying changes to bust cache
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.2"
 
 
 def _load_db_config() -> dict:

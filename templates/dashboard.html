@@ -414,7 +414,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadDelayedTickets();
     loadZnunySyncStatus();
     loadZnunyOnlyStats();
-    setInterval(refreshAll, 30000);
+    setInterval(() => { if (!document.hidden) refreshAll(); }, 30000);
 });
 
 // Delayed Tickets Analysis Functions

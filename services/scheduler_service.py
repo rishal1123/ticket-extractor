@@ -372,6 +372,11 @@ class SchedulerService:
         # Wake up workers so they can exit
         self._extraction_event.set()
         self._znuny_sync_event.set()
+        # Wait for worker threads to finish
+        if self._extraction_thread and self._extraction_thread.is_alive():
+            self._extraction_thread.join(timeout=10)
+        if self._znuny_sync_thread and self._znuny_sync_thread.is_alive():
+            self._znuny_sync_thread.join(timeout=10)
         # Clear scheduled jobs to prevent duplicates on restart
         schedule.clear()
         logger.info("Scheduler stop requested")
