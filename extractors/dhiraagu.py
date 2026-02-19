@@ -42,6 +42,7 @@ class DhiraaguExtractor(BaseExtractor):
     COL_SERVICE_TYPE = 3   # Service type
     COL_ORDER_TYPE = 4     # Order type (New Service, Relocation, etc.)
     COL_STATUS = 5         # Status
+    COL_CUSTOMER_NAME = 6  # Customer name
     COL_PRIORITY = 7       # Priority (Normal, etc.)
     COL_SUBMITTED_DATE = 8 # Submitted date (portal_created_at)
     COL_KPI = 9            # KPI (e.g., "30 Hr 40 Min")
@@ -234,7 +235,7 @@ class DhiraaguExtractor(BaseExtractor):
                         'status': status,
                         'portal_created_at': portal_created_at,
                         'kpi': self._get_cell_text_by_element(cells[self.COL_KPI]) if len(cells) > self.COL_KPI else None,
-                        'customer_name': None  # Will be extracted from detail page
+                        'customer_name': self._get_cell_text_by_element(cells[self.COL_CUSTOMER_NAME]) if len(cells) > self.COL_CUSTOMER_NAME else None,
                     }
 
                     if not order_data['service_num']:
@@ -322,6 +323,11 @@ class DhiraaguExtractor(BaseExtractor):
     def _extract_detail_page_data(self) -> dict:
         """Extract data from form fields on the detail page."""
         data = {}
+        try:
+            # Wait for form to render before querying fields
+            self.browser.page.wait_for_selector("[id^='data.']", timeout=5000)
+        except Exception:
+            self.logger.debug("Detail page form fields not found within timeout")
         try:
             # Customer name
             customer_name_input = self.browser.page.query_selector("[id='data.customer_name']")
