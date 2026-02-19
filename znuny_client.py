@@ -7,6 +7,7 @@ Fetches ticket details including creator, creation time, and article history.
 import os
 import time
 import re
+import asyncio
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -329,6 +330,17 @@ class ZnunyClient:
 
         os.makedirs(ZNUNY_SESSION_DIR, exist_ok=True)
         try:
+            # Playwright sync API refuses to start if an asyncio event loop exists
+            # (uvicorn creates one in the main thread). Fix: set a fresh loop for
+            # this worker thread so sync_playwright doesn't see the main loop.
+            try:
+                asyncio.get_running_loop()
+                # If we get here, there IS a running loop — shouldn't happen in a
+                # worker thread, but guard against it anyway.
+            except RuntimeError:
+                # No running loop — good. Set a new event loop for this thread
+                # so Playwright's internal check doesn't pick up the main thread's loop.
+                asyncio.set_event_loop(asyncio.new_event_loop())
             ZnunyClient._shared_playwright = sync_playwright().start()
             ZnunyClient._shared_context = ZnunyClient._shared_playwright.chromium.launch_persistent_context(
                 ZNUNY_SESSION_DIR,
