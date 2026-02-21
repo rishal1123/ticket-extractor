@@ -45,12 +45,10 @@ class BrowserManager:
         """Get or create a thread-local Playwright instance."""
         pw = getattr(cls._thread_local, 'playwright', None)
         if pw is None:
-            # Ensure this thread has its own event loop so Playwright sync API
-            # doesn't conflict with uvicorn's asyncio loop in the main thread
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                asyncio.set_event_loop(asyncio.new_event_loop())
+            # Playwright's greenlet-based sync API leaves an internal asyncio
+            # loop marked as "running". Clear it so a fresh Playwright can start.
+            asyncio._set_running_loop(None)
+            asyncio.set_event_loop(asyncio.new_event_loop())
             pw = sync_playwright().start()
             cls._thread_local.playwright = pw
         return pw
