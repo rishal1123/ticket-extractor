@@ -330,7 +330,12 @@ class ZnunyClient:
 
         os.makedirs(ZNUNY_SESSION_DIR, exist_ok=True)
         try:
+            import threading as _th
+            logger.info(f"[ZnunyClient] Starting new Playwright (thread: {_th.current_thread().name}, "
+                        f"shared_pw={ZnunyClient._shared_playwright is not None}, "
+                        f"shared_page={ZnunyClient._shared_page is not None})")
             ZnunyClient._shared_playwright = sync_playwright().start()
+            logger.info(f"[ZnunyClient] Playwright started, launching persistent context...")
             ZnunyClient._shared_context = ZnunyClient._shared_playwright.chromium.launch_persistent_context(
                 ZNUNY_SESSION_DIR,
                 headless=True,

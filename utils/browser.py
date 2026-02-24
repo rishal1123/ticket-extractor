@@ -28,9 +28,19 @@ _original_pw_enter = _pw_cm.PlaywrightContextManager.__enter__
 
 
 def _patched_pw_enter(self):
+    import threading as _th
+    _tname = _th.current_thread().name
+    logger.info(f"[monkeypatch] sync_playwright().start() called from thread '{_tname}'")
+    try:
+        _loop = asyncio.get_running_loop()
+        logger.info(f"[monkeypatch] Found running asyncio loop in thread '{_tname}': {_loop}, running={_loop.is_running()} — clearing it")
+    except RuntimeError:
+        logger.info(f"[monkeypatch] No running asyncio loop in thread '{_tname}' (good)")
     asyncio._set_running_loop(None)
     asyncio.set_event_loop(asyncio.new_event_loop())
-    return _original_pw_enter(self)
+    result = _original_pw_enter(self)
+    logger.info(f"[monkeypatch] Playwright started successfully in thread '{_tname}'")
+    return result
 
 
 _pw_cm.PlaywrightContextManager.__enter__ = _patched_pw_enter
@@ -71,8 +81,10 @@ class BrowserManager:
         """Get or create a thread-local Playwright instance."""
         pw = getattr(cls._thread_local, 'playwright', None)
         if pw is None:
+            logger.info(f"[BrowserManager] Creating new thread-local Playwright (thread: {threading.current_thread().name})")
             pw = sync_playwright().start()
             cls._thread_local.playwright = pw
+            logger.info(f"[BrowserManager] Thread-local Playwright created successfully")
         return pw
 
     @property
