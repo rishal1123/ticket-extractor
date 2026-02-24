@@ -64,7 +64,7 @@ Extractor/
 │   └── js/common.js     # Shared JavaScript functions
 │
 ├── utils/               # Utilities
-│   ├── browser.py       # Playwright browser manager
+│   ├── browser.py       # Playwright browser manager + asyncio monkeypatch
 │   └── logger.py        # Logging utilities (console + rotating file)
 │
 ├── data/                # Runtime data (gitignored)
@@ -102,7 +102,20 @@ Extractor/
 |-----------|------------|-------|
 | ISP Extractors | Playwright sync API | Per-portal persistent context in `data/browser_sessions/{portal}/` |
 | Znuny Client | Playwright sync API | Shared persistent context in `data/browser_sessions/znuny/` |
-| Browser Manager | `utils/browser.py` | Thread-local Playwright instances, 1920x1080 viewport |
+| Browser Manager | `utils/browser.py` | Thread-local Playwright instances, 1920x1080 viewport, asyncio monkeypatch |
+
+### Playwright Asyncio Monkeypatch
+
+`utils/browser.py` applies a module-level monkeypatch to `PlaywrightContextManager.__enter__` that clears the asyncio running-loop marker before Playwright's own check runs. This is required because:
+
+1. uvicorn's main thread has a running asyncio event loop
+2. Playwright's sync API refuses to start if it detects a running asyncio loop
+3. After a Playwright greenlet session crashes or isn't stopped cleanly, the stale "running" loop marker persists in the thread
+4. The monkeypatch intercepts at the exact point of failure, clearing `asyncio._set_running_loop(None)` right before Playwright checks
+
+This single global fix covers all call sites (BrowserManager, ZnunyClient, extractors) regardless of thread. `znuny_client.py` explicitly imports `utils.browser` to ensure the monkeypatch is applied before any `sync_playwright()` calls.
+
+**IMPORTANT:** Never call `pw.stop()` to shut down Playwright — it can hang forever if the browser was killed mid-operation. Instead, kill the Playwright driver process by PID using `psutil.Process(pid).kill()`. The driver PID is at `pw._impl_obj._connection._transport._proc.pid`.
 
 ### Memory Limits Per Portal
 
@@ -120,6 +133,9 @@ Extractor/
 - After 3 consecutive failures: session directory cleared (`shutil.rmtree`) for fresh start next cycle
 - Memory over limit: browser reset but session data preserved on disk
 - Zero-ticket debouncing: 3 consecutive zero-ticket cycles required before marking tickets complete
+- Playwright driver processes killed by PID (never `pw.stop()` which can hang)
+- Asyncio monkeypatch in `utils/browser.py` prevents "Sync API inside asyncio loop" errors
+- Dead worker threads auto-detected and restarted by staleness watchdog
 
 ## Template Architecture
 
@@ -502,7 +518,7 @@ operating_hours_enabled, operating_hours_start, operating_hours_end
 
 **Credential guard:** Extractions are skipped if no portal credentials exist in the database yet.
 
-**Current version:** `APP_VERSION = "1.6.0"` in `config.py`
+**Current version:** `APP_VERSION = "1.6.2"` in `config.py`
 
 ## Important Timestamps
 
@@ -637,18 +653,23 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 |-----|-----------------|-----------------|-------------|
 | **Portal Extraction** | 5 min | `EXTRACTION_INTERVAL_MINUTES` | Extracts tickets from all configured ISP portals |
 | **Znuny Sync** | 3 min | `ZNUNY_SYNC_INTERVAL_MINUTES` | Checks ISP tickets in Znuny, syncs details & site visits |
-| **Staleness Watchdog** | 5 min | N/A | Resets all browsers if any portal's last extraction is >15 min old |
+| **Staleness Watchdog** | 5 min | N/A | Checks worker health + resets stale browsers (>15 min old) |
+| **Browser Restart** | 5 hours | N/A | Kills all browsers and Playwright drivers to prevent memory leaks |
 | **Log Cleanup** | Daily at midnight | N/A | Deletes logs older than 2 days from all log tables |
 
 **Architecture:**
 - Two persistent daemon threads (ExtractionWorker, ZnunySyncWorker) stay alive between cycles
 - `threading.Event` signals workers to run (avoids creating new threads each cycle)
+- Per-worker reset events (`_extraction_reset_requested`, `_znuny_reset_requested`) avoid race conditions
 - Skip-on-overlap: if a job is still running when next cycle fires, that cycle is skipped
 - Both jobs run immediately on startup, then repeat at configured intervals
 - Memory monitoring: logs per-portal and total browser memory usage after each extraction
 - **Credential guard:** Jobs skip execution if no portal credentials exist in the database
 - **Operating hours:** Configurable daily schedule (default 7 AM - 10 PM MVT). Jobs are skipped outside hours. Configure via Admin → Config → Operating Hours.
-- **Staleness watchdog:** Every 5 min (during operating hours), checks each portal's last successful extraction. If any is >15 min old, kills all Playwright browsers (portal + Znuny) and triggers immediate re-extraction/sync.
+- **Staleness watchdog:** Every 5 min, first checks if worker threads are alive (restarts dead ones). Then during operating hours, checks each portal's last successful extraction. If any is >15 min old, kills all browser + Playwright driver processes by PID and triggers immediate re-extraction/sync.
+- **5-hour browser restart:** Scheduled every 5 hours via `_scheduled_browser_restart()`. Kills all portal browsers, Znuny browser, and their Playwright driver processes by PID. Signals workers to reset and triggers immediate re-extraction/sync.
+- **Worker health monitoring:** `_check_and_restart_workers()` detects dead worker threads and spawns replacements. Outer try/except on worker loops logs `"worker thread DIED"` and enables auto-restart.
+- **Process killing:** All browser resets use `_kill_all_browsers()` which kills both Chromium browser PIDs and Playwright driver PIDs. Never calls `pw.stop()` (can hang forever).
 - **Visual indicators:** Dashboard and admin portal cards show stale state (red pulsing border when >15 min old) and paused state (dimmed/grayed when outside operating hours).
 
 ## Portal-Specific Notes
@@ -911,7 +932,7 @@ When ISP tickets disappear from the portal but weren't found in Znuny open ticke
 
 ## Static File Versioning
 
-- `APP_VERSION` is defined in `config.py` (currently `"1.6.0"`)
+- `APP_VERSION` is defined in `config.py` (currently `"1.6.2"`)
 - Templates use `?v={{ app_version }}` query strings on static file URLs
 - Global `fetch()` override in `common.js` adds `cache: 'no-store'` to all local API calls
 - When you update static files, increment `APP_VERSION` to bust browser cache
@@ -940,3 +961,10 @@ taskkill //F //PID <pid>
 - After 3 consecutive failures, browser session is auto-cleared for fresh start
 - Check Login Stats for portal authentication issues
 - Medianet SPA timeouts: ensure `wait_until="commit"` is used (not "load")
+
+### Playwright / Browser Issues
+- **"Playwright Sync API inside the asyncio loop"**: Should be handled by monkeypatch in `utils/browser.py`. If seen, ensure `import utils.browser` runs before any `sync_playwright()` call.
+- **All portals stale for hours**: Check system_logs for "worker thread DIED" messages. The watchdog auto-restarts dead workers every 5 min.
+- **pw.stop() hanging**: Never call `pw.stop()` — kill the driver process by PID instead. See `_kill_playwright_driver()` in scheduler_service.py.
+- **Browser memory leaks**: The 5-hour scheduled restart (`_scheduled_browser_restart()`) kills all browsers proactively. Memory is also monitored per-portal after each extraction cycle.
+- **Cross-thread Playwright crashes**: Never call Playwright methods from a different thread than the one that created the instance. The watchdog kills processes by PID (safe cross-thread) and signals workers to reset their own instances.
