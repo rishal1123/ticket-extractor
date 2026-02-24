@@ -219,7 +219,7 @@ class SchedulerService:
                 self._extraction_event.clear()
                 logger.info("[ExtractionWorker] Woke up - event signaled")
 
-                # If watchdog/scheduled restart requested a browser reset, clean up
+                # If scheduled restart requested a browser reset, clean up
                 # this thread's Playwright instance (thread-local, must be reset here).
                 if self._extraction_reset_requested.is_set():
                     self._extraction_reset_requested.clear()
@@ -264,7 +264,7 @@ class SchedulerService:
                 self._znuny_sync_event.clear()
                 logger.info("[ZnunySyncWorker] Woke up - event signaled")
 
-                # If watchdog/scheduled restart requested a browser reset, clean up
+                # If scheduled restart requested a browser reset, clean up
                 # Znuny's Playwright state in this thread (must happen in worker thread).
                 if self._znuny_reset_requested.is_set():
                     self._znuny_reset_requested.clear()
@@ -362,11 +362,11 @@ class SchedulerService:
         return killed_pids
 
     def _scheduled_browser_restart(self):
-        """Restart all browsers every 5 hours to prevent memory leaks and stale sessions."""
-        logger.info("Scheduled browser restart (every 5 hours) - nuking all browsers")
+        """Restart all browsers every 1 hour to prevent memory leaks and stale sessions."""
+        logger.info("Scheduled browser restart (every 1 hour) - nuking all browsers")
         try:
             db = Database()
-            db.log_system("info", "scheduler", "Scheduled 5-hour browser restart initiated")
+            db.log_system("info", "scheduler", "Scheduled 1-hour browser restart initiated")
 
             killed = self._nuke_all_browsers()
 
@@ -418,58 +418,9 @@ class SchedulerService:
             self._extraction_event.set()
             self._znuny_sync_event.set()
 
-    def _staleness_watchdog(self):
-        """Check if any portal's last extraction is stale and reset browsers."""
-        # Always check worker health, even outside operating hours
+    def _worker_health_check(self):
+        """Check if worker threads are alive and restart dead ones."""
         self._check_and_restart_workers()
-
-        if not self._is_within_operating_hours():
-            return
-
-        try:
-            db = Database()
-            last_extractions = db.get_last_extraction_per_portal()
-            if not last_extractions:
-                return
-
-            now = datetime.now(MVT)
-            stale_threshold_minutes = 15
-            stale_portals = []
-
-            for portal, info in last_extractions.items():
-                extracted_at_str = info.get("extracted_at")
-                if not extracted_at_str:
-                    continue
-                extracted_at = datetime.fromisoformat(str(extracted_at_str))
-                if extracted_at.tzinfo is None:
-                    extracted_at = extracted_at.replace(tzinfo=MVT)
-                age_minutes = (now - extracted_at).total_seconds() / 60
-                if age_minutes > stale_threshold_minutes:
-                    stale_portals.append((portal, age_minutes))
-
-            if not stale_portals:
-                return
-
-            stale_info = ", ".join(f"{p} ({m:.0f}min)" for p, m in stale_portals)
-            logger.warning(f"Stale portals detected: {stale_info} - resetting all browsers")
-            db.log_system("warning", "scheduler", f"Stale portals: {stale_info} - resetting browsers")
-
-            # Nuclear: kill ALL chromium/node processes and clear all references
-            killed = self._nuke_all_browsers()
-            if killed:
-                logger.info(f"Watchdog nuked: {', '.join(killed)}")
-
-            # Signal each worker thread to reset its own Playwright instance
-            self._extraction_reset_requested.set()
-            self._znuny_reset_requested.set()
-
-            # Trigger immediate re-extraction and sync
-            self._extraction_event.set()
-            self._znuny_sync_event.set()
-            logger.info("Browser reset complete - triggered immediate extraction and sync")
-
-        except Exception as e:
-            logger.error(f"Staleness watchdog error: {e}")
 
     def _extraction_job(self):
         """Signal the persistent extraction worker to run."""
@@ -521,8 +472,8 @@ class SchedulerService:
         # Schedule periodic jobs (just signal the persistent workers)
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
-        schedule.every(5).minutes.do(self._staleness_watchdog)
-        schedule.every(5).hours.do(self._scheduled_browser_restart)
+        schedule.every(5).minutes.do(self._worker_health_check)
+        schedule.every(1).hours.do(self._scheduled_browser_restart)
 
         # Run both immediately on start
         self._extraction_job()
