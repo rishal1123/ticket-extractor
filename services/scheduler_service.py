@@ -40,8 +40,9 @@ class SchedulerService:
         # Events to signal persistent worker threads
         self._extraction_event = threading.Event()
         self._znuny_sync_event = threading.Event()
-        # Flag to tell worker threads to reset their browsers (set by watchdog)
-        self._browser_reset_requested = threading.Event()
+        # Per-worker browser reset flags (avoids race where one worker clears before the other sees it)
+        self._extraction_reset_requested = threading.Event()
+        self._znuny_reset_requested = threading.Event()
         # Persistent worker threads (keep Playwright alive across cycles)
         self._extraction_thread: Optional[threading.Thread] = None
         self._znuny_sync_thread: Optional[threading.Thread] = None
@@ -176,11 +177,11 @@ class SchedulerService:
         """Reset the thread-local Playwright instance (must be called from the worker thread).
 
         Playwright objects are bound to their creator thread via greenlets.
-        After a browser crash or watchdog reset, the stale Playwright leaves
-        an asyncio loop marked as 'running' in this thread. Clean it up so
-        a fresh sync_playwright().start() can succeed.
+        After a browser crash or watchdog reset, the stale Playwright must
+        be stopped so a fresh sync_playwright().start() can succeed.
+        The asyncio loop cleanup is handled globally by the monkeypatch in
+        utils/browser.py.
         """
-        import asyncio
         from utils.browser import BrowserManager
         pw = getattr(BrowserManager._thread_local, 'playwright', None)
         if pw:
@@ -189,15 +190,11 @@ class SchedulerService:
             except Exception:
                 pass
             BrowserManager._thread_local.playwright = None
-        # Clear stale asyncio running loop left by Playwright's greenlet
-        asyncio._set_running_loop(None)
-        asyncio.set_event_loop(asyncio.new_event_loop())
         logger.info("Extraction worker: Playwright instance reset")
 
     @staticmethod
     def _reset_znuny_playwright():
         """Reset Znuny's Playwright instance (must be called from the sync worker thread)."""
-        import asyncio
         from znuny_client import ZnunyClient
         pw = ZnunyClient._shared_playwright
         if pw:
@@ -209,9 +206,6 @@ class SchedulerService:
         ZnunyClient._shared_page = None
         ZnunyClient._shared_context = None
         ZnunyClient._shared_logged_in = False
-        # Clear stale asyncio running loop left by Playwright's greenlet
-        asyncio._set_running_loop(None)
-        asyncio.set_event_loop(asyncio.new_event_loop())
         logger.info("Znuny sync worker: Playwright instance reset")
 
     def _extraction_worker_loop(self):
@@ -229,11 +223,11 @@ class SchedulerService:
                 continue
             self._extraction_event.clear()
 
-            # If watchdog requested a browser reset, clean up this thread's
-            # Playwright instance (it's thread-local and must be reset here).
-            if self._browser_reset_requested.is_set():
+            # If watchdog/scheduled restart requested a browser reset, clean up
+            # this thread's Playwright instance (thread-local, must be reset here).
+            if self._extraction_reset_requested.is_set():
+                self._extraction_reset_requested.clear()
                 self._reset_thread_playwright()
-                self._browser_reset_requested.clear()
 
             if not self._is_within_operating_hours():
                 logger.info("Portal extraction skipped - outside operating hours")
@@ -259,11 +253,11 @@ class SchedulerService:
                 continue
             self._znuny_sync_event.clear()
 
-            # If watchdog requested a browser reset, clean up Znuny's
-            # Playwright state in this thread (must happen in worker thread).
-            if self._browser_reset_requested.is_set():
+            # If watchdog/scheduled restart requested a browser reset, clean up
+            # Znuny's Playwright state in this thread (must happen in worker thread).
+            if self._znuny_reset_requested.is_set():
+                self._znuny_reset_requested.clear()
                 self._reset_znuny_playwright()
-                # Don't clear the event here - extraction worker also needs it
 
             if not self._is_within_operating_hours():
                 logger.info("Znuny sync skipped - outside operating hours")
@@ -288,6 +282,56 @@ class SchedulerService:
                 logger.info(f"Cleaned up {total} old log entries: {results}")
         except Exception as e:
             logger.error(f"Log cleanup failed: {e}")
+
+    def _scheduled_browser_restart(self):
+        """Restart all browsers every 5 hours to prevent memory leaks and stale sessions."""
+        logger.info("Scheduled browser restart (every 5 hours) - killing all browsers")
+        try:
+            db = Database()
+            db.log_system("info", "scheduler", "Scheduled 5-hour browser restart initiated")
+
+            killed = []
+
+            # Kill portal extraction browsers by PID
+            from extractors.base import BaseExtractor
+            for portal_name, browser in list(BaseExtractor._portal_browsers.items()):
+                pid = browser.get_browser_pid() if browser else None
+                if pid:
+                    try:
+                        psutil.Process(pid).kill()
+                        killed.append(f"{portal_name}(PID {pid})")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                BaseExtractor._portal_browsers.pop(portal_name, None)
+
+            # Kill Znuny browser by PID
+            from znuny_client import ZnunyClient
+            znuny_pid = ZnunyClient._shared_browser_pid
+            if znuny_pid:
+                try:
+                    psutil.Process(znuny_pid).kill()
+                    killed.append(f"znuny(PID {znuny_pid})")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            ZnunyClient._shared_page = None
+            ZnunyClient._shared_context = None
+            ZnunyClient._shared_playwright = None
+            ZnunyClient._shared_browser_pid = None
+            ZnunyClient._shared_logged_in = False
+
+            # Signal workers to reset their thread-local Playwright instances
+            self._extraction_reset_requested.set()
+            self._znuny_reset_requested.set()
+
+            # Trigger immediate re-extraction and sync
+            self._extraction_event.set()
+            self._znuny_sync_event.set()
+
+            msg = f"Killed: {', '.join(killed)}" if killed else "No active browsers found"
+            logger.info(f"Scheduled browser restart complete - {msg}")
+            db.log_system("info", "scheduler", f"Browser restart complete - {msg}")
+        except Exception as e:
+            logger.error(f"Scheduled browser restart failed: {e}")
 
     def _staleness_watchdog(self):
         """Check if any portal's last extraction is stale and reset browsers."""
@@ -352,8 +396,9 @@ class SchedulerService:
             ZnunyClient._shared_browser_pid = None
             ZnunyClient._shared_logged_in = False
 
-            # Signal worker threads to reset their Playwright instances
-            self._browser_reset_requested.set()
+            # Signal each worker thread to reset its own Playwright instance
+            self._extraction_reset_requested.set()
+            self._znuny_reset_requested.set()
 
             # Trigger immediate re-extraction and sync
             self._extraction_event.set()
@@ -414,6 +459,7 @@ class SchedulerService:
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
         schedule.every(5).minutes.do(self._staleness_watchdog)
+        schedule.every(5).hours.do(self._scheduled_browser_restart)
 
         # Run both immediately on start
         self._extraction_job()

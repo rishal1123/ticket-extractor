@@ -7,7 +7,6 @@ Fetches ticket details including creator, creation time, and article history.
 import os
 import time
 import re
-import asyncio
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -21,6 +20,7 @@ from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, 
 from playwright.sync_api import Error as PlaywrightError
 
 from config import Config
+import utils.browser  # noqa: F401 - ensures Playwright asyncio monkeypatch is applied
 from utils.logger import get_logger
 
 # Session directory for persistent Znuny browser
@@ -330,12 +330,6 @@ class ZnunyClient:
 
         os.makedirs(ZNUNY_SESSION_DIR, exist_ok=True)
         try:
-            # Playwright's greenlet-based sync API leaves an internal asyncio loop
-            # marked as "running" in this thread. If a previous Playwright wasn't
-            # stopped cleanly (browser crash, failed pw.stop()), the stale running
-            # loop blocks any new sync_playwright().start(). Clear it.
-            asyncio._set_running_loop(None)
-            asyncio.set_event_loop(asyncio.new_event_loop())
             ZnunyClient._shared_playwright = sync_playwright().start()
             ZnunyClient._shared_context = ZnunyClient._shared_playwright.chromium.launch_persistent_context(
                 ZNUNY_SESSION_DIR,
@@ -383,12 +377,6 @@ class ZnunyClient:
                 pass
             ZnunyClient._shared_playwright = None
         ZnunyClient._shared_browser_pid = None
-        # Playwright's greenlet-based sync API leaves an internal asyncio loop
-        # marked as "running" in this thread. If pw.stop() fails or the browser
-        # crashes, this stale loop blocks future sync_playwright().start() calls.
-        # Clear the running loop marker so a fresh Playwright can start.
-        asyncio._set_running_loop(None)
-        asyncio.set_event_loop(asyncio.new_event_loop())
         # Clear caches on browser reset to avoid stale data
         ZnunyClient._shared_open_tickets_cache = None
         ZnunyClient._shared_cache_timestamp = None

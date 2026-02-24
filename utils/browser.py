@@ -4,10 +4,36 @@ import threading
 import psutil
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, Playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
+import playwright.sync_api._context_manager as _pw_cm
 
 from .logger import get_logger
 
 logger = get_logger("browser")
+
+# ---------------------------------------------------------------------------
+# Monkeypatch Playwright's PlaywrightContextManager.__enter__ / .start()
+#
+# Playwright's sync API checks for a running asyncio event loop and raises
+# "It looks like you are using Playwright Sync API inside the asyncio loop"
+# if one is detected.  In our setup the worker threads inherit a stale
+# "running" loop from either uvicorn (main thread) or a previous Playwright
+# greenlet session that wasn't stopped cleanly.
+#
+# By patching __enter__ we intercept at the *exact* point of failure and
+# clear the stale running-loop marker before Playwright's own check runs.
+# This is a single global fix that covers every call site (BrowserManager,
+# ZnunyClient, extractors) regardless of thread.
+# ---------------------------------------------------------------------------
+_original_pw_enter = _pw_cm.PlaywrightContextManager.__enter__
+
+
+def _patched_pw_enter(self):
+    asyncio._set_running_loop(None)
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    return _original_pw_enter(self)
+
+
+_pw_cm.PlaywrightContextManager.__enter__ = _patched_pw_enter
 
 # Shared Chromium launch args
 CHROMIUM_ARGS = [
@@ -45,10 +71,6 @@ class BrowserManager:
         """Get or create a thread-local Playwright instance."""
         pw = getattr(cls._thread_local, 'playwright', None)
         if pw is None:
-            # Playwright's greenlet-based sync API leaves an internal asyncio
-            # loop marked as "running". Clear it so a fresh Playwright can start.
-            asyncio._set_running_loop(None)
-            asyncio.set_event_loop(asyncio.new_event_loop())
             pw = sync_playwright().start()
             cls._thread_local.playwright = pw
         return pw
