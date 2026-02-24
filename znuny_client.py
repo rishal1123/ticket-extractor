@@ -1030,7 +1030,6 @@ class ZnunyClient:
                             "via": via_text,
                             "subject": subject,
                             "created_str": (cells[6].text_content() or "").strip(),
-                            "row": row,
                             "needs_body": needs_body
                         })
                 except (IndexError, Exception):
@@ -1260,14 +1259,19 @@ class ZnunyClient:
             # Cache the details
             self._ticket_details_cache[ticket_number] = (details, time.time())
 
-            # Evict stale cache entries to prevent unbounded memory growth
-            if len(self._ticket_details_cache) > MAX_DETAIL_CACHE_SIZE:
-                cutoff = time.time() - CACHE_TTL_SECONDS
-                stale = [k for k, (_, ts) in self._ticket_details_cache.items() if ts < cutoff]
-                for k in stale:
-                    del self._ticket_details_cache[k]
-                if stale:
-                    logger.debug(f"Evicted {len(stale)} stale entries from detail cache")
+            # Evict stale cache entries every time to prevent unbounded memory growth
+            now = time.time()
+            cutoff = now - CACHE_TTL_SECONDS
+            stale = [k for k, (_, ts) in self._ticket_details_cache.items() if ts < cutoff]
+            # Also enforce hard size limit (keep newest entries)
+            if len(self._ticket_details_cache) - len(stale) > MAX_DETAIL_CACHE_SIZE:
+                by_age = sorted(self._ticket_details_cache.items(), key=lambda x: x[1][1])
+                excess = len(self._ticket_details_cache) - len(stale) - MAX_DETAIL_CACHE_SIZE
+                stale.extend(k for k, _ in by_age[:excess] if k not in stale)
+            for k in stale:
+                self._ticket_details_cache.pop(k, None)
+            if stale:
+                logger.debug(f"Evicted {len(stale)} entries from detail cache (remaining: {len(self._ticket_details_cache)})")
 
             return details
 

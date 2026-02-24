@@ -200,7 +200,13 @@ class SchedulerService:
         ZnunyClient._shared_playwright = None
         ZnunyClient._shared_browser_pid = None
         ZnunyClient._shared_logged_in = False
-        logger.info("Znuny sync worker: references cleared")
+        # Clear caches to free memory (stale after browser kill)
+        cache_size = len(getattr(ZnunyClient, '_shared_details_cache', {}))
+        ZnunyClient._shared_open_tickets_cache = None
+        ZnunyClient._shared_cache_timestamp = None
+        ZnunyClient._shared_details_cache = {}
+        ZnunyClient._shared_last_login_check = 0
+        logger.info(f"Znuny sync worker: references + caches cleared (detail_cache had {cache_size} entries)")
 
     def _extraction_worker_loop(self):
         """Persistent extraction worker - stays alive between cycles.
