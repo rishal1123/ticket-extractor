@@ -173,47 +173,34 @@ class SchedulerService:
             return True  # Default to running if check fails
 
     @staticmethod
-    def _kill_playwright_driver(pw):
-        """Kill the Playwright driver process by PID (never call pw.stop() which can hang)."""
-        try:
-            driver_pid = pw._impl_obj._connection._transport._proc.pid
-            proc = psutil.Process(driver_pid)
-            status = proc.status()
-            logger.info(f"Killing Playwright driver PID {driver_pid} (status={status})")
-            proc.kill()
-            logger.info(f"Playwright driver PID {driver_pid} killed successfully")
-        except psutil.NoSuchProcess:
-            logger.info(f"Playwright driver already dead (NoSuchProcess)")
-        except Exception as e:
-            logger.warning(f"Could not kill Playwright driver: {type(e).__name__}: {e}")
-
-    @staticmethod
     def _reset_thread_playwright():
-        """Reset the thread-local Playwright instance (must be called from the worker thread)."""
+        """Clear the extraction worker's thread-local Playwright reference.
+
+        The actual processes are already killed by _nuke_all_browsers().
+        This just clears the Python reference so a fresh one gets created.
+        """
         from utils.browser import BrowserManager
-        pw = getattr(BrowserManager._thread_local, 'playwright', None)
-        logger.info(f"[reset_thread_pw] thread={threading.current_thread().name}, has_pw={pw is not None}")
-        if pw:
-            SchedulerService._kill_playwright_driver(pw)
-            BrowserManager._thread_local.playwright = None
-        logger.info("Extraction worker: Playwright instance reset complete")
+        had_pw = getattr(BrowserManager._thread_local, 'playwright', None) is not None
+        BrowserManager._thread_local.__dict__.pop('playwright', None)
+        logger.info(f"[reset_thread_pw] thread={threading.current_thread().name}, had_pw={had_pw} — cleared")
 
     @staticmethod
     def _reset_znuny_playwright():
-        """Reset Znuny's Playwright instance (must be called from the sync worker thread)."""
+        """Clear Znuny's shared Playwright references.
+
+        The actual processes are already killed by _nuke_all_browsers().
+        This just clears the Python references so fresh ones get created.
+        """
         from znuny_client import ZnunyClient
-        pw = ZnunyClient._shared_playwright
         logger.info(f"[reset_znuny_pw] thread={threading.current_thread().name}, "
-                     f"has_pw={pw is not None}, has_page={ZnunyClient._shared_page is not None}, "
-                     f"has_ctx={ZnunyClient._shared_context is not None}, "
-                     f"logged_in={ZnunyClient._shared_logged_in}")
-        if pw:
-            SchedulerService._kill_playwright_driver(pw)
-            ZnunyClient._shared_playwright = None
+                     f"had_pw={ZnunyClient._shared_playwright is not None}, "
+                     f"had_page={ZnunyClient._shared_page is not None}")
         ZnunyClient._shared_page = None
         ZnunyClient._shared_context = None
+        ZnunyClient._shared_playwright = None
+        ZnunyClient._shared_browser_pid = None
         ZnunyClient._shared_logged_in = False
-        logger.info("Znuny sync worker: Playwright instance reset complete")
+        logger.info("Znuny sync worker: references cleared")
 
     def _extraction_worker_loop(self):
         """Persistent extraction worker - stays alive between cycles.
@@ -320,66 +307,68 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Log cleanup failed: {e}")
 
-    def _kill_all_browsers(self) -> list[str]:
-        """Kill all browser and Playwright driver processes by PID. Returns list of killed items."""
-        killed = []
+    @staticmethod
+    def _nuke_all_browsers():
+        """Kill ALL chromium and playwright node processes system-wide, then clear all references.
 
-        # Kill portal extraction browsers by PID
-        from extractors.base import BaseExtractor
-        portal_browsers = dict(BaseExtractor._portal_browsers)
-        logger.info(f"[kill_all] Portal browsers tracked: {list(portal_browsers.keys()) or 'none'}")
-        for portal_name, browser in list(BaseExtractor._portal_browsers.items()):
-            pid = browser.get_browser_pid() if browser else None
-            logger.info(f"[kill_all] {portal_name}: browser={browser is not None}, pid={pid}, alive={browser.is_alive() if browser else False}")
-            if pid:
-                try:
-                    psutil.Process(pid).kill()
-                    killed.append(f"{portal_name}(PID {pid})")
-                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                    logger.info(f"[kill_all] {portal_name} PID {pid}: {type(e).__name__}")
-            BaseExtractor._portal_browsers.pop(portal_name, None)
+        This is a simple, reliable nuclear approach:
+        1. Find and kill every chromium/node process (no PID tracking needed)
+        2. Clear all Python-side references
+        3. Workers will recreate everything from scratch on next cycle
+        """
+        killed_pids = []
 
-        # Kill extraction worker's Playwright driver (may be on a different thread!)
-        from utils.browser import BrowserManager
-        ext_pw = getattr(BrowserManager._thread_local, 'playwright', None)
-        logger.info(f"[kill_all] Extraction thread-local PW: {ext_pw is not None} (from thread {threading.current_thread().name})")
-        if ext_pw:
-            self._kill_playwright_driver(ext_pw)
-
-        # Kill Znuny browser by PID
-        from znuny_client import ZnunyClient
-        znuny_pid = ZnunyClient._shared_browser_pid
-        znuny_pw = ZnunyClient._shared_playwright
-        logger.info(f"[kill_all] Znuny: browser_pid={znuny_pid}, has_pw={znuny_pw is not None}, "
-                     f"has_page={ZnunyClient._shared_page is not None}, logged_in={ZnunyClient._shared_logged_in}")
-        if znuny_pid:
+        # Kill all chromium and node (playwright driver) processes
+        for proc in psutil.process_iter(['pid', 'name']):
             try:
-                psutil.Process(znuny_pid).kill()
-                killed.append(f"znuny(PID {znuny_pid})")
-            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                logger.info(f"[kill_all] Znuny PID {znuny_pid}: {type(e).__name__}")
+                pname = (proc.info['name'] or '').lower()
+                if 'chromium' in pname or 'chrome' in pname:
+                    proc.kill()
+                    killed_pids.append(f"chromium(PID {proc.info['pid']})")
+                elif 'node' in pname:
+                    # Playwright driver is a node process
+                    try:
+                        cmdline = ' '.join(proc.cmdline()).lower()
+                        if 'playwright' in cmdline:
+                            proc.kill()
+                            killed_pids.append(f"playwright-node(PID {proc.info['pid']})")
+                    except (psutil.AccessDenied, psutil.NoSuchProcess):
+                        pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
 
-        # Kill Znuny Playwright driver
-        if znuny_pw:
-            self._kill_playwright_driver(znuny_pw)
+        # Clear all Python-side references
+        from extractors.base import BaseExtractor
+        from znuny_client import ZnunyClient
+        from utils.browser import BrowserManager
 
+        # Clear portal browser references
+        portals_cleared = list(BaseExtractor._portal_browsers.keys())
+        BaseExtractor._portal_browsers.clear()
+
+        # Clear extraction worker's thread-local Playwright
+        # (this only works if called from the same thread, but we clear it anyway)
+        BrowserManager._thread_local.__dict__.pop('playwright', None)
+
+        # Clear Znuny shared state
         ZnunyClient._shared_page = None
         ZnunyClient._shared_context = None
         ZnunyClient._shared_playwright = None
         ZnunyClient._shared_browser_pid = None
         ZnunyClient._shared_logged_in = False
 
-        logger.info(f"[kill_all] Done. Killed: {killed or 'nothing'}")
-        return killed
+        logger.info(f"[nuke] Killed processes: {killed_pids or 'none'}. "
+                     f"Cleared portal refs: {portals_cleared or 'none'}")
+        return killed_pids
 
     def _scheduled_browser_restart(self):
         """Restart all browsers every 5 hours to prevent memory leaks and stale sessions."""
-        logger.info("Scheduled browser restart (every 5 hours) - killing all browsers")
+        logger.info("Scheduled browser restart (every 5 hours) - nuking all browsers")
         try:
             db = Database()
             db.log_system("info", "scheduler", "Scheduled 5-hour browser restart initiated")
 
-            killed = self._kill_all_browsers()
+            killed = self._nuke_all_browsers()
 
             # Signal workers to reset their thread-local Playwright instances
             self._extraction_reset_requested.set()
@@ -465,10 +454,10 @@ class SchedulerService:
             logger.warning(f"Stale portals detected: {stale_info} - resetting all browsers")
             db.log_system("warning", "scheduler", f"Stale portals: {stale_info} - resetting browsers")
 
-            # Kill all browser and Playwright driver processes
-            killed = self._kill_all_browsers()
+            # Nuclear: kill ALL chromium/node processes and clear all references
+            killed = self._nuke_all_browsers()
             if killed:
-                logger.info(f"Watchdog killed: {', '.join(killed)}")
+                logger.info(f"Watchdog nuked: {', '.join(killed)}")
 
             # Signal each worker thread to reset its own Playwright instance
             self._extraction_reset_requested.set()
