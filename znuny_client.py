@@ -358,7 +358,11 @@ class ZnunyClient:
             raise
 
     def _close_browser_resources(self):
-        """Close Playwright persistent context and driver safely."""
+        """Close Playwright persistent context and driver safely.
+
+        Never calls pw.stop() — it can hang forever if browser was killed mid-operation.
+        Instead, kills the Playwright driver process by PID.
+        """
         # Close page first, then context (which closes browser internally)
         page = ZnunyClient._shared_page
         if page:
@@ -376,10 +380,14 @@ class ZnunyClient:
             ZnunyClient._shared_context = None
         pw = ZnunyClient._shared_playwright
         if pw:
+            # Kill the Playwright driver process by PID instead of pw.stop()
             try:
-                pw.stop()
-            except Exception:
-                pass
+                driver_pid = pw._impl_obj._connection._transport._proc.pid
+                import psutil
+                psutil.Process(driver_pid).kill()
+                logger.info(f"Killed Playwright driver PID {driver_pid}")
+            except Exception as e:
+                logger.debug(f"Playwright driver kill skipped: {e}")
             ZnunyClient._shared_playwright = None
         ZnunyClient._shared_browser_pid = None
         # Clear caches on browser reset to avoid stale data
@@ -1438,10 +1446,14 @@ class ZnunyClient:
             cls._shared_context = None
         pw = cls._shared_playwright
         if pw:
+            # Kill the Playwright driver process by PID instead of pw.stop()
             try:
-                pw.stop()
-            except Exception:
-                pass
+                driver_pid = pw._impl_obj._connection._transport._proc.pid
+                import psutil
+                psutil.Process(driver_pid).kill()
+                logger.info(f"force_close: Killed Playwright driver PID {driver_pid}")
+            except Exception as e:
+                logger.debug(f"force_close: Playwright driver kill skipped: {e}")
             cls._shared_playwright = None
         cls._shared_logged_in = False
         cls._shared_last_login_check = 0

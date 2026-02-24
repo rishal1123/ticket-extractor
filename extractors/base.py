@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 import os
 import shutil
+import threading
 import time
 import psutil
 
@@ -24,6 +25,7 @@ class BaseExtractor(ABC):
 
     # Per-portal browser instances (each portal gets its own Chromium)
     _portal_browsers: dict[str, BrowserManager] = {}
+    _portal_browsers_lock = threading.Lock()
     # Track consecutive 0-ticket extraction cycles per portal
     _consecutive_zero_counts: dict = {}
     # Memory limit per browser - override in subclass for heavier portals
@@ -129,7 +131,8 @@ class BaseExtractor(ABC):
                 browser.stop()
             except Exception:
                 pass
-            BaseExtractor._portal_browsers.pop(portal, None)
+            with BaseExtractor._portal_browsers_lock:
+                BaseExtractor._portal_browsers.pop(portal, None)
             return None
         return browser
 
@@ -155,30 +158,32 @@ class BaseExtractor(ABC):
         Uses Playwright persistent context so login sessions survive browser resets.
         """
         portal = self.config.name
-        existing = BaseExtractor._portal_browsers.get(portal)
+        with BaseExtractor._portal_browsers_lock:
+            existing = BaseExtractor._portal_browsers.get(portal)
 
-        if existing is not None:
-            if existing.is_alive():
-                # Check memory before reusing
-                checked = self._check_memory_and_reset(portal, existing)
-                if checked is not None:
-                    self.logger.info(f"[{portal}] Reusing dedicated browser")
-                    return checked
-                # Memory too high - session data persists on disk, safe to recreate
-                self.logger.info(f"[{portal}] Memory limit exceeded, recreating (session persisted)")
-            else:
-                self.logger.info(f"[{portal}] Browser died, recreating (session persisted)")
-                self.db.log_system("warning", f"extractor.{portal}", "Browser died, recreating with persisted session")
-                try:
-                    existing.stop()
-                except Exception:
-                    pass
-                BaseExtractor._portal_browsers.pop(portal, None)
+            if existing is not None:
+                if existing.is_alive():
+                    # Check memory before reusing
+                    checked = self._check_memory_and_reset(portal, existing)
+                    if checked is not None:
+                        self.logger.info(f"[{portal}] Reusing dedicated browser")
+                        return checked
+                    # Memory too high - session data persists on disk, safe to recreate
+                    self.logger.info(f"[{portal}] Memory limit exceeded, recreating (session persisted)")
+                else:
+                    self.logger.info(f"[{portal}] Browser died, recreating (session persisted)")
+                    self.db.log_system("warning", f"extractor.{portal}", "Browser died, recreating with persisted session")
+                    try:
+                        existing.stop()
+                    except Exception:
+                        pass
+                    BaseExtractor._portal_browsers.pop(portal, None)
 
         browser = BrowserManager(headless=self.headless)
         session_dir = self._get_session_dir()
         browser.start(user_data_dir=session_dir)
-        BaseExtractor._portal_browsers[portal] = browser
+        with BaseExtractor._portal_browsers_lock:
+            BaseExtractor._portal_browsers[portal] = browser
         self.logger.info(f"[{portal}] Created persistent browser (session dir: {session_dir})")
         return browser
 
@@ -314,13 +319,13 @@ class BaseExtractor(ABC):
                 )
                 # Kill this portal's browser on error so next attempt starts fresh
                 portal = self.config.name
-                existing = BaseExtractor._portal_browsers.get(portal)
+                with BaseExtractor._portal_browsers_lock:
+                    existing = BaseExtractor._portal_browsers.pop(portal, None)
                 if existing is not None:
                     try:
                         existing.stop()
                     except Exception:
                         pass
-                    BaseExtractor._portal_browsers.pop(portal, None)
                 self.browser = None
                 if attempt < max_retries - 1:
                     self.logger.info(f"Retrying in 5 seconds...")

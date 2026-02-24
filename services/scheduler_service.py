@@ -348,9 +348,10 @@ class SchedulerService:
         from znuny_client import ZnunyClient
         from utils.browser import BrowserManager
 
-        # Clear portal browser references
-        portals_cleared = list(BaseExtractor._portal_browsers.keys())
-        BaseExtractor._portal_browsers.clear()
+        # Clear portal browser references (thread-safe)
+        with BaseExtractor._portal_browsers_lock:
+            portals_cleared = list(BaseExtractor._portal_browsers.keys())
+            BaseExtractor._portal_browsers.clear()
 
         # Clear extraction worker's thread-local Playwright
         # (this only works if called from the same thread, but we clear it anyway)
