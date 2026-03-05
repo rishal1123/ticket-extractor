@@ -30,12 +30,14 @@ class RateLimiter:
         self.requests: Dict[str, list] = defaultdict(list)
 
     def _cleanup_old_requests(self, client_id: str, window_seconds: int = 60):
-        """Remove requests older than the window."""
+        """Remove requests older than the window. Deletes empty entries to prevent unbounded growth."""
         current_time = time.time()
         self.requests[client_id] = [
             req_time for req_time in self.requests[client_id]
             if current_time - req_time < window_seconds
         ]
+        if not self.requests[client_id]:
+            del self.requests[client_id]
 
     def is_rate_limited(self, client_id: str) -> tuple[bool, Optional[int]]:
         """
@@ -45,9 +47,13 @@ class RateLimiter:
         current_time = time.time()
 
         # Cleanup old requests
-        self._cleanup_old_requests(client_id)
+        if client_id in self.requests:
+            self._cleanup_old_requests(client_id)
 
-        requests = self.requests[client_id]
+        requests = self.requests.get(client_id, [])
+
+        if not requests:
+            return False, None
 
         # Check per-second limit
         recent_second = [r for r in requests if current_time - r < 1]

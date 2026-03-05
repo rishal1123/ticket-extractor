@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from contextlib import contextmanager
@@ -42,7 +43,7 @@ def now_maldives() -> datetime:
 class Database:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or Config.DATABASE_PATH
-        self._logging_error = False  # Guard against infinite recursion
+        self._logging_lock = threading.Lock()  # Thread-safe guard against recursive logging
         self._init_db()
 
     def _log_db_error(self, operation: str, error: Exception, context: str = None):
@@ -53,14 +54,13 @@ class Database:
         logger.error(error_msg)
 
         # Try to log to system_logs table, but avoid infinite recursion
-        if not self._logging_error:
-            self._logging_error = True
+        if self._logging_lock.acquire(blocking=False):
             try:
                 self.log_system("error", "database", error_msg, context)
             except Exception:
                 pass  # Can't log to DB, already logged to file
             finally:
-                self._logging_error = False
+                self._logging_lock.release()
 
     @contextmanager
     def _get_connection(self):

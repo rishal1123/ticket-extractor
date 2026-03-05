@@ -893,6 +893,21 @@ class ZnunyClient:
             logger.error(f"Failed to parse zoom page for search: {e}")
             return []
 
+    def _evict_stale_cache(self):
+        """Remove expired and excess entries from the detail cache."""
+        now = time.time()
+        cutoff = now - CACHE_TTL_SECONDS
+        stale = [k for k, (_, ts) in self._ticket_details_cache.items() if ts < cutoff]
+        # Also enforce hard size limit (keep newest entries)
+        if len(self._ticket_details_cache) - len(stale) > MAX_DETAIL_CACHE_SIZE:
+            by_age = sorted(self._ticket_details_cache.items(), key=lambda x: x[1][1])
+            excess = len(self._ticket_details_cache) - len(stale) - MAX_DETAIL_CACHE_SIZE
+            stale.extend(k for k, _ in by_age[:excess] if k not in stale)
+        for k in stale:
+            self._ticket_details_cache.pop(k, None)
+        if stale:
+            logger.debug(f"Evicted {len(stale)} entries from detail cache (remaining: {len(self._ticket_details_cache)})")
+
     def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False,
                            bypass_cache: bool = False) -> ZnunyTicketDetails | None:
         """
@@ -909,6 +924,9 @@ class ZnunyClient:
             skip_body_fetch: If True, skip fetching article bodies entirely (fastest mode)
             bypass_cache: If True, skip TTL cache (still uses article-count check)
         """
+        # Periodically evict stale cache entries (runs on every call, not just writes)
+        self._evict_stale_cache()
+
         # Layer 1: TTL cache (fastest - no navigation needed, no lock needed)
         cached_details = None
         cached_max_article_num = -1
@@ -1266,20 +1284,6 @@ class ZnunyClient:
 
             # Cache the details
             self._ticket_details_cache[ticket_number] = (details, time.time())
-
-            # Evict stale cache entries every time to prevent unbounded memory growth
-            now = time.time()
-            cutoff = now - CACHE_TTL_SECONDS
-            stale = [k for k, (_, ts) in self._ticket_details_cache.items() if ts < cutoff]
-            # Also enforce hard size limit (keep newest entries)
-            if len(self._ticket_details_cache) - len(stale) > MAX_DETAIL_CACHE_SIZE:
-                by_age = sorted(self._ticket_details_cache.items(), key=lambda x: x[1][1])
-                excess = len(self._ticket_details_cache) - len(stale) - MAX_DETAIL_CACHE_SIZE
-                stale.extend(k for k, _ in by_age[:excess] if k not in stale)
-            for k in stale:
-                self._ticket_details_cache.pop(k, None)
-            if stale:
-                logger.debug(f"Evicted {len(stale)} entries from detail cache (remaining: {len(self._ticket_details_cache)})")
 
             return details
 
