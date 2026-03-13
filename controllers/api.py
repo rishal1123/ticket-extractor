@@ -641,5 +641,6 @@ def _ticket_to_dict(ticket) -> dict:
         "znuny_created_by": ticket.znuny_created_by,
         "znuny_address": ticket.znuny_address,
         "portal_url": _generate_portal_url(ticket),
-        "znuny_url": ticket.znuny_url
+        "znuny_url": ticket.znuny_url,
+        "time_to_create_minutes": ticket.time_to_create_minutes
     }
