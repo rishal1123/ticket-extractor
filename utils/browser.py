@@ -234,6 +234,33 @@ class BrowserManager:
             return element.text_content()
         return None
 
+    def is_cloudflare_challenge(self) -> bool:
+        """Return True if the current page is a Cloudflare challenge/CAPTCHA page."""
+        if not self.page:
+            return False
+        try:
+            title = self.page.title().lower()
+            if "just a moment" in title or "attention required" in title or "ddos-guard" in title:
+                return True
+            # Fallback: check for known CF DOM markers without fetching full HTML
+            for selector in ("div#cf-challenge-running", "#challenge-form", "#cf-hcaptcha-container"):
+                if self.page.query_selector(selector):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def inject_cookies(self, cookies: list) -> bool:
+        """Add a list of Playwright-format cookies into the current browser context."""
+        if not self._context or not cookies:
+            return False
+        try:
+            self._context.add_cookies(cookies)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to inject cookies: {e}")
+            return False
+
     def take_screenshot(self, filename: str):
         if self.page:
             self.page.screenshot(path=filename)

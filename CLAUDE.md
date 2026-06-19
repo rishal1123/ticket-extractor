@@ -15,7 +15,7 @@ Extractor/
 ├── dashboard.py         # Legacy entry point (deprecated, redirects to app.py)
 ├── database.py          # SQLite database operations (Repository, ~2970 lines)
 ├── config.py            # Configuration from DB + .env fallback + APP_VERSION
-├── znuny_client.py      # Playwright-based Znuny integration (~1400 lines)
+├── znuny_client.py      # Znuny integration via Generic Interface REST API (httpx)
 │
 ├── models/              # Data Models
 │   └── ticket.py        # Ticket dataclass with serialization
@@ -96,12 +96,12 @@ Extractor/
 
 ## Browser Technology
 
-**Playwright** (sync API) is used for all web scraping. Each portal gets its own Chromium instance with persistent browser contexts for session reuse.
+**Playwright** (sync API) is used for all ISP portal web scraping. Each portal gets its own Chromium instance with persistent browser contexts for session reuse. **Znuny** is no longer scraped — it is accessed through its Generic Interface REST API (`httpx`).
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | ISP Extractors | Playwright sync API | Per-portal persistent context in `data/browser_sessions/{portal}/` |
-| Znuny Client | Playwright sync API | Shared persistent context in `data/browser_sessions/znuny/` |
+| Znuny Client | Generic Interface REST API (httpx) | No browser; agent UserLogin+Password auth, self-signed cert (`verify=False`) |
 | Browser Manager | `utils/browser.py` | Thread-local Playwright instances, 1920x1080 viewport, asyncio monkeypatch |
 
 ### Playwright Asyncio Monkeypatch
@@ -113,7 +113,7 @@ Extractor/
 3. After a Playwright greenlet session crashes or isn't stopped cleanly, the stale "running" loop marker persists in the thread
 4. The monkeypatch intercepts at the exact point of failure, clearing `asyncio._set_running_loop(None)` right before Playwright checks
 
-This single global fix covers all call sites (BrowserManager, ZnunyClient, extractors) regardless of thread. `znuny_client.py` explicitly imports `utils.browser` to ensure the monkeypatch is applied before any `sync_playwright()` calls.
+This single global fix covers all Playwright call sites (BrowserManager, extractors) regardless of thread. (The Znuny client no longer uses Playwright — it calls the REST API via `httpx` — so it is unaffected by this.)
 
 **IMPORTANT:** Never call `pw.stop()` to shut down Playwright — it can hang forever if the browser was killed mid-operation. Instead, kill the Playwright driver process by PID using `psutil.Process(pid).kill()`. The driver PID is at `pw._impl_obj._connection._transport._proc.pid`.
 
@@ -325,7 +325,12 @@ All extractors inherit from `BaseExtractor` and implement:
 
 **Session persistence:** Playwright persistent browser contexts stored in `data/browser_sessions/{portal}/` survive browser restarts and memory resets.
 
-**Completion tracking:** When a ticket disappears from the portal, it's automatically marked as complete (with 3-cycle debounce for zero-ticket results). For Dhiraagu and Ooredoo, the system navigates to each ticket's detail page to capture final notes/comments before marking complete (via `fetch_completion_notes()` override).
+**Extract-once / no notes (load reduction):** ISP portals are only used for the *original* extraction of a ticket. The first time a ticket is seen, the extractor opens its detail page once to capture full fields (address/customer/account/type) — but **notes are never fetched**. On every later cycle, an already-known ticket (still active in the DB) is registered as present only: `base.run()` routes it to `Database.touch_tickets_seen()` (updates `updated_at`, no field overwrite) instead of re-opening its detail page. This avoids re-clicking every open ticket each cycle. Ongoing ticket updates (notes, status changes, articles) come from the Znuny sync, not the ISP portals.
+- `BaseExtractor.is_known_ticket(ticket_id)` — was the ticket active in the DB at run start? (set from `get_active_ticket_ids` before `extract_tickets()`).
+- `BaseExtractor.presence_ticket(ticket_id)` — minimal Ticket emitted for known tickets so they count as found (not completed) without a detail fetch.
+- Ooredoo no longer opens detail pages at all (its list rows already carry every kept field).
+
+**Completion tracking:** When a ticket disappears from the portal, it's automatically marked as complete (with 3-cycle debounce for zero-ticket results). `fetch_completion_notes()` is a no-op now (notes are not fetched from ISP portals).
 
 **Error recovery:** After 3 failed extraction attempts, session directory is cleared for a completely fresh start on the next cycle.
 
@@ -458,36 +463,47 @@ HTTP route handlers with dependency injection:
 
 ### 8. Znuny Integration (znuny_client.py)
 
-Uses Playwright to interact with Znuny web interface at `https://10.241.1.110`:
-- Searches tickets by title containing portal ticket ID
-- Fetches ticket details: creator, creation time, articles
+Calls the Znuny **Generic Interface REST API** (web service `GenericTicketConnectorREST`) at `https://10.241.1.110` using `httpx` (no browser). Auth: agent `UserLogin`+`Password` (`ZNUNY_USERNAME`/`ZNUNY_PASSWORD`) sent with every request; TLS verification disabled for the self-signed cert.
+
+Operations used (standard route mappings):
+- `POST /TicketSearch` → returns matching `TicketID`s (by `Title`, `Fulltext`, `Services`/`StateType`, `TicketNumber`)
+- `GET /Ticket/:TicketID` → full ticket + articles (`AllArticles=1`); ids are comma-joined to batch (chunks of 20)
+
+What it does:
+- Searches tickets by title containing the portal ticket ID (`Title=*id*`)
+- Fetches ticket details: creator, creation time, articles (with full bodies)
 - Extracts site visits from "OAN Site Visit Arranged" articles
-- Searches tickets by account number via Fulltext search + Preview view
-- 3-layer caching for optimized sync cycles
+- Searches tickets by account number via `Fulltext=*account*`
+- TTL + article-count caching for optimized sync cycles
+
+**Creator-name resolution:** the API returns the ticket/article creator as a numeric `CreateBy` id. Agent-authored articles (`SenderType=agent`) expose the staff member's display name in `From`, so a `{user_id: name}` map is harvested (class-level, persists across the sync) and used to resolve ticket/article creators. Owner login is the fallback when an id hasn't been seen yet.
+
+**Times:** the API returns timestamps in Znuny's system timezone (Indian/Maldives), parsed as `MALDIVES_TZ`.
 
 **Key Classes:**
-- `ZnunyClient` - Main client with class-level shared state (browser, caches persist across instances)
+- `ZnunyClient` - Main client with class-level shared HTTP session + caches (persist across instances)
 - `ZnunyArticle` - Article/note data structure (article_number, sender, via, subject, created_at, created_by, body)
 - `ZnunyTicketDetails` - Full ticket details with articles list (includes owner, state, queue, priority, total_article_count)
 - `SiteVisit` - Parsed site visit data (includes address, customer_name)
 - `ZnunyClientSync` - Backward compat wrapper
 
 **Key Methods:**
-- `get_open_tickets()` - Get open tickets from service view (cached 5 min)
-- `search_by_title()` - Search tickets by title in service view cache + search form fallback
+- `get_open_tickets()` - Open ISP-service tickets via `TicketSearch`+`TicketGet` (cached 6 min)
+- `search_by_title()` - Search tickets by title substring (`Title=*term*`)
 - `check_ticket_sync()` - Check if ISP ticket exists in Znuny
-- `get_ticket_details()` - 3-layer cached detail fetching
-- `search_closed_by_account()` - Search tickets by account via Fulltext search + Preview view
-- `_parse_zoom_page_for_search()` - Parse single ticket from zoom page (auto-redirect)
-- `extract_isp_ticket_id_from_title()` - Parse ISP portal/ticket_id from Znuny title
+- `get_ticket_details()` - Cached detail fetching (TTL + article-count check)
+- `search_closed_by_account()` - Search tickets (any state) by account via `Fulltext`
+- `extract_isp_ticket_id_from_title()` - Parse ISP portal/ticket_id from Znuny title (pure regex)
 - `get_site_visit_tickets()` - Get tickets with "site visit" in title
 
 **Class-level shared state** (persists across sync cycles):
-- `_shared_playwright`, `_shared_context`, `_shared_page` - Browser session
-- `_shared_logged_in`, `_shared_last_login_check` - Login state (60s verification TTL)
-- `_shared_open_tickets_cache`, `_shared_cache_timestamp` - Service view cache (5min TTL)
+- `_shared_http` - httpx client (connection reuse)
+- `_shared_open_tickets_cache`, `_shared_cache_timestamp` - Open-ticket cache (6min TTL)
 - `_shared_details_cache` - Per-ticket detail cache (max 200 entries)
-- `_page_lock` - RLock for thread-safe page operations
+- `_number_to_id_cache` - Ticket number → internal TicketID map
+- `_user_names` - Harvested user id → display-name map
+- `_page_lock` - RLock for thread-safe cache mutations
+- Legacy `_shared_playwright`/`_shared_context`/`_shared_page`/`_shared_logged_in` attrs are retained (always cleared/None) so the scheduler's browser-reset code keeps working unchanged.
 
 ### 9. Configuration (DB-stored)
 
@@ -644,6 +660,9 @@ docker compose restart
 - 2GB shared memory for Chromium stability
 - Health check with auto-restart on failure
 - Log rotation (10MB max, 3 files)
+- **FlareSolverr sidecar** (`ghcr.io/flaresolverr/flaresolverr`) for Cloudflare-protected portals (e.g. Dhiraagu); app is wired via `FLARESOLVERR_URL=http://flaresolverr:8191`
+- App start is gated on FlareSolverr being healthy (`depends_on: condition: service_healthy`); FlareSolverr healthcheck hits its root URL via `python -m urllib` (no curl/wget assumption)
+- `entrypoint.sh` runs the DB init/migration check (`Database()`) and fails fast before launching `app.py`
 
 ## Scheduler
 
@@ -677,20 +696,21 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - Portal: Filament (Laravel admin panel) at `https://afas.dhiraagu.com.mv`
 - Login: "Third Party" button → email/password form
 - Extraction: Table with pagination (`wire:click="nextPage"`)
-- Detail page: Click each row, extract from `[id='data.{field}']` selectors
-- Notes: Extracted from Filament relation manager table
+- Detail page: clicked once per **new** ticket only, to read `[id='data.{field}']` selectors (known tickets are presence-only, no click)
+- Notes: not fetched (updates come from Znuny)
 
 ### Ooredoo
 - Portal: CBS Middleware/FMS at `https://www.ooredoo.mv/webapps/FMS/public/tickets`
 - Login: Standard email/password form
-- Extraction: DataTables with "Show All" option (tries -1, 100, 50 entries)
-- Notes: Two-tab extraction (Comments tab + Ticket Feed tab)
+- Extraction: DataTables with "Show All" option (tries -1, 100, 50 entries); all kept fields come from the list row, so detail pages are never opened
+- Notes: not fetched (updates come from Znuny)
 
 ### ROL
 - Portal: Kayako helpdesk at `https://support.rol.net.mv/staff/index.php`
 - Login: Standard username/password with `expect_navigation()` context
 - Display ID (ROL250141) stored in `account` field, internal ID in `ticket_id`
 - **Important:** Uses `account` field for Znuny search
+- Detail page (for address) is opened once per **new** ticket only; notes not fetched
 - High timeout (30s) due to portal slowness
 
 ### Medianet
@@ -701,6 +721,7 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - Columns: New, Survey, Installation, etc. (Closed is skipped)
 - Higher memory limit: 1500 MB (vs 800 MB default)
 - Account # extracted from contact name parentheses via regex
+- Board cards carry only id+status; the detail page (everything else) is opened once per **new** ticket only. Known tickets are presence-only, so their fields are captured once at first sighting; notes not fetched
 
 ## Common Tasks
 
@@ -867,27 +888,24 @@ A site visit is marked as **completed** when any of these occur:
 
 The Znuny integration uses several optimization strategies:
 
-### Service View Fetching
-- Uses `AgentTicketService` with `ServiceID=1` to fetch all ISP tickets in a single view (replaces per-queue iteration)
-- Single page load with pagination instead of iterating 5+ queue pages
-- Finds all tickets across all queues that belong to the OAN service
+### Open-Ticket Fetching
+- `TicketSearch` with `Services=["OAN"]` + `StateType="Open"` returns all open ISP ticket ids
+- A single batched `TicketGet` (comma-separated ids, chunks of 20) returns title/state/queue/owner/priority for the whole set
+- Replaces the previous service-view page scrape
 
 ### TTL-Based Caching
-- **Cache TTL**: 5 minutes (configurable via `CACHE_TTL_SECONDS = 360`)
-- Open tickets list cached to avoid repeated service view fetches
+- **Cache TTL**: 6 minutes (configurable via `CACHE_TTL_SECONDS = 360`)
+- Open tickets list cached to avoid repeated `TicketSearch`/`TicketGet`
 - Ticket details cached per-ticket with TTL validation
-- Login verification cached for 60 seconds
+- Ticket number → TicketID resolution cached to skip redundant searches
 
-### 3-Layer Detail Fetching
-1. **TTL cache hit**: Return cached details instantly (no navigation)
-2. **Article count check**: Navigate to page, return cached if article count unchanged
-3. **Full parse**: Only when article count has changed
+### 2-Layer Detail Fetching
+1. **TTL cache hit**: Return cached details instantly (no request)
+2. **Article-count check**: `TicketGet` runs, but the cached object is reused if the max article number is unchanged (avoids rebuilding/re-parsing)
 
-### Selective Article Processing
-- Only clicks articles that need body content:
-  - Site visit articles (subject contains "site visit" or "preventative maintenance")
-  - First Phone article (for address extraction)
-- Other articles use basic info from table (no clicking needed)
+### Article Processing
+- `TicketGet` with `AllArticles=1` returns every article including full bodies in one call (no per-article clicking)
+- `via` derived from `CommunicationChannelID` (1=Email, 2=Phone, 3=Internal); address parsed from the first Phone article body
 - Articles stored for ALL Znuny tickets (not just ISP-linked) to enable change tracking
 
 ### Smart Skip Logic
@@ -902,16 +920,14 @@ The Znuny integration uses several optimization strategies:
 - **Step 1.5**: Check unchecked ISP tickets against Znuny open list + search form
 - **Step 1.7**: Account search for completed ISP tickets not found in Znuny (5 per cycle, 3-strike rejection)
 - **Step 1.6**: Handle closed tickets with pending site visits
-- **Step 2**: Process all open tickets (3-layer caching per ticket)
+- **Step 2**: Process all open tickets (2-layer caching per ticket)
 - **Step 3**: Mark closed Znuny tickets
 
 ### Account Search (Step 1.7)
-When ISP tickets disappear from the portal but weren't found in Znuny open tickets, searches Znuny tickets by account number using the dashboard Fulltext search:
-1. Navigate to Znuny dashboard, fill `#Fulltext` ("Any Search") field with account number
-2. Switch to Large/Preview view to get Created date from results
-3. Parse `li.MasterAction` items for ticket number, title, created time, and URL
-4. If single result, Znuny auto-redirects to zoom page — parsed via `_parse_zoom_page_for_search()`
-5. Match ISP ticket ID in Znuny ticket titles
+When ISP tickets disappear from the portal but weren't found in Znuny open tickets, searches Znuny tickets by account number via the REST API:
+1. `TicketSearch` with `Fulltext=*account*` (searches From/To/Cc/Subject/Body, any state)
+2. Batched `TicketGet` on the matches for title + `Created` time + URL
+3. Match the ISP ticket ID against result titles (with `extract_isp_ticket_id_from_title()` fallback)
 - **Rate limited**: 5 tickets per sync cycle
 - **3-strike rule**: After 3 failed searches, ticket is marked as "Rejected on Portal"
 - **Tracked by**: `znuny_search_count` column on tickets table

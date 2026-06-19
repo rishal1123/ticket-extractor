@@ -87,38 +87,6 @@ class OoredooExtractor(BaseExtractor):
             self.logger.warning(f"Error checking login status: {e}")
             return False
 
-    def fetch_completion_notes(self, missing_ticket_ids: set[str]) -> dict[str, str]:
-        """Fetch final notes for Ooredoo tickets before marking complete."""
-        if not missing_ticket_ids:
-            return {}
-
-        notes_map = {}
-
-        self.logger.info(f"Fetching completion notes for {len(missing_ticket_ids)} Ooredoo tickets")
-
-        for ticket_id in missing_ticket_ids:
-            try:
-                detail_url = self.TICKET_DETAIL_URL.format(ticket_id=ticket_id)
-                self.navigate_to(detail_url, timeout=10000)
-                time.sleep(2)
-
-                notes = self._extract_notes_from_detail_page()
-                if notes:
-                    notes_map[ticket_id] = notes
-                    self.logger.debug(f"Fetched completion notes for ticket {ticket_id}")
-            except Exception as e:
-                self.logger.warning(f"Failed to fetch notes for ticket {ticket_id}: {e}")
-                continue
-
-        # Navigate back to tickets page to leave browser in clean state
-        try:
-            self.navigate_to(self.TICKETS_URL)
-            time.sleep(1)
-        except Exception:
-            pass
-
-        return notes_map
-
     def login(self) -> bool:
         self.logger.info(f"Logging into Ooredoo portal: {self.config.url}")
 
@@ -258,43 +226,24 @@ class OoredooExtractor(BaseExtractor):
                     if not ticket_data or not ticket_data.get('ticket_id'):
                         continue
 
-                    self.logger.info(f"Processing ticket {row_idx + 1}/{row_count}: {ticket_data['ticket_id']}")
+                    ticket_id = ticket_data['ticket_id']
 
-                    # Click on the ticket to open detail page
-                    cells = row.query_selector_all("td")
-                    ticket_link = cells[self.COL_TICKET_ID].query_selector_all("a")
+                    # Known ticket: register presence only, no detail navigation.
+                    # The row already carries every field we keep; notes are never
+                    # fetched (ticket updates come from Znuny).
+                    if self.is_known_ticket(ticket_id):
+                        tickets.append(self.presence_ticket(ticket_id))
+                        continue
 
-                    if ticket_link:
-                        ticket_link[0].click()
-                        time.sleep(2)
+                    self.logger.info(f"Processing new ticket {row_idx + 1}/{row_count}: {ticket_id}")
 
-                        # Extract notes from detail page
-                        notes = self._extract_notes_from_detail_page()
-
-                        # Build the ticket with notes
-                        ticket = self._build_ticket(ticket_data, notes)
-                        if ticket:
-                            tickets.append(ticket)
-
-                        # Navigate back to tickets list
-                        self.navigate_to(self.TICKETS_URL)
-                        time.sleep(2)
-                        self._wait_for_datatable()
-                    else:
-                        # No link, just create ticket without detail notes
-                        ticket = self._build_ticket(ticket_data, None)
-                        if ticket:
-                            tickets.append(ticket)
+                    # New ticket: build entirely from the row (no detail click, no notes).
+                    ticket = self._build_ticket(ticket_data, None)
+                    if ticket:
+                        tickets.append(ticket)
 
                 except Exception as e:
                     self.logger.warning(f"Error processing row {row_idx}: {e}")
-                    # Try to navigate back to tickets page
-                    try:
-                        self.navigate_to(self.TICKETS_URL)
-                        time.sleep(2)
-                        self._wait_for_datatable()
-                    except Exception:
-                        pass
                     continue
 
         except Exception as e:

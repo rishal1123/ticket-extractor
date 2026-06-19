@@ -13,6 +13,10 @@ services:
       - DASHBOARD_PORT=8000
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/tickets.db
+      - FLARESOLVERR_URL=http://flaresolverr:8191
+    depends_on:
+      flaresolverr:
+        condition: service_healthy
     restart: unless-stopped
     shm_size: '2gb'
     healthcheck:
@@ -26,6 +30,29 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Indian/Maldives
+    ports:
+      - "8191:8191"
+    restart: unless-stopped
+    healthcheck:
+      # FlareSolverr is Python-based, so use urllib (no curl/wget assumption).
+      # Root "/" returns 200 once the solver is ready.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8191/', timeout=5)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
 volumes:
   extractor_data:

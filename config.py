@@ -91,6 +91,11 @@ class Config:
     def get_znuny_sync_interval(cls) -> int:
         return int(_get("ZNUNY_SYNC_INTERVAL_MINUTES", "3"))
 
+    @classmethod
+    def get_flaresolverr_url(cls) -> str:
+        """Return FlareSolverr base URL, or empty string if not configured."""
+        return os.getenv("FLARESOLVERR_URL", "")
+
     # Portal URLs for template links
     @classmethod
     def get_portal_urls(cls) -> dict:

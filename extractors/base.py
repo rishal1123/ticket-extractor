@@ -8,10 +8,11 @@ import psutil
 
 from playwright.sync_api import Error as PlaywrightError
 
-from config import PortalConfig
+from config import PortalConfig, Config
 from models.ticket import Ticket
 from database import Database
 from utils.browser import BrowserManager
+from utils.flaresolverr import FlareSolverrClient
 from utils.logger import get_logger
 
 # Default memory threshold in MB - subclasses can override via MEMORY_LIMIT_MB
@@ -37,6 +38,11 @@ class BaseExtractor(ABC):
         self.headless = headless
         self.browser: Optional[BrowserManager] = None
         self.logger = get_logger(f"extractor.{config.name}")
+        # Ticket IDs already active in the DB at the start of the current run.
+        # Extractors use this to skip detail-page navigation for known tickets
+        # (only newly-seen tickets get a full extraction; notes are never fetched —
+        # ticket updates come from Znuny). Populated in run() before extract_tickets().
+        self._known_ticket_ids: set[str] = set()
 
     @abstractmethod
     def login(self) -> bool:
@@ -65,6 +71,24 @@ class BaseExtractor(ABC):
         Override in subclass to implement portal-specific check.
         """
         return False
+
+    def is_known_ticket(self, ticket_id: str) -> bool:
+        """Return True if this ticket_id was already active in the DB at run start.
+
+        Extractors should skip per-ticket detail-page navigation for known tickets
+        and just register their presence (so they are not marked complete). Only
+        newly-seen tickets warrant a full detail extraction.
+        """
+        return ticket_id in self._known_ticket_ids
+
+    def presence_ticket(self, ticket_id: str) -> "Ticket":
+        """Build a minimal Ticket that only marks a known ticket as still present.
+
+        Returned for already-known tickets so they count as found (not completed)
+        without triggering a detail-page fetch. base.run() routes these to a
+        presence-only DB touch, so the empty fields never overwrite stored data.
+        """
+        return Ticket(portal=self.config.name, ticket_id=ticket_id)
 
     def fetch_completion_notes(self, missing_ticket_ids: set[str]) -> dict[str, str]:
         """Fetch final notes/comments for tickets about to be marked complete.
@@ -206,8 +230,10 @@ class BaseExtractor(ABC):
             try:
                 self.logger.info(f"Starting extraction (attempt {attempt + 1}/{max_retries})")
 
-                # Get current active ticket IDs before extraction (for completion tracking)
+                # Get current active ticket IDs before extraction (for completion tracking).
+                # Also used by extractors to skip detail-page navigation for known tickets.
                 existing_ticket_ids = self.db.get_active_ticket_ids(self.config.name)
+                self._known_ticket_ids = existing_ticket_ids
 
                 # Get or create browser (reuses existing session if available)
                 self.browser = self._get_or_create_browser()
@@ -227,14 +253,26 @@ class BaseExtractor(ABC):
                 # Track found ticket IDs
                 found_ticket_ids = set()
 
-                # Save tickets to database
+                # Save tickets to database.
+                # New tickets get a full upsert; tickets already known at run start are
+                # registered as present only (updated_at touch, no field overwrite) so
+                # their data isn't clobbered by deliberately-thin re-extraction — their
+                # updates come from Znuny instead.
+                present_known_ids = []
                 for ticket in tickets:
                     found_ticket_ids.add(ticket.ticket_id)
+                    if ticket.ticket_id in self._known_ticket_ids:
+                        present_known_ids.append(ticket.ticket_id)
+                        continue
                     ticket_id, is_new, is_updated = self.db.upsert_ticket(ticket)
                     if is_new:
                         result["tickets_new"] += 1
                     elif is_updated:
                         result["tickets_updated"] += 1
+
+                if present_known_ids:
+                    touched = self.db.touch_tickets_seen(self.config.name, present_known_ids)
+                    self.logger.info(f"Registered presence of {touched} known tickets (no re-extraction)")
 
                 # Mark missing tickets as complete
                 portal_name = self.config.name
@@ -364,6 +402,42 @@ class BaseExtractor(ABC):
         if wait_until is not None:
             kwargs["wait_until"] = wait_until
         self.browser.page.goto(url, **kwargs)
+        # Transparently bypass Cloudflare challenges when FlareSolverr is configured
+        if self.browser.is_cloudflare_challenge():
+            self._solve_cloudflare(url, kwargs)
+
+    def _solve_cloudflare(self, url: str, goto_kwargs: dict):
+        """Use FlareSolverr to bypass a Cloudflare challenge on the current page."""
+        flaresolverr_url = Config.get_flaresolverr_url()
+        if not flaresolverr_url:
+            self.logger.warning(f"Cloudflare challenge detected on {url} but FLARESOLVERR_URL is not configured")
+            return
+
+        self.logger.info(f"Cloudflare challenge detected — asking FlareSolverr to solve {url}")
+        self.db.log_system("info", f"extractor.{self.config.name}", f"Cloudflare challenge on {url}, calling FlareSolverr")
+
+        client = FlareSolverrClient(flaresolverr_url)
+        result = client.solve(url)
+        if not result:
+            self.logger.warning("FlareSolverr could not solve the challenge")
+            self.db.log_system("warning", f"extractor.{self.config.name}", f"FlareSolverr failed to solve {url}")
+            return
+
+        injected = self.browser.inject_cookies(result["cookies"])
+        if not injected:
+            self.logger.warning("Cookie injection failed after FlareSolverr solve")
+            return
+
+        # Retry the navigation with the new cookies in place
+        self.logger.info("Cookies injected — retrying navigation")
+        self.browser.page.goto(url, **goto_kwargs)
+
+        if self.browser.is_cloudflare_challenge():
+            self.logger.warning("Cloudflare challenge persists after FlareSolverr solve — may need same IP as FlareSolverr")
+            self.db.log_system("warning", f"extractor.{self.config.name}", f"Cloudflare challenge persists on {url} after cookie injection")
+        else:
+            self.logger.info("Cloudflare challenge bypassed successfully")
+            self.db.log_system("info", f"extractor.{self.config.name}", f"Cloudflare challenge bypassed on {url}")
 
     def wait_and_click(self, selector: str, timeout: int = 10) -> bool:
         """Wait for element and click it."""

@@ -265,7 +265,15 @@ class MedianetExtractor(BaseExtractor):
                                 self.logger.debug(f"Skipping duplicate ticket: {ticket_id}")
                                 continue
 
-                            self.logger.info(f"Processing ticket {i+1}/{len(ticket_cards)}: {ticket_id}")
+                            # Known ticket: register presence only. The board card has
+                            # nothing beyond id+status, but we deliberately skip the
+                            # detail-page click to cut load — updates come from Znuny.
+                            if self.is_known_ticket(ticket_id):
+                                all_tickets.append(self.presence_ticket(ticket_id))
+                                seen_ticket_ids.add(ticket_id)
+                                continue
+
+                            self.logger.info(f"Processing new ticket {i+1}/{len(ticket_cards)}: {ticket_id}")
                             ticket = self._extract_ticket_details(card_info)
                             if ticket:
                                 all_tickets.append(ticket)
@@ -464,9 +472,6 @@ class MedianetExtractor(BaseExtractor):
                     account_number = match.group(1)
                 contact_name = contact_name_raw.split('(')[0].strip()
 
-            phone = self._get_element_text(self.CONTACT_PHONE_SELECTOR)
-            email = self._get_element_text(self.CONTACT_EMAIL_SELECTOR)
-
             # Address - combine all parts
             address_badge = self._get_element_text(self.CONTACT_ADDRESS_BADGE_SELECTOR) or ""  # HOME/WORK
             address_name = self._get_element_text(self.CONTACT_ADDRESS_NAME_SELECTOR) or ""
@@ -493,9 +498,6 @@ class MedianetExtractor(BaseExtractor):
                 elif location not in address:
                     address = f"{address} | Where: {location}"
 
-            # Description (notes/description field)
-            description = self._get_element_text(self.DESCRIPTION_SELECTOR)
-
             # Team
             team = self._get_element_text(self.TEAM_SELECTOR)
 
@@ -521,30 +523,11 @@ class MedianetExtractor(BaseExtractor):
                 is_completed = True
                 completed_at = ticket_time  # Use close date as completion time
 
-            # Notes from Notes card
-            notes = self._extract_notes()
+            # Notes are intentionally not collected (updates come from Znuny)
+            notes = None
 
-            # If description exists and no notes, use description as notes
-            if description and not notes:
-                notes = description
-            elif description and notes:
-                notes = f"Description: {description}\n---\n{notes}"
-
-            # Use extracted account number, append phone/email to notes if present
+            # Use extracted account number
             account = account_number
-
-            # Add contact info to notes if available
-            contact_info_parts = []
-            if phone:
-                contact_info_parts.append(f"Phone: +960 {phone}")
-            if email:
-                contact_info_parts.append(f"Email: {email}")
-            if contact_info_parts:
-                contact_info = " | ".join(contact_info_parts)
-                if notes:
-                    notes = f"{notes}\n---\nContact: {contact_info}"
-                else:
-                    notes = f"Contact: {contact_info}"
 
             return Ticket(
                 portal="medianet",

@@ -226,13 +226,15 @@ class ROLExtractor(BaseExtractor):
             # Parse date
             ticket_time = self._parse_date(date_text)
 
-            # Get ticket detail for notes and address
+            # Address comes from the detail page, which we only open for NEW tickets.
+            # Known tickets register presence from the grid row alone (no navigation);
+            # notes are never fetched (updates come from Znuny).
             notes = None
             address = None
 
-            if internal_id:
-                self.logger.info(f"Getting details for ticket {display_id} (ID: {internal_id})")
-                notes, address = self._get_ticket_details(internal_id)
+            if internal_id and not self.is_known_ticket(internal_id):
+                self.logger.info(f"Getting address for new ticket {display_id} (ID: {internal_id})")
+                _, address = self._get_ticket_details(internal_id)
 
             return Ticket(
                 portal="rol",

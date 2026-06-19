@@ -954,6 +954,24 @@ class Database:
             )
             return {row["ticket_id"] for row in cursor.fetchall()}
 
+    def touch_tickets_seen(self, portal: str, ticket_ids: list[str]) -> int:
+        """Presence-only update: refresh updated_at for tickets still on the portal.
+
+        Does NOT overwrite any other fields. Used when we deliberately skip
+        re-extracting already-known tickets to reduce portal load (their content
+        updates come from Znuny instead). Returns number of rows touched.
+        """
+        if not ticket_ids:
+            return 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" * len(ticket_ids))
+            cursor.execute(
+                f"UPDATE tickets SET updated_at = ? WHERE portal = ? AND ticket_id IN ({placeholders})",
+                [now_maldives(), portal, *ticket_ids]
+            )
+            return cursor.rowcount
+
     def get_portal_urls_for_tickets(self, portal: str, ticket_ids: list[str]) -> dict[str, str]:
         """Get portal_url for given ticket IDs. Returns {ticket_id: portal_url}."""
         if not ticket_ids:

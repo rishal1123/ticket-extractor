@@ -52,7 +52,7 @@ ticket-extractor/
 ├── app.py                 # Main entry point (FastAPI)
 ├── config.py              # Configuration from .env
 ├── database.py            # SQLite database operations
-├── znuny_client.py        # Selenium-based Znuny client
+├── znuny_client.py        # Znuny client (Generic Interface REST API via httpx)
 │
 ├── controllers/           # HTTP route handlers
 │   ├── pages.py           # HTML page routes
