@@ -539,6 +539,10 @@ class ZnunyService:
             # Derive remaining pending visit IDs from Step 1.6 (no extra DB query needed)
             all_pending_visit_ids = pending_visit_ids - closed_with_pending
 
+            # Warm the per-ticket details cache in a few batched TicketGet calls so the
+            # Step 2 loop below is served from cache instead of one request per ticket.
+            self.znuny_client.prefetch_open_ticket_details()
+
             # Step 2: Process all open tickets (queue view data is embedded in ticket_info)
             for ticket_idx, ticket_info in enumerate(all_tickets, 1):
                 try:

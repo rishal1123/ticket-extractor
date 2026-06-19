@@ -587,49 +587,85 @@ class ZnunyClient:
                            bypass_cache: bool = False) -> ZnunyTicketDetails | None:
         """Fetch detailed information about a Znuny ticket.
 
-        Two cache layers:
-        1. TTL cache: return cached details within CACHE_TTL_SECONDS (no request)
-        2. Article-count check: fetch, but return cached object if the max article
-           number is unchanged (avoids rebuilding/re-parsing)
+        TTL-cached: within CACHE_TTL_SECONDS a cached copy is returned with no
+        request, unless bypass_cache is set. prefetch_open_ticket_details() can
+        warm this cache for all open tickets in a few batched calls.
 
         Args:
             ticket_number: The Znuny ticket number
             skip_body_fetch: If True, article bodies are left empty (faster, less data)
-            bypass_cache: If True, skip the TTL cache (still uses article-count check)
+            bypass_cache: If True, skip the TTL cache and always re-fetch
         """
         self._evict_stale_cache()
 
-        # Layer 1: TTL cache
-        cached_details = None
-        cached_max_article_num = -1
-        if ticket_number in self._ticket_details_cache:
-            cached_details, cache_time = self._ticket_details_cache[ticket_number]
-            cached_max_article_num = max((a.article_number for a in cached_details.articles), default=0)
-            if not bypass_cache and time.time() - cache_time < CACHE_TTL_SECONDS:
+        if not bypass_cache:
+            cached = self._ticket_details_cache.get(ticket_number)
+            if cached and time.time() - cached[1] < CACHE_TTL_SECONDS:
                 logger.debug(f"Using cached details for ticket {ticket_number}")
-                return cached_details
+                return cached[0]
 
         with ZnunyClient._page_lock:
-            return self._fetch_ticket_details(
-                ticket_number, skip_body_fetch, cached_details, cached_max_article_num
-            )
+            ticket_id = self._resolve_ticket_id(ticket_number)
+            if not ticket_id:
+                logger.warning(f"Ticket {ticket_number} could not be resolved to a TicketID")
+                return None
+            tickets = self._ticket_get([ticket_id], with_articles=True)
+            if not tickets:
+                logger.warning(f"Ticket {ticket_number}: TicketGet returned nothing")
+                return None
+            t = tickets[0]
+            self._harvest_user_names(t)
+            return self._build_details_from_ticket(ticket_number, ticket_id, t, skip_body_fetch)
 
-    def _fetch_ticket_details(self, ticket_number: str, skip_body_fetch: bool,
-                              cached_details, cached_max_article_num: int) -> ZnunyTicketDetails | None:
-        ticket_id = self._resolve_ticket_id(ticket_number)
-        if not ticket_id:
-            logger.warning(f"Ticket {ticket_number} could not be resolved to a TicketID")
-            return None
+    def prefetch_open_ticket_details(self) -> int:
+        """Batch-refresh details for open tickets whose cache entry is missing/expired.
 
-        tickets = self._ticket_get([ticket_id], with_articles=True)
-        if not tickets:
-            logger.warning(f"Ticket {ticket_number}: TicketGet returned nothing")
-            return None
-        t = tickets[0]
+        Collapses the per-ticket TicketGet calls the sync makes in Step 2 into a
+        few batched TicketGet calls (chunks of TICKETGET_BATCH_SIZE). Tickets that
+        still have a valid TTL cache entry are skipped, so total data volume is
+        unchanged — only the number of round-trips drops. Returns count fetched.
+        """
+        self._evict_stale_cache()
+        open_tickets = self.get_open_tickets()
+        if not open_tickets:
+            return 0
 
-        # Harvest agent display names from this ticket's articles before resolving
-        self._harvest_user_names(t)
+        now = time.time()
+        # {ticket_id: ticket_number} for open tickets that need a (re)fetch
+        to_fetch: dict[str, str] = {}
+        for summary in open_tickets:
+            number = summary["ticket_number"]
+            cached = self._ticket_details_cache.get(number)
+            if cached and now - cached[1] < CACHE_TTL_SECONDS:
+                continue
+            tid = ZnunyClient._number_to_id_cache.get(number)
+            if tid:
+                to_fetch[tid] = number
 
+        if not to_fetch:
+            return 0
+
+        with ZnunyClient._page_lock:
+            tickets = self._ticket_get(list(to_fetch.keys()), with_articles=True)
+            # Harvest names across the whole batch first, so a ticket created by an
+            # agent who only appears in another ticket's article still resolves.
+            for t in tickets:
+                self._harvest_user_names(t)
+            for t in tickets:
+                number = str(t.get("TicketNumber", ""))
+                if number:
+                    self._build_details_from_ticket(number, str(t.get("TicketID", "")), t,
+                                                    skip_body_fetch=False)
+        logger.info(f"Prefetched details for {len(tickets)} open tickets ({len(to_fetch)} stale, batched)")
+        return len(tickets)
+
+    def _build_details_from_ticket(self, ticket_number: str, ticket_id: str, t: dict,
+                                   skip_body_fetch: bool) -> ZnunyTicketDetails:
+        """Build (and cache) a ZnunyTicketDetails from a TicketGet ticket dict.
+
+        Assumes agent display names have already been harvested from `t` (and,
+        ideally, from the rest of the same batch) via _harvest_user_names().
+        """
         znuny_url = self._zoom_url(ticket_id)
         created_at_str = t.get("Created") or ""
         created_at = _parse_dt(created_at_str)
@@ -641,16 +677,6 @@ class ZnunyClient:
 
         raw_articles = t.get("Article") or []
         total_on_page = len(raw_articles)
-        current_max_num = max((int(a.get("ArticleNumber", 0)) for a in raw_articles), default=0)
-
-        # Layer 2: article-count check
-        if cached_details and current_max_num == cached_max_article_num and current_max_num >= 0:
-            logger.debug(f"Ticket {ticket_number}: max article #{current_max_num} unchanged, using cache")
-            self._ticket_details_cache[ticket_number] = (cached_details, time.time())
-            return cached_details
-
-        if cached_max_article_num >= 0 and current_max_num != cached_max_article_num:
-            logger.info(f"Ticket {ticket_number}: new articles (max #{cached_max_article_num} -> #{current_max_num})")
 
         articles: list[ZnunyArticle] = []
         for a in raw_articles:
