@@ -495,25 +495,41 @@ class ZnunyClient:
         ZnunyClient._shared_last_login_check = 0
 
     def search_by_title(self, search_term: str) -> list[dict]:
-        """Find tickets whose title contains search_term (any state).
+        """Find tickets whose title contains search_term.
+
+        Checks the cached open-ticket list first (zero requests for tickets that
+        are currently open — the common case during sync), then falls back to a
+        server-side TicketSearch by title for anything else (closed tickets or
+        other services).
 
         Returns list of dicts with ticket_number, title, href, state, queue,
         owner, priority.
         """
+        search_lower = search_term.lower()
+
+        # 1) Serve from the already-loaded open-ticket cache when possible.
+        cached_matches = [
+            t for t in self.get_open_tickets()
+            if search_lower in t.get("title", "").lower()
+        ]
+        if cached_matches:
+            logger.info(f"Znuny search for '{search_term}': {len(cached_matches)} in open cache")
+            return cached_matches
+
+        # 2) Fall back to a server-side title search (any state / other services).
         ids = self._ticket_search(Title=f"*{search_term}*")
         if not ids:
             logger.info(f"Znuny search for '{search_term}': not found")
             return []
 
         tickets = self._ticket_get(ids, with_articles=False)
-        search_lower = search_term.lower()
         matching = [
             self._ticket_to_summary(t)
             for t in tickets
             if search_lower in (t.get("Title") or "").lower()
         ]
         if matching:
-            logger.info(f"Znuny search for '{search_term}': found {len(matching)} tickets")
+            logger.info(f"Znuny search for '{search_term}': found {len(matching)} via TicketSearch")
         else:
             logger.info(f"Znuny search for '{search_term}': {len(ids)} candidates but no title match")
         return matching
