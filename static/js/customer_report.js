@@ -109,13 +109,13 @@
     html += `<div class="table-container mb-3"><h6 class="mb-2"><i class="bi bi-people me-1"></i>Tickets by Customer Group</h6>
       <div class="table-responsive"><table class="table table-sm mb-0" style="max-width:520px"><thead class="table-light"><tr><th>Group</th><th class="text-end">Tickets</th><th class="text-end">Customers</th></tr></thead><tbody>${grows}</tbody></table></div></div>`;
 
-    // User performance
+    // User performance (Total = Tickets Created + Notes Written)
     const ul = Array.from(users.entries()).map((e) => ({ n: e[0], o: e[1] }));
-    ul.sort((a, b) => b.o.c - a.o.c || b.o.nt - a.o.nt || b.o.t.size - a.o.t.size);
-    const urows = ul.map((u) => `<tr><td>${esc(u.n)}</td><td class="text-end">${u.o.c}</td><td class="text-end">${u.o.nt}</td><td class="text-end">${u.o.t.size}</td></tr>`).join('')
+    ul.sort((a, b) => (b.o.c + b.o.nt) - (a.o.c + a.o.nt) || b.o.c - a.o.c);
+    const urows = ul.map((u) => `<tr><td>${esc(u.n)}</td><td class="text-end">${u.o.c}</td><td class="text-end">${u.o.nt}</td><td class="text-end fw-bold">${u.o.c + u.o.nt}</td></tr>`).join('')
       || '<tr><td colspan="4" class="text-muted">No users.</td></tr>';
     html += `<div class="table-container mb-3"><h6 class="mb-2"><i class="bi bi-person-badge me-1"></i>User Performance — Ticket &amp; Note Volume</h6>
-      <div class="table-responsive" style="max-height:420px;overflow:auto"><table class="table table-sm table-hover mb-0"><thead class="table-light sticky-top"><tr><th>User</th><th class="text-end">Tickets Created</th><th class="text-end">Notes Written</th><th class="text-end">Unique Tickets</th></tr></thead><tbody>${urows}</tbody></table></div></div>`;
+      <div class="table-responsive" style="max-height:420px;overflow:auto"><table class="table table-sm table-hover mb-0"><thead class="table-light sticky-top"><tr><th>User</th><th class="text-end">Tickets Created</th><th class="text-end">Notes Written</th><th class="text-end" title="Tickets Created + Notes Written">Total</th></tr></thead><tbody>${urows}</tbody></table></div></div>`;
 
     // Matrices
     html += '<div class="row g-3"><div class="col-12 col-xl-6">'

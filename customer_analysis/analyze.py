@@ -484,12 +484,12 @@ _PAGE_TEMPLATE = r"""<!DOCTYPE html>
   <ul class="legend">
     <li><strong>Tickets Created</strong> &mdash; tickets where this user is the original creator.</li>
     <li><strong>Notes Written</strong> &mdash; total agent articles/notes authored by this user.</li>
-    <li><strong>Unique Tickets Touched</strong> &mdash; distinct tickets this user created and/or noted on.</li>
+    <li><strong>Total</strong> &mdash; Tickets Created + Notes Written (overall activity for the staff member).</li>
   </ul>
   <table>
     <thead><tr>
       <th>User</th><th class="num">Tickets Created</th>
-      <th class="num">Notes Written</th><th class="num">Unique Tickets Touched</th>
+      <th class="num">Notes Written</th><th class="num">Total</th>
     </tr></thead>
     <tbody id="userBody"></tbody>
   </table>
@@ -626,10 +626,10 @@ function recompute(){
   document.getElementById('grpBody').innerHTML = grpRows;
 
   const ulist = Array.from(users.entries()).map(e=>({n:e[0], o:e[1]}));
-  ulist.sort((a,b)=> b.o.created-a.o.created || b.o.notes-a.o.notes || b.o.touched.size-a.o.touched.size);
+  ulist.sort((a,b)=> (b.o.created+b.o.notes)-(a.o.created+a.o.notes) || b.o.created-a.o.created);
   document.getElementById('userBody').innerHTML = ulist.map(u=>
     "<tr><td>"+esc(u.n)+"</td><td class='num'>"+u.o.created+"</td><td class='num'>"+u.o.notes+
-    "</td><td class='num'>"+u.o.touched.size+"</td></tr>").join('')
+    "</td><td class='num total'>"+(u.o.created+u.o.notes)+"</td></tr>").join('')
     || "<tr><td colspan='4'>No users found.</td></tr>";
 
   document.getElementById('matrices').innerHTML =
