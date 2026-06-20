@@ -513,6 +513,84 @@ async def export_tickets_csv(
     )
 
 
+# Customer performance report (UD-/DH-) - generated on a schedule or on demand
+@router.get("/reports/customer-performance/status")
+@handle_errors("get customer report status")
+async def customer_report_status():
+    """Status of the UD-/DH- customer performance report (exists, generated_at, generating)."""
+    from services.customer_report_service import CustomerReportService
+    return CustomerReportService.status()
+
+
+@router.post("/reports/customer-performance/generate")
+@handle_errors("generate customer report")
+async def customer_report_generate(request: Request):
+    """Trigger an on-demand regeneration (runs in the background).
+
+    Optional JSON body: {"prefixes": ["MPL-", "CREEKVIEW-"]}. When given, the
+    prefixes are persisted and reused by the daily job; otherwise the currently
+    configured prefixes are used.
+    """
+    from services.customer_report_service import CustomerReportService
+    prefixes = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and body.get("prefixes"):
+            prefixes = body["prefixes"]
+            if isinstance(prefixes, str):
+                prefixes = prefixes.split(",")
+    except Exception:
+        pass  # no/invalid body -> use configured prefixes
+    started = CustomerReportService.start_generation(prefixes)
+    return {
+        "started": started,
+        "generating": CustomerReportService.is_generating(),
+        "prefixes": CustomerReportService.get_prefixes(),
+    }
+
+
+@router.get("/reports/customer-performance/data")
+@handle_errors("get customer report data")
+async def customer_report_data():
+    """Return the generated report dataset ({generated_at, prefixes, records}) for native rendering."""
+    from services.customer_report_service import CustomerReportService
+    data = CustomerReportService.get_data()
+    if data is None:
+        return JSONResponse(content={"generated_at": None, "prefixes": [], "records": []})
+    return JSONResponse(content=data)
+
+
+@router.get("/reports/customer-performance/presets")
+@handle_errors("list customer report presets")
+async def customer_report_presets():
+    """List saved report presets."""
+    from services.customer_report_service import CustomerReportService
+    return {"presets": CustomerReportService.get_presets()}
+
+
+@router.post("/reports/customer-performance/presets")
+@handle_errors("save customer report preset")
+async def customer_report_save_preset(request: Request):
+    """Create/update a preset. Body: {name, prefixes, date_from?, date_to?}."""
+    from services.customer_report_service import CustomerReportService
+    body = await request.json()
+    presets = CustomerReportService.save_preset(
+        name=body.get("name", ""),
+        prefixes=body.get("prefixes", []),
+        date_from=body.get("date_from", ""),
+        date_to=body.get("date_to", ""),
+    )
+    return {"presets": presets}
+
+
+@router.delete("/reports/customer-performance/presets/{name}")
+@handle_errors("delete customer report preset")
+async def customer_report_delete_preset(name: str):
+    """Delete a preset by name."""
+    from services.customer_report_service import CustomerReportService
+    return {"presets": CustomerReportService.delete_preset(name)}
+
+
 # Extraction logs endpoint
 @router.get("/extraction-logs")
 @handle_errors("get extraction logs")

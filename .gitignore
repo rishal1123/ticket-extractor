@@ -45,6 +45,11 @@ env/
 # Browser session data (Playwright persistent contexts)
 data/browser_sessions/
 
+# Generated customer performance report artifacts
+data/customer_performance_report.html
+data/customer_report_data.json
+customer_analysis/*.html
+
 # Screenshots
 screenshots/
 

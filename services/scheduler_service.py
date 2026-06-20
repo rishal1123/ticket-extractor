@@ -302,6 +302,17 @@ class SchedulerService:
                 pass
         logger.info("Znuny sync worker thread stopped")
 
+    def _generate_customer_report(self):
+        """Trigger a (background) regeneration of the customer performance report."""
+        try:
+            from services.customer_report_service import CustomerReportService
+            if CustomerReportService.start_generation():
+                logger.info("Customer report generation triggered")
+            else:
+                logger.info("Customer report already generating - skipped")
+        except Exception as e:
+            logger.error(f"Failed to trigger customer report: {e}")
+
     def _cleanup_old_logs(self):
         """Delete logs older than 2 days from all log tables."""
         try:
@@ -475,6 +486,15 @@ class SchedulerService:
         # Clean up old logs on startup and daily
         self._cleanup_old_logs()
         schedule.every().day.at("00:00").do(self._cleanup_old_logs)
+
+        # Customer performance report: regenerate daily, and once on startup if missing
+        schedule.every().day.at("01:00").do(self._generate_customer_report)
+        try:
+            from services.customer_report_service import CustomerReportService
+            if not CustomerReportService.report_exists():
+                self._generate_customer_report()
+        except Exception as e:
+            logger.error(f"Startup customer report check failed: {e}")
 
         # Schedule periodic jobs (just signal the persistent workers)
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)

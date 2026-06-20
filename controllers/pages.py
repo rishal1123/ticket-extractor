@@ -89,6 +89,30 @@ async def reports_page(request: Request):
     )
 
 
+@router.get("/customer-report", response_class=HTMLResponse)
+async def customer_report_page(request: Request):
+    """Render the customer performance report page (its own tab)."""
+    return templates.TemplateResponse(
+        "customer_report.html",
+        {"request": request, "active_page": "customer-report"}
+    )
+
+
+@router.get("/reports/customer-performance", response_class=HTMLResponse)
+async def customer_performance_report_view(request: Request):
+    """Serve the generated UD-/DH- customer performance report HTML (for the iframe)."""
+    from services.customer_report_service import CustomerReportService
+    html = CustomerReportService.get_html()
+    if html is None:
+        return HTMLResponse(
+            "<!doctype html><body style='font-family:-apple-system,Segoe UI,sans-serif;"
+            "padding:32px;color:#555'>The customer performance report has not been generated "
+            "yet. Use the <b>Generate Now</b> button on the Reports page (it takes 1-2 minutes)."
+            "</body>"
+        )
+    return HTMLResponse(html)
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     """Render the admin panel page."""
