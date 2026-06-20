@@ -64,7 +64,7 @@ class UserStats:
     tickets_touched: set = field(default_factory=set)
 
 
-def search_ticket_ids(client: ZnunyClient, prefixes: list[str]) -> list[str]:
+def search_ticket_ids(client: ZnunyClient, prefixes: list[str], log=print) -> list[str]:
     """Return de-duplicated TicketIDs whose Title contains any prefix* code.
 
     The title is the authoritative signal: a ticket only counts if its title
@@ -75,13 +75,13 @@ def search_ticket_ids(client: ZnunyClient, prefixes: list[str]) -> list[str]:
     seen: dict[str, None] = {}
     for prefix in prefixes:
         title_ids = client._ticket_search(Title=f"*{prefix}*", Limit=10000)
-        print(f"  Title *{prefix}*: {len(title_ids)} tickets")
+        log(f"  Title *{prefix}*: {len(title_ids)} tickets")
         for tid in title_ids:
             seen.setdefault(tid, None)
     return list(seen.keys())
 
 
-def fetch_tickets(client: ZnunyClient, ticket_ids: list[str]) -> list[dict]:
+def fetch_tickets(client: ZnunyClient, ticket_ids: list[str], log=print) -> list[dict]:
     """Batched TicketGet (with articles) for all ids."""
     tickets: list[dict] = []
     total = len(ticket_ids)
@@ -89,7 +89,7 @@ def fetch_tickets(client: ZnunyClient, ticket_ids: list[str]) -> list[dict]:
         chunk = ticket_ids[i:i + BATCH_SIZE]
         batch = client._ticket_get(chunk, with_articles=True)
         tickets.extend(batch)
-        print(f"  Fetched {min(i + BATCH_SIZE, total)}/{total} tickets")
+        log(f"  Fetched {min(i + BATCH_SIZE, total)}/{total} tickets")
     return tickets
 
 
@@ -700,9 +700,9 @@ def generate_report(out_path: str, prefixes=("UD-", "DH-"), log=print, close=Fal
     log(f"Znuny: {client.base_url}")
     log(f"Searching prefixes: {', '.join(p + '*' for p in prefixes)}")
 
-    ticket_ids = search_ticket_ids(client, prefixes)
+    ticket_ids = search_ticket_ids(client, prefixes, log=log)
     log(f"Total unique tickets to fetch: {len(ticket_ids)}")
-    tickets = fetch_tickets(client, ticket_ids) if ticket_ids else []
+    tickets = fetch_tickets(client, ticket_ids, log=log) if ticket_ids else []
     rows, users, customers, stats = analyze(tickets, client, prefixes)
     render_html(rows, users, customers, stats, prefixes, out_path)
     if data_path:
