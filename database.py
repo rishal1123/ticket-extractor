@@ -1546,8 +1546,11 @@ class Database:
                     p.append(date_to)
                 return sql, p
 
-            # Tickets created (all Znuny tickets by creator)
-            sql, p = dfilter("created_at")
+            # Tickets created (all Znuny tickets by creator). Scoped by created
+            # OR closed in range so a ticket created earlier but closed in the
+            # period (e.g. closed today) is still counted, attributed to its
+            # creator.
+            sql, p = self._znuny_date_scope(date_from, date_to)
             cursor.execute(f"""
                 SELECT created_by AS name, COUNT(*) AS n
                 FROM znuny_tickets
