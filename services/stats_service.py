@@ -68,10 +68,21 @@ class StatsService:
 
     def get_staff_summary(self, date_from: str = None, date_to: str = None) -> Dict:
         """
-        Clean per-staff summary: tickets created, articles created, and site
-        visits assigned, within an optional date range.
+        Clean per-staff summary read from the generated daily snapshots
+        (staff_performance_daily), summed over the date range. Today's snapshot is
+        regenerated hourly by the scheduler. Use get_staff_summary_live for an
+        on-the-fly computation straight from the source tables.
         """
+        return self.db.get_staff_summary_snapshot(date_from=date_from, date_to=date_to)
+
+    def get_staff_summary_live(self, date_from: str = None, date_to: str = None) -> Dict:
+        """On-the-fly per-staff summary computed directly from source tables
+        (created-or-closed scope). Kept for ad-hoc/debug use."""
         return self.db.get_staff_summary(date_from=date_from, date_to=date_to)
+
+    def generate_staff_daily_snapshot(self, date_str: str) -> int:
+        """(Re)generate the per-staff daily snapshot for a single day."""
+        return self.db.generate_staff_daily_snapshot(date_str)
 
     def get_staff_tickets(self, staff_name: str, date_from: str = None,
                           date_to: str = None, limit: int = 50, offset: int = 0) -> Dict:

@@ -18,7 +18,7 @@ from typing import Optional
 import psutil
 import schedule
 
-from database import Database
+from database import Database, now_maldives
 from config import Config
 
 MVT = timezone(timedelta(hours=5))
@@ -313,6 +313,16 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Failed to trigger customer report: {e}")
 
+    def _generate_staff_snapshots(self):
+        """Regenerate the current day's per-staff stats snapshot (hourly)."""
+        try:
+            db = Database()
+            today = now_maldives().date().isoformat()
+            count = db.generate_staff_daily_snapshot(today)
+            logger.info(f"Staff snapshot regenerated for {today}: {count} staff")
+        except Exception as e:
+            logger.error(f"Staff snapshot generation failed: {e}")
+
     def _cleanup_old_logs(self):
         """Delete logs older than 2 days from all log tables."""
         try:
@@ -501,10 +511,14 @@ class SchedulerService:
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
         schedule.every(5).minutes.do(self._worker_health_check)
         schedule.every(1).hours.do(self._scheduled_browser_restart)
+        # Regenerate the current day's per-staff stats snapshot hourly
+        schedule.every(1).hours.do(self._generate_staff_snapshots)
 
         # Run both immediately on start
         self._extraction_job()
         self._znuny_sync_job()
+        # Generate today's staff snapshot once on startup so the page isn't empty
+        self._generate_staff_snapshots()
 
         while self._running:
             schedule.run_pending()

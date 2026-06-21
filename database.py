@@ -255,6 +255,13 @@ class Database:
                 )
             """)
 
+            # Site-visit columns for the daily snapshot (migration)
+            for _col in ("site_visits_total", "site_visits_completed"):
+                try:
+                    cursor.execute(f"ALTER TABLE staff_performance_daily ADD COLUMN {_col} INTEGER DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+
             # System logs table for application-wide logging
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS system_logs (
@@ -1610,6 +1617,125 @@ class Database:
                 "total_articles": sum(s["articles_created"] for s in result),
                 "total_site_visits": sv["total"] or 0,
                 "total_site_visits_completed": sv["completed"] or 0,
+                "total_staff": len(result),
+                "date_from": date_from,
+                "date_to": date_to,
+            }
+
+    def generate_staff_daily_snapshot(self, date_str: str) -> int:
+        """(Re)generate the per-staff snapshot rows in staff_performance_daily for
+        a single day. Each metric is attributed to its own day (additive across a
+        range): tickets CREATED that day, articles authored that day, site visits
+        assigned for that day's visit_date. Replaces any existing rows for the day.
+        Returns the number of staff rows written."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now = now_maldives()
+            agg = {}
+
+            def rec(name):
+                if name not in agg:
+                    agg[name] = {"tickets": 0, "articles": 0, "sv_total": 0, "sv_done": 0}
+                return agg[name]
+
+            # Tickets created that day (by creator)
+            cursor.execute("""
+                SELECT created_by AS name, COUNT(*) AS n FROM znuny_tickets
+                WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
+                GROUP BY created_by
+            """, (date_str,))
+            for row in cursor.fetchall():
+                rec(row["name"])["tickets"] = row["n"]
+
+            # Articles authored that day
+            cursor.execute("""
+                SELECT created_by AS name, COUNT(*) AS n FROM znuny_articles
+                WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
+                GROUP BY created_by
+            """, (date_str,))
+            for row in cursor.fetchall():
+                rec(row["name"])["articles"] = row["n"]
+
+            # Site visits assigned that day (assigned_to may be comma-separated)
+            cursor.execute("""
+                SELECT assigned_to AS name,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
+                FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != '' AND DATE(visit_date) = ?
+                GROUP BY assigned_to
+            """, (date_str,))
+            for row in cursor.fetchall():
+                for nm in [n.strip() for n in (row["name"] or "").split(",") if n.strip()]:
+                    r = rec(nm)
+                    r["sv_total"] += row["total"]
+                    r["sv_done"] += (row["completed"] or 0)
+
+            # Replace the day's rows so staff who dropped to zero don't linger
+            cursor.execute("DELETE FROM staff_performance_daily WHERE date = ?", (date_str,))
+            for name, v in agg.items():
+                cursor.execute("""
+                    INSERT INTO staff_performance_daily
+                        (staff_name, date, tickets_created, total_articles,
+                         site_visits_total, site_visits_completed, calculated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (name, date_str, v["tickets"], v["articles"],
+                      v["sv_total"], v["sv_done"], now))
+            logger.info(f"Staff daily snapshot for {date_str}: {len(agg)} staff")
+            return len(agg)
+
+    def get_staff_activity_dates(self) -> list:
+        """Distinct dates (YYYY-MM-DD) on which any staff activity exists, for backfill."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT DATE(created_at) d FROM znuny_tickets WHERE created_at IS NOT NULL
+                UNION SELECT DISTINCT DATE(created_at) FROM znuny_articles WHERE created_at IS NOT NULL
+                UNION SELECT DISTINCT DATE(visit_date) FROM site_visits WHERE visit_date IS NOT NULL
+            """)
+            return sorted(d for (d,) in cursor.fetchall() if d)
+
+    def get_staff_summary_snapshot(self, date_from: str = None, date_to: str = None) -> dict:
+        """Per-staff summary built from the generated daily snapshots
+        (staff_performance_daily), summed over the date range. Mirrors the shape
+        of get_staff_summary so the staff page can read it directly."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            where, params = "WHERE 1=1", []
+            if date_from:
+                where += " AND date >= ?"
+                params.append(date_from)
+            if date_to:
+                where += " AND date <= ?"
+                params.append(date_to)
+
+            cursor.execute(f"""
+                SELECT staff_name AS name,
+                       SUM(tickets_created) AS tickets_created,
+                       SUM(total_articles) AS articles_created,
+                       SUM(site_visits_total) AS site_visits_total,
+                       SUM(site_visits_completed) AS site_visits_completed
+                FROM staff_performance_daily
+                {where}
+                GROUP BY staff_name
+                HAVING tickets_created > 0 OR articles_created > 0 OR site_visits_total > 0
+                ORDER BY tickets_created DESC, articles_created DESC, site_visits_total DESC
+            """, params)
+
+            result = [{
+                "name": row["name"],
+                "tickets_created": row["tickets_created"] or 0,
+                "articles_created": row["articles_created"] or 0,
+                "site_visits_total": row["site_visits_total"] or 0,
+                "site_visits_completed": row["site_visits_completed"] or 0,
+            } for row in cursor.fetchall()]
+
+            return {
+                "staff": result,
+                "total_tickets": sum(s["tickets_created"] for s in result),
+                "total_articles": sum(s["articles_created"] for s in result),
+                "total_site_visits": sum(s["site_visits_total"] for s in result),
+                "total_site_visits_completed": sum(s["site_visits_completed"] for s in result),
                 "total_staff": len(result),
                 "date_from": date_from,
                 "date_to": date_to,

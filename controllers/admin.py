@@ -26,6 +26,24 @@ logger = get_logger("admin_controller")
 _extraction_running = False
 
 
+@router.post("/generate-staff-snapshots")
+@handle_errors("generate staff snapshots")
+async def generate_staff_snapshots(
+    date: Optional[str] = Query(None, description="YYYY-MM-DD; omit to regenerate all activity dates"),
+    db: Database = Depends(get_db),
+):
+    """(Re)generate per-staff daily stats snapshots. With ?date=YYYY-MM-DD it
+    regenerates that day; with no date it backfills every day that has activity."""
+    if date:
+        count = db.generate_staff_daily_snapshot(date)
+        return success_response({"dates": 1, "date": date, "staff": count})
+    dates = db.get_staff_activity_dates()
+    total = 0
+    for d in dates:
+        total += db.generate_staff_daily_snapshot(d)
+    return success_response({"dates": len(dates), "staff_rows": total})
+
+
 @router.get("/scheduler-status")
 async def get_scheduler_status():
     """Get scheduler status and next run time."""
