@@ -3,6 +3,7 @@ Znuny Service - Business logic for Znuny ticket synchronization.
 """
 
 import time
+from datetime import timedelta
 from typing import Dict, List, Optional
 from database import Database, now_maldives
 from znuny_client import ZnunyClient, parse_site_visit_article
@@ -273,6 +274,88 @@ class ZnunyService:
                     logger.info(f"Site visit {visit_article_id} completed by follow-up article (max article: {max_article_num})")
 
         return completed_count
+
+    def _sync_by_creators(self, results: dict) -> set:
+        """Creator sweep: ingest EVERY ticket created by any tracked agent,
+        across all services and states (not just OAN/open). This captures each
+        staff member's full ticket set so the staff page reflects their real
+        output, not only the narrow OAN-open slice.
+
+        Tracked agents are the Znuny user ids harvested into ZnunyClient._user_names
+        (from agent-authored articles seen during sync). Returns the set of OPEN
+        swept ticket numbers so the caller keeps them out of
+        mark_znuny_tickets_closed (whose 'open list' is otherwise OAN-only).
+        """
+        open_swept = set()
+        user_ids = [uid for uid in ZnunyClient._user_names.keys() if str(uid).isdigit()]
+        if not user_ids:
+            logger.info("Creator sweep: no known agent user ids yet — skipping")
+            return open_swept
+
+        # Incremental: after the first full backfill, only re-fetch tickets that
+        # changed since the last sweep (with a safety overlap), so the hourly run
+        # stays cheap instead of re-pulling every agent's whole history.
+        sweep_start = now_maldives()
+        changed_since = self.db.get_setting("znuny_creator_sweep_last")
+        mode = f"incremental since {changed_since}" if changed_since else "full backfill"
+        logger.info(f"Creator sweep ({mode}) for {len(user_ids)} agents")
+        swept = self.znuny_client.get_tickets_by_creators(user_ids, changed_since=changed_since)
+        for item in swept:
+            try:
+                details = item["details"]
+                is_closed = item["state_type"] == "closed"
+                znuny_ticket_id = details.ticket_number
+                last_article = details.articles[-1] if details.articles else None
+
+                # Normalize closed states ("Closed Successful" etc.) to 'closed'
+                # so the app's LOWER(state) IN ('closed','resolved') logic matches.
+                self.db.upsert_znuny_only_ticket({
+                    "znuny_ticket_id": znuny_ticket_id,
+                    "title": item["title"],
+                    "state": "closed" if is_closed else details.state,
+                    "queue": details.queue,
+                    "priority": details.priority,
+                    "owner": details.owner,
+                    "created_at": details.created_at,
+                    "created_by": details.created_by,
+                    "closed_at": item["closed_at"],  # set when closed, None when open
+                    "article_count": len(details.articles),
+                    "last_article_by": last_article.created_by if last_article else None,
+                    "last_article_at": last_article.created_at if last_article else None,
+                    "znuny_url": details.znuny_url,
+                    "isp_ticket_id": None,  # COALESCE preserves any existing ISP link
+                })
+
+                for article in details.articles:
+                    self.db.upsert_znuny_article(
+                        ticket_id=None,
+                        znuny_ticket_id=znuny_ticket_id,
+                        article_number=article.article_number,
+                        sender=article.sender,
+                        via=article.via,
+                        subject=article.subject,
+                        created_at=article.created_at,
+                        created_at_str=article.created_at_str,
+                        created_by=article.created_by,
+                        body=article.body,
+                    )
+
+                if not is_closed:
+                    open_swept.add(znuny_ticket_id)
+            except Exception as e:
+                logger.error(f"Creator sweep: error ingesting ticket {item.get('title','?')}: {e}")
+                results["errors"] += 1
+
+        # Persist a watermark 2h before this run's start so the next (incremental)
+        # sweep re-checks a generous overlap window and nothing slips through.
+        watermark = (sweep_start - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+        self.db.set_setting("znuny_creator_sweep_last", watermark,
+                            "Last creator-sweep watermark (Znuny system time)")
+
+        results["creator_sweep_tickets"] = len(swept)
+        results["creator_sweep_open"] = len(open_swept)
+        logger.info(f"Creator sweep: ingested {len(swept)} tickets ({len(open_swept)} open) for {len(user_ids)} agents")
+        return open_swept
 
     def get_site_visits(self, date_from: str = None, date_to: str = None,
                         assigned_to: str = None, status: str = None,
@@ -702,6 +785,17 @@ class ZnunyService:
 
             # Step 2 complete
             logger.info(f"Step 2 complete: processed={results['znuny_tickets_processed']}, skipped={results['znuny_tickets_skipped']}, errors={results['errors']}")
+
+            # Step 2.7: Creator sweep — ingest each tracked agent's full ticket
+            # set (all services/states). Add its OPEN tickets to open_znuny_ids so
+            # Step 3 does not wrongly close non-OAN open tickets.
+            try:
+                open_swept = self._sync_by_creators(results)
+                open_znuny_ids |= open_swept
+            except Exception as e:
+                logger.error(f"Creator sweep failed: {e}")
+                self.db.log_system("error", "znuny", f"Creator sweep failed: {e}")
+                results["errors"] += 1
 
             # Step 3: Mark znuny_tickets as closed if no longer in open list
             if open_znuny_ids:

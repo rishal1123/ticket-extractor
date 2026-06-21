@@ -659,6 +659,57 @@ class ZnunyClient:
         logger.info(f"Prefetched details for {len(tickets)} open tickets ({len(to_fetch)} stale, batched)")
         return len(tickets)
 
+    def get_tickets_by_creators(self, user_ids: list, changed_since: str = None) -> list[dict]:
+        """Fetch tickets created by the given Znuny user ids, across every
+        service and state (not limited to OAN/open like get_open_tickets).
+
+        Used for the staff-scoped "creator sweep" so each tracked agent's full
+        ticket set is ingested. When changed_since (a "YYYY-MM-DD HH:MM:SS" string
+        in Znuny system time) is given, only tickets changed at/after that time
+        are returned — used for cheap incremental runs after the initial backfill.
+
+        Returns a list of dicts:
+            {"details": ZnunyTicketDetails, "title": str,
+             "state_type": str (e.g. "open"/"closed"), "closed_at": datetime|None}
+        closed_at is the ticket's last-changed time when StateType is closed
+        (Znuny TicketGet has no dedicated close timestamp), else None.
+        """
+        uids = [int(u) for u in user_ids if str(u).isdigit()]
+        if not uids:
+            return []
+
+        criteria = dict(CreatedUserIDs=uids, Limit=20000)
+        if changed_since:
+            criteria["TicketChangeTimeNewerDate"] = changed_since
+        ids = self._ticket_search(**criteria)
+        if not ids:
+            return []
+
+        out: list[dict] = []
+        with ZnunyClient._page_lock:
+            for i in range(0, len(ids), TICKETGET_BATCH_SIZE):
+                chunk = ids[i:i + TICKETGET_BATCH_SIZE]
+                tickets = self._ticket_get(chunk, with_articles=True)
+                # Harvest names across the whole batch first so creators resolve.
+                for t in tickets:
+                    self._harvest_user_names(t)
+                for t in tickets:
+                    number = str(t.get("TicketNumber", ""))
+                    tid = str(t.get("TicketID", ""))
+                    if not number:
+                        continue
+                    details = self._build_details_from_ticket(number, tid, t, skip_body_fetch=False)
+                    state_type = str(t.get("StateType", "")).lower()
+                    closed_at = _parse_dt(t.get("Changed") or "") if state_type == "closed" else None
+                    out.append({
+                        "details": details,
+                        "title": t.get("Title") or "",
+                        "state_type": state_type,
+                        "closed_at": closed_at,
+                    })
+        logger.info(f"Creator sweep: fetched {len(out)} tickets for {len(uids)} users")
+        return out
+
     def _build_details_from_ticket(self, ticket_number: str, ticket_id: str, t: dict,
                                    skip_body_fetch: bool) -> ZnunyTicketDetails:
         """Build (and cache) a ZnunyTicketDetails from a TicketGet ticket dict.
