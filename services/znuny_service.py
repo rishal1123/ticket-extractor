@@ -275,25 +275,32 @@ class ZnunyService:
 
         return completed_count
 
-    def _sync_by_creators(self, results: dict) -> set:
+    def _sync_by_creators(self, results: dict, force: bool = False) -> set:
         """Creator sweep: ingest EVERY ticket created by any tracked agent,
         across all services and states (not just OAN/open). This captures each
         staff member's full ticket set so the staff page reflects their real
         output, not only the narrow OAN-open slice.
 
-        Tracked agents are the Znuny user ids harvested into ZnunyClient._user_names
-        (from agent-authored articles seen during sync). Returns the set of OPEN
-        swept ticket numbers so the caller keeps them out of
-        mark_znuny_tickets_closed (whose 'open list' is otherwise OAN-only).
+        Runs at most ONCE PER DAY (gated by the znuny_creator_sweep_date setting)
+        to save resources — pass force=True to override. Tracked agents are the
+        Znuny user ids harvested into ZnunyClient._user_names. mark_closed is
+        decoupled (it only touches ISP-linked tickets), so the sweep no longer
+        needs to feed the open list.
         """
         open_swept = set()
+        today = now_maldives().date().isoformat()
+        if not force and self.db.get_setting("znuny_creator_sweep_date") == today:
+            results["creator_sweep_skipped"] = True
+            logger.info("Creator sweep: already ran today — skipping (once/day)")
+            return open_swept
+
         user_ids = [uid for uid in ZnunyClient._user_names.keys() if str(uid).isdigit()]
         if not user_ids:
             logger.info("Creator sweep: no known agent user ids yet — skipping")
             return open_swept
 
         # Incremental: after the first full backfill, only re-fetch tickets that
-        # changed since the last sweep (with a safety overlap), so the hourly run
+        # changed since the last sweep (with a safety overlap), so each daily run
         # stays cheap instead of re-pulling every agent's whole history.
         sweep_start = now_maldives()
         changed_since = self.db.get_setting("znuny_creator_sweep_last")
@@ -351,6 +358,16 @@ class ZnunyService:
         watermark = (sweep_start - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
         self.db.set_setting("znuny_creator_sweep_last", watermark,
                             "Last creator-sweep watermark (Znuny system time)")
+        # Mark today's daily sweep as done (gates further runs until tomorrow).
+        self.db.set_setting("znuny_creator_sweep_date", today,
+                            "Date of the last completed creator sweep (once/day gate)")
+
+        # Newly-ingested tickets may have been created on earlier days, so refresh
+        # those days' snapshots (snapshots are creation/authorship-dated, immutable
+        # otherwise). Last 14 days covers realistic late ingestion.
+        for i in range(14):
+            d = (now_maldives().date() - timedelta(days=i)).isoformat()
+            self.db.generate_staff_daily_snapshot(d)
 
         results["creator_sweep_tickets"] = len(swept)
         results["creator_sweep_open"] = len(open_swept)

@@ -395,6 +395,35 @@ async def get_staff_summary(date_filter: DateFilterParams = Depends(get_date_fil
     return JSONResponse(content={"stats": stats})
 
 
+@router.get("/staff/{name}/summary")
+@handle_errors("get staff summary one")
+async def get_staff_summary_one(
+    name: str,
+    date_filter: DateFilterParams = Depends(get_date_filter),
+    db: Database = Depends(get_db),
+):
+    """Unified per-staff totals (tickets/articles/site visits) for one staff member,
+    from the same hybrid (snapshots + live today) source as the staff page."""
+    summary = db.get_staff_summary_snapshot(date_filter.date_from, date_filter.date_to)
+    found = next((s for s in summary["staff"] if s["name"] == name), None)
+    return JSONResponse(content=found or {
+        "name": name, "tickets_created": 0, "articles_created": 0,
+        "site_visits_total": 0, "site_visits_completed": 0,
+    })
+
+
+@router.get("/staff/{name}/daily")
+@handle_errors("get staff daily breakdown")
+async def get_staff_daily(
+    name: str,
+    date_filter: DateFilterParams = Depends(get_date_filter),
+    db: Database = Depends(get_db),
+):
+    """Per-day Tickets/Articles/Site-visits breakdown for one staff member."""
+    rows = db.get_staff_daily_breakdown(name, date_filter.date_from, date_filter.date_to)
+    return JSONResponse(content={"days": rows})
+
+
 @router.get("/staff/{name}/tickets")
 @handle_errors("get staff tickets")
 async def get_staff_tickets(

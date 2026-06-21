@@ -1783,6 +1783,50 @@ class Database:
                 "date_to": date_to,
             }
 
+    def get_staff_daily_breakdown(self, staff_name: str, date_from: str = None, date_to: str = None) -> list:
+        """Per-day Tickets/Articles/Site-visits for one staff member: prior days
+        from snapshots, today live. Newest day first."""
+        today = now_maldives().date().isoformat()
+        snap_to = date_to
+        if snap_to is None or snap_to >= today:
+            snap_to = (now_maldives().date() - timedelta(days=1)).isoformat()
+        include_today = (
+            (date_to is None or date_to >= today) and
+            (date_from is None or date_from <= today)
+        )
+        rows = {}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if date_from is None or date_from <= snap_to:
+                where, params = "WHERE staff_name = ? AND date <= ?", [staff_name, snap_to]
+                if date_from:
+                    where += " AND date >= ?"
+                    params.append(date_from)
+                cursor.execute(f"""
+                    SELECT date, tickets_created, total_articles,
+                           site_visits_total, site_visits_completed
+                    FROM staff_performance_daily {where}
+                """, params)
+                for r in cursor.fetchall():
+                    rows[r["date"]] = {
+                        "date": r["date"],
+                        "tickets_created": r["tickets_created"] or 0,
+                        "articles_created": r["total_articles"] or 0,
+                        "site_visits_total": r["site_visits_total"] or 0,
+                        "site_visits_completed": r["site_visits_completed"] or 0,
+                    }
+            if include_today:
+                v = self._compute_staff_day(cursor, today).get(staff_name)
+                if v:
+                    rows[today] = {
+                        "date": today,
+                        "tickets_created": v["tickets"],
+                        "articles_created": v["articles"],
+                        "site_visits_total": v["sv_total"],
+                        "site_visits_completed": v["sv_done"],
+                    }
+        return sorted(rows.values(), key=lambda x: x["date"], reverse=True)
+
     def get_staff_tickets(self, staff_name: str, date_from: str = None, date_to: str = None,
                           limit: int = 100, offset: int = 0) -> dict:
         """Get all tickets created by a specific staff member."""
@@ -2960,8 +3004,14 @@ class Database:
             return [row["created_by"] for row in cursor.fetchall()]
 
     def mark_znuny_tickets_closed(self, open_znuny_ids: set) -> int:
-        """Mark znuny_tickets as closed if they are no longer in the open tickets list.
-        Returns count of tickets marked as closed."""
+        """Mark ISP-linked znuny_tickets as closed if they are no longer in the
+        OAN open tickets list. Returns count of tickets marked as closed.
+
+        Only ISP-linked tickets are touched: the OAN open list is authoritative
+        only for them. Non-ISP tickets (orphans and creator-swept tickets from
+        other services) have their state set authoritatively by the creator sweep
+        (from Znuny StateType), so they must not be force-closed just because they
+        aren't in the OAN open list."""
         if not open_znuny_ids:
             return 0
 
@@ -2982,6 +3032,7 @@ class Database:
                     END,
                     updated_at = ?
                 WHERE znuny_ticket_id NOT IN ({placeholders})
+                    AND isp_ticket_id IS NOT NULL
                     AND (state IS NULL OR LOWER(state) NOT IN ('closed', 'resolved'))
             """, [now, now, now] + list(open_znuny_ids))
 

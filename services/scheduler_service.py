@@ -314,12 +314,17 @@ class SchedulerService:
             logger.error(f"Failed to trigger customer report: {e}")
 
     def _generate_staff_snapshots(self):
-        """Regenerate the current day's per-staff stats snapshot (hourly)."""
+        """Freeze the just-completed day's per-staff stats snapshot (daily, at
+        midnight). Today is served live by the page, so only prior days need a
+        stored snapshot. Generates yesterday and (idempotently) today."""
         try:
             db = Database()
+            from datetime import timedelta as _td
+            yesterday = (now_maldives().date() - _td(days=1)).isoformat()
             today = now_maldives().date().isoformat()
-            count = db.generate_staff_daily_snapshot(today)
-            logger.info(f"Staff snapshot regenerated for {today}: {count} staff")
+            c1 = db.generate_staff_daily_snapshot(yesterday)
+            db.generate_staff_daily_snapshot(today)
+            logger.info(f"Staff snapshot frozen for {yesterday}: {c1} staff")
         except Exception as e:
             logger.error(f"Staff snapshot generation failed: {e}")
 
@@ -511,13 +516,14 @@ class SchedulerService:
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
         schedule.every(5).minutes.do(self._worker_health_check)
         schedule.every(1).hours.do(self._scheduled_browser_restart)
-        # Regenerate the current day's per-staff stats snapshot hourly
-        schedule.every(1).hours.do(self._generate_staff_snapshots)
+        # Freeze the completed day's per-staff snapshot once at midnight (today is
+        # served live by the page; the creator sweep refreshes prior snapshots).
+        schedule.every().day.at("00:30").do(self._generate_staff_snapshots)
 
         # Run both immediately on start
         self._extraction_job()
         self._znuny_sync_job()
-        # Generate today's staff snapshot once on startup so the page isn't empty
+        # Ensure yesterday's snapshot exists on startup (covers midnight downtime)
         self._generate_staff_snapshots()
 
         while self._running:

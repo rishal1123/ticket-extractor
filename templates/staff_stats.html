@@ -131,6 +131,7 @@
         <div class="col-12 col-md-auto">
             <div class="btn-group btn-group-sm flex-wrap" role="group">
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn active" onclick="setDateFilter('today')">Today</button>
+                <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('yesterday')">Yesterday</button>
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('week')">Week</button>
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('month')">Month</button>
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('all')">All</button>
@@ -225,6 +226,13 @@ function setDateFilter(filter, autoLoad = true) {
             const todayStr = formatDateInput(today);
             dateFrom.value = todayStr;
             dateTo.value = todayStr;
+            break;
+        case 'yesterday':
+            const yday = new Date(today);
+            yday.setDate(today.getDate() - 1);
+            const ydayStr = formatDateInput(yday);
+            dateFrom.value = ydayStr;
+            dateTo.value = ydayStr;
             break;
         case 'week':
             const weekStart = new Date(today);
