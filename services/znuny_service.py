@@ -275,38 +275,10 @@ class ZnunyService:
 
         return completed_count
 
-    def _sync_by_creators(self, results: dict, force: bool = False) -> set:
-        """Creator sweep: ingest EVERY ticket created by any tracked agent,
-        across all services and states (not just OAN/open). This captures each
-        staff member's full ticket set so the staff page reflects their real
-        output, not only the narrow OAN-open slice.
-
-        Runs at most ONCE PER DAY (gated by the znuny_creator_sweep_date setting)
-        to save resources — pass force=True to override. Tracked agents are the
-        Znuny user ids harvested into ZnunyClient._user_names. mark_closed is
-        decoupled (it only touches ISP-linked tickets), so the sweep no longer
-        needs to feed the open list.
-        """
+    def _ingest_swept_tickets(self, swept: list, results: dict) -> set:
+        """Ingest a batch of creator-swept tickets (+ their articles) into
+        znuny_tickets / znuny_articles. Returns the set of OPEN ticket numbers."""
         open_swept = set()
-        today = now_maldives().date().isoformat()
-        if not force and self.db.get_setting("znuny_creator_sweep_date") == today:
-            results["creator_sweep_skipped"] = True
-            logger.info("Creator sweep: already ran today — skipping (once/day)")
-            return open_swept
-
-        user_ids = [uid for uid in ZnunyClient._user_names.keys() if str(uid).isdigit()]
-        if not user_ids:
-            logger.info("Creator sweep: no known agent user ids yet — skipping")
-            return open_swept
-
-        # Incremental: after the first full backfill, only re-fetch tickets that
-        # changed since the last sweep (with a safety overlap), so each daily run
-        # stays cheap instead of re-pulling every agent's whole history.
-        sweep_start = now_maldives()
-        changed_since = self.db.get_setting("znuny_creator_sweep_last")
-        mode = f"incremental since {changed_since}" if changed_since else "full backfill"
-        logger.info(f"Creator sweep ({mode}) for {len(user_ids)} agents")
-        swept = self.znuny_client.get_tickets_by_creators(user_ids, changed_since=changed_since)
         for item in swept:
             try:
                 details = item["details"]
@@ -352,26 +324,64 @@ class ZnunyService:
             except Exception as e:
                 logger.error(f"Creator sweep: error ingesting ticket {item.get('title','?')}: {e}")
                 results["errors"] += 1
+        return open_swept
 
-        # Persist a watermark 2h before this run's start so the next (incremental)
-        # sweep re-checks a generous overlap window and nothing slips through.
-        watermark = (sweep_start - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
-        self.db.set_setting("znuny_creator_sweep_last", watermark,
-                            "Last creator-sweep watermark (Znuny system time)")
-        # Mark today's daily sweep as done (gates further runs until tomorrow).
-        self.db.set_setting("znuny_creator_sweep_date", today,
-                            "Date of the last completed creator sweep (once/day gate)")
+    def _sync_by_creators(self, results: dict, force: bool = False) -> set:
+        """Creator sweep: ingest tickets created by any tracked agent across ALL
+        services and states (not just OAN/open), so the staff page reflects each
+        agent's real output. Two tiers:
 
-        # Newly-ingested tickets may have been created on earlier days, so refresh
-        # those days' snapshots (snapshots are creation/authorship-dated, immutable
-        # otherwise). Last 14 days covers realistic late ingestion.
-        for i in range(14):
-            d = (now_maldives().date() - timedelta(days=i)).isoformat()
-            self.db.generate_staff_daily_snapshot(d)
+          - TODAY (every cycle): fetch tickets changed since the start of today —
+            cheap, and keeps today's stats complete for ALL ticket types (the
+            staff page computes today live from the DB).
+          - CATCH-UP (once/day, gated by znuny_creator_sweep_date): a deeper
+            incremental sweep from the rolling watermark to pick up changes on
+            older tickets ("the other tickets"), then refresh recent snapshots.
 
-        results["creator_sweep_tickets"] = len(swept)
+        Tracked agents are the Znuny user ids harvested into ZnunyClient._user_names.
+        mark_closed is decoupled (ISP-linked only), so the sweep need not feed the
+        open list. Pass force=True to run the catch-up regardless of the gate.
+        """
+        user_ids = [uid for uid in ZnunyClient._user_names.keys() if str(uid).isdigit()]
+        if not user_ids:
+            logger.info("Creator sweep: no known agent user ids yet — skipping")
+            return set()
+
+        open_swept = set()
+        today = now_maldives().date().isoformat()
+
+        # Tier 1 — TODAY, all ticket types, every cycle.
+        today_start = now_maldives().replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+        today_items = self.znuny_client.get_tickets_by_creators(user_ids, changed_since=today_start)
+        open_swept |= self._ingest_swept_tickets(today_items, results)
+        results["creator_sweep_today"] = len(today_items)
+        logger.info(f"Creator sweep (today) ingested {len(today_items)} tickets for {len(user_ids)} agents")
+
+        # Tier 2 — deeper catch-up for older tickets, once per day.
+        if force or self.db.get_setting("znuny_creator_sweep_date") != today:
+            sweep_start = now_maldives()
+            watermark = self.db.get_setting("znuny_creator_sweep_last")
+            mode = f"incremental since {watermark}" if watermark else "full backfill"
+            logger.info(f"Creator sweep (daily catch-up, {mode}) for {len(user_ids)} agents")
+            items = self.znuny_client.get_tickets_by_creators(user_ids, changed_since=watermark)
+            open_swept |= self._ingest_swept_tickets(items, results)
+
+            # Watermark 2h before this run; mark the daily catch-up done for today.
+            self.db.set_setting("znuny_creator_sweep_last",
+                                (sweep_start - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                                "Last creator-sweep watermark (Znuny system time)")
+            self.db.set_setting("znuny_creator_sweep_date", today,
+                                "Date of the last completed daily creator catch-up")
+
+            # Newly-ingested tickets may be dated to earlier days — refresh those
+            # days' snapshots (last 14 days covers realistic late ingestion).
+            for i in range(14):
+                self.db.generate_staff_daily_snapshot(
+                    (now_maldives().date() - timedelta(days=i)).isoformat())
+            results["creator_sweep_daily"] = len(items)
+            logger.info(f"Creator sweep (daily catch-up) ingested {len(items)} tickets")
+
         results["creator_sweep_open"] = len(open_swept)
-        logger.info(f"Creator sweep: ingested {len(swept)} tickets ({len(open_swept)} open) for {len(user_ids)} agents")
         return open_swept
 
     def get_site_visits(self, date_from: str = None, date_to: str = None,
