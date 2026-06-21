@@ -1622,54 +1622,58 @@ class Database:
                 "date_to": date_to,
             }
 
+    @staticmethod
+    def _compute_staff_day(cursor, date_str: str) -> dict:
+        """Compute per-staff activity for a single day, attributed to that day:
+        tickets CREATED that day, articles authored that day, site visits assigned
+        for that visit_date. Returns {name: {tickets, articles, sv_total, sv_done}}.
+        Shared by snapshot generation and the live "today" path so both agree."""
+        agg = {}
+
+        def rec(name):
+            if name not in agg:
+                agg[name] = {"tickets": 0, "articles": 0, "sv_total": 0, "sv_done": 0}
+            return agg[name]
+
+        cursor.execute("""
+            SELECT created_by AS name, COUNT(*) AS n FROM znuny_tickets
+            WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
+            GROUP BY created_by
+        """, (date_str,))
+        for row in cursor.fetchall():
+            rec(row["name"])["tickets"] = row["n"]
+
+        cursor.execute("""
+            SELECT created_by AS name, COUNT(*) AS n FROM znuny_articles
+            WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
+            GROUP BY created_by
+        """, (date_str,))
+        for row in cursor.fetchall():
+            rec(row["name"])["articles"] = row["n"]
+
+        cursor.execute("""
+            SELECT assigned_to AS name,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
+            FROM site_visits
+            WHERE assigned_to IS NOT NULL AND assigned_to != '' AND DATE(visit_date) = ?
+            GROUP BY assigned_to
+        """, (date_str,))
+        for row in cursor.fetchall():
+            for nm in [n.strip() for n in (row["name"] or "").split(",") if n.strip()]:
+                r = rec(nm)
+                r["sv_total"] += row["total"]
+                r["sv_done"] += (row["completed"] or 0)
+
+        return agg
+
     def generate_staff_daily_snapshot(self, date_str: str) -> int:
         """(Re)generate the per-staff snapshot rows in staff_performance_daily for
-        a single day. Each metric is attributed to its own day (additive across a
-        range): tickets CREATED that day, articles authored that day, site visits
-        assigned for that day's visit_date. Replaces any existing rows for the day.
-        Returns the number of staff rows written."""
+        a single day. Replaces any existing rows for the day. Returns staff count."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             now = now_maldives()
-            agg = {}
-
-            def rec(name):
-                if name not in agg:
-                    agg[name] = {"tickets": 0, "articles": 0, "sv_total": 0, "sv_done": 0}
-                return agg[name]
-
-            # Tickets created that day (by creator)
-            cursor.execute("""
-                SELECT created_by AS name, COUNT(*) AS n FROM znuny_tickets
-                WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
-                GROUP BY created_by
-            """, (date_str,))
-            for row in cursor.fetchall():
-                rec(row["name"])["tickets"] = row["n"]
-
-            # Articles authored that day
-            cursor.execute("""
-                SELECT created_by AS name, COUNT(*) AS n FROM znuny_articles
-                WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
-                GROUP BY created_by
-            """, (date_str,))
-            for row in cursor.fetchall():
-                rec(row["name"])["articles"] = row["n"]
-
-            # Site visits assigned that day (assigned_to may be comma-separated)
-            cursor.execute("""
-                SELECT assigned_to AS name,
-                       COUNT(*) AS total,
-                       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
-                FROM site_visits
-                WHERE assigned_to IS NOT NULL AND assigned_to != '' AND DATE(visit_date) = ?
-                GROUP BY assigned_to
-            """, (date_str,))
-            for row in cursor.fetchall():
-                for nm in [n.strip() for n in (row["name"] or "").split(",") if n.strip()]:
-                    r = rec(nm)
-                    r["sv_total"] += row["total"]
-                    r["sv_done"] += (row["completed"] or 0)
+            agg = self._compute_staff_day(cursor, date_str)
 
             # Replace the day's rows so staff who dropped to zero don't linger
             cursor.execute("DELETE FROM staff_performance_daily WHERE date = ?", (date_str,))
@@ -1696,39 +1700,77 @@ class Database:
             return sorted(d for (d,) in cursor.fetchall() if d)
 
     def get_staff_summary_snapshot(self, date_from: str = None, date_to: str = None) -> dict:
-        """Per-staff summary built from the generated daily snapshots
-        (staff_performance_daily), summed over the date range. Mirrors the shape
-        of get_staff_summary so the staff page can read it directly."""
+        """Per-staff summary for the staff page. Hybrid by design:
+          - prior days (before today) are read from the generated daily snapshots
+            (staff_performance_daily) — cheap and stable
+          - TODAY is computed live from the source tables, so it reflects activity
+            since the last hourly snapshot
+
+        Both halves use the same per-day attribution (tickets created that day,
+        articles authored that day, visits assigned that day), so a multi-day
+        range is the additive sum and never double-counts today."""
+        today = now_maldives().date().isoformat()
+        # Snapshots cover strictly-before-today; cap date_to accordingly.
+        snap_to = date_to
+        if snap_to is None or snap_to >= today:
+            snap_to = (now_maldives().date() - timedelta(days=1)).isoformat()
+        include_today = (
+            (date_to is None or date_to >= today) and
+            (date_from is None or date_from <= today)
+        )
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            where, params = "WHERE 1=1", []
-            if date_from:
-                where += " AND date >= ?"
-                params.append(date_from)
-            if date_to:
-                where += " AND date <= ?"
-                params.append(date_to)
 
-            cursor.execute(f"""
-                SELECT staff_name AS name,
-                       SUM(tickets_created) AS tickets_created,
-                       SUM(total_articles) AS articles_created,
-                       SUM(site_visits_total) AS site_visits_total,
-                       SUM(site_visits_completed) AS site_visits_completed
-                FROM staff_performance_daily
-                {where}
-                GROUP BY staff_name
-                HAVING tickets_created > 0 OR articles_created > 0 OR site_visits_total > 0
-                ORDER BY tickets_created DESC, articles_created DESC, site_visits_total DESC
-            """, params)
+            agg = {}
 
-            result = [{
-                "name": row["name"],
-                "tickets_created": row["tickets_created"] or 0,
-                "articles_created": row["articles_created"] or 0,
-                "site_visits_total": row["site_visits_total"] or 0,
-                "site_visits_completed": row["site_visits_completed"] or 0,
-            } for row in cursor.fetchall()]
+            def rec(name):
+                if name not in agg:
+                    agg[name] = {
+                        "name": name,
+                        "tickets_created": 0,
+                        "articles_created": 0,
+                        "site_visits_total": 0,
+                        "site_visits_completed": 0,
+                    }
+                return agg[name]
+
+            # Prior days from snapshots (only if the range starts on/before snap_to)
+            if date_from is None or date_from <= snap_to:
+                where, params = "WHERE date <= ?", [snap_to]
+                if date_from:
+                    where += " AND date >= ?"
+                    params.append(date_from)
+                cursor.execute(f"""
+                    SELECT staff_name AS name,
+                           SUM(tickets_created) AS tickets_created,
+                           SUM(total_articles) AS articles_created,
+                           SUM(site_visits_total) AS site_visits_total,
+                           SUM(site_visits_completed) AS site_visits_completed
+                    FROM staff_performance_daily
+                    {where}
+                    GROUP BY staff_name
+                """, params)
+                for row in cursor.fetchall():
+                    r = rec(row["name"])
+                    r["tickets_created"] += row["tickets_created"] or 0
+                    r["articles_created"] += row["articles_created"] or 0
+                    r["site_visits_total"] += row["site_visits_total"] or 0
+                    r["site_visits_completed"] += row["site_visits_completed"] or 0
+
+            # Today computed live
+            if include_today:
+                for name, v in self._compute_staff_day(cursor, today).items():
+                    r = rec(name)
+                    r["tickets_created"] += v["tickets"]
+                    r["articles_created"] += v["articles"]
+                    r["site_visits_total"] += v["sv_total"]
+                    r["site_visits_completed"] += v["sv_done"]
+
+            result = [s for s in agg.values()
+                      if s["tickets_created"] or s["articles_created"] or s["site_visits_total"]]
+            result.sort(key=lambda x: (x["tickets_created"], x["articles_created"], x["site_visits_total"]),
+                        reverse=True)
 
             return {
                 "staff": result,
