@@ -383,6 +383,18 @@ async def get_staff_stats_detailed(
     return JSONResponse(content={"stats": stats})
 
 
+@router.get("/staff-summary")
+@handle_errors("get staff summary")
+async def get_staff_summary(date_filter: DateFilterParams = Depends(get_date_filter)):
+    """Clean per-staff summary: tickets created, articles created, site visits
+    assigned. Filterable by date range (date_from/date_to)."""
+    service = get_stats_service()
+    stats = service.get_staff_summary(
+        date_from=date_filter.date_from, date_to=date_filter.date_to
+    )
+    return JSONResponse(content={"stats": stats})
+
+
 @router.get("/staff/{name}/tickets")
 @handle_errors("get staff tickets")
 async def get_staff_tickets(

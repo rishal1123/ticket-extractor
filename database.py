@@ -1509,6 +1509,109 @@ class Database:
                 "date_to": date_to
             }
 
+    def get_staff_summary(self, date_from: str = None, date_to: str = None) -> dict:
+        """Clean per-staff summary for the staff page. Returns, per staff member
+        within the optional date range:
+          - tickets_created: all Znuny tickets they created (linked + orphan),
+            counted from znuny_tickets by creator (no double counting)
+          - articles_created: articles they authored (znuny_articles by author)
+          - site_visits_total / site_visits_completed: visits assigned to them
+
+        Each metric is scoped by its own natural date column (ticket created_at,
+        article created_at, visit_date). Staff who appear in any one source are
+        included."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            staff = {}
+
+            def rec(name):
+                if name not in staff:
+                    staff[name] = {
+                        "name": name,
+                        "tickets_created": 0,
+                        "articles_created": 0,
+                        "site_visits_total": 0,
+                        "site_visits_completed": 0,
+                    }
+                return staff[name]
+
+            def dfilter(col):
+                sql, p = "", []
+                if date_from:
+                    sql += f" AND DATE({col}) >= ?"
+                    p.append(date_from)
+                if date_to:
+                    sql += f" AND DATE({col}) <= ?"
+                    p.append(date_to)
+                return sql, p
+
+            # Tickets created (all Znuny tickets by creator)
+            sql, p = dfilter("created_at")
+            cursor.execute(f"""
+                SELECT created_by AS name, COUNT(*) AS n
+                FROM znuny_tickets
+                WHERE created_by IS NOT NULL AND created_by != ''{sql}
+                GROUP BY created_by
+            """, p)
+            for row in cursor.fetchall():
+                rec(row["name"])["tickets_created"] = row["n"]
+
+            # Articles created (by author)
+            sql, p = dfilter("created_at")
+            cursor.execute(f"""
+                SELECT created_by AS name, COUNT(*) AS n
+                FROM znuny_articles
+                WHERE created_by IS NOT NULL AND created_by != ''{sql}
+                GROUP BY created_by
+            """, p)
+            for row in cursor.fetchall():
+                rec(row["name"])["articles_created"] = row["n"]
+
+            # Site visits assigned (assigned_to may list several staff, comma-separated)
+            sql, p = dfilter("visit_date")
+            cursor.execute(f"""
+                SELECT assigned_to AS name,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
+                FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != ''{sql}
+                GROUP BY assigned_to
+            """, p)
+            for row in cursor.fetchall():
+                names = [n.strip() for n in (row["name"] or "").split(",") if n.strip()]
+                for nm in names:
+                    r = rec(nm)
+                    r["site_visits_total"] += row["total"]
+                    r["site_visits_completed"] += (row["completed"] or 0)
+
+            result = list(staff.values())
+            result.sort(key=lambda x: (x["tickets_created"], x["articles_created"], x["site_visits_total"]), reverse=True)
+
+            # Distinct site-visit totals for the summary card: a visit shared by
+            # several staff counts once here, even though it appears in each
+            # assignee's per-staff row. (Tickets/articles have a single
+            # creator/author, so their totals equal the per-staff sums.)
+            sv_sql, sv_p = dfilter("visit_date")
+            cursor.execute(f"""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
+                FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != ''{sv_sql}
+            """, sv_p)
+            sv = cursor.fetchone()
+
+            return {
+                "staff": result,
+                "total_tickets": sum(s["tickets_created"] for s in result),
+                "total_articles": sum(s["articles_created"] for s in result),
+                "total_site_visits": sv["total"] or 0,
+                "total_site_visits_completed": sv["completed"] or 0,
+                "total_staff": len(result),
+                "date_from": date_from,
+                "date_to": date_to,
+            }
+
     def get_staff_tickets(self, staff_name: str, date_from: str = None, date_to: str = None,
                           limit: int = 100, offset: int = 0) -> dict:
         """Get all tickets created by a specific staff member."""

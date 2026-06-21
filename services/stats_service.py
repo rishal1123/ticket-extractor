@@ -66,6 +66,13 @@ class StatsService:
             date_from=date_from, date_to=date_to, exclude_negative=exclude_negative
         )
 
+    def get_staff_summary(self, date_from: str = None, date_to: str = None) -> Dict:
+        """
+        Clean per-staff summary: tickets created, articles created, and site
+        visits assigned, within an optional date range.
+        """
+        return self.db.get_staff_summary(date_from=date_from, date_to=date_to)
+
     def get_staff_tickets(self, staff_name: str, date_from: str = None,
                           date_to: str = None, limit: int = 50, offset: int = 0) -> Dict:
         """

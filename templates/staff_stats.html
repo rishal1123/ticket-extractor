@@ -38,12 +38,6 @@
 .rank-2 { background: linear-gradient(135deg, #C0C0C0, #A8A8A8); color: white; }
 .rank-3 { background: linear-gradient(135deg, #CD7F32, #8B4513); color: white; }
 .rank-default { background: #e9ecef; color: #495057; }
-.progress-bar-tickets { background-color: var(--success-color); }
-.progress-bar-articles { background-color: var(--secondary-color); }
-.sync-info {
-    font-size: 0.8rem;
-    color: #6c757d;
-}
 .quick-filter-btn {
     border-radius: 6px;
     font-size: 0.8rem;
@@ -53,12 +47,10 @@
     border-color: var(--secondary-color);
     color: white;
 }
-.perf-good { color: #27ae60; font-weight: 600; }
-.perf-warning { color: #f39c12; font-weight: 600; }
-.perf-bad { color: #e74c3c; font-weight: 600; }
-.row-good { background-color: rgba(39, 174, 96, 0.05); }
-.row-warning { background-color: rgba(243, 156, 18, 0.05); }
-.row-bad { background-color: rgba(231, 76, 60, 0.05); }
+.sync-info {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
 @media (max-width: 768px) {
     .stat-icon {
         width: 40px;
@@ -76,7 +68,7 @@
 {% block content %}
 <!-- Summary Cards -->
 <div class="row mb-3 g-2">
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-md-3">
         <div class="stat-card card h-100">
             <div class="card-body d-flex align-items-center p-2 p-md-3">
                 <div class="stat-icon bg-success bg-opacity-10 text-success me-2 me-md-3">
@@ -84,25 +76,12 @@
                 </div>
                 <div>
                     <div class="stat-value" id="totalTickets">0</div>
-                    <div class="text-muted small">ISP Tickets</div>
+                    <div class="text-muted small">Tickets Created</div>
                 </div>
             </div>
         </div>
     </div>
-    <div class="col-6 col-md-2">
-        <div class="stat-card card h-100">
-            <div class="card-body d-flex align-items-center p-2 p-md-3">
-                <div class="stat-icon bg-purple bg-opacity-10 text-purple me-2 me-md-3" style="background-color: rgba(138, 43, 226, 0.1); color: #8a2be2;">
-                    <i class="bi bi-ticket"></i>
-                </div>
-                <div>
-                    <div class="stat-value" id="totalZnunyOnly">0</div>
-                    <div class="text-muted small">Znuny Only</div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-md-3">
         <div class="stat-card card h-100">
             <div class="card-body d-flex align-items-center p-2 p-md-3">
                 <div class="stat-icon bg-info bg-opacity-10 text-info me-2 me-md-3">
@@ -110,12 +89,12 @@
                 </div>
                 <div>
                     <div class="stat-value" id="totalArticles">0</div>
-                    <div class="text-muted small">Articles</div>
+                    <div class="text-muted small">Articles Created</div>
                 </div>
             </div>
         </div>
     </div>
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-md-3">
         <div class="stat-card card h-100">
             <div class="card-body d-flex align-items-center p-2 p-md-3">
                 <div class="stat-icon bg-warning bg-opacity-10 text-warning me-2 me-md-3">
@@ -128,20 +107,7 @@
             </div>
         </div>
     </div>
-    <div class="col-6 col-md-2">
-        <div class="stat-card card h-100">
-            <div class="card-body d-flex align-items-center p-2 p-md-3">
-                <div class="stat-icon bg-primary bg-opacity-10 text-primary me-2 me-md-3">
-                    <i class="bi bi-clock-history"></i>
-                </div>
-                <div>
-                    <div class="stat-value" id="avgOnTime">--%</div>
-                    <div class="text-muted small">Avg On Time</div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-md-3">
         <div class="stat-card card h-100">
             <div class="card-body d-flex align-items-center p-2 p-md-3">
                 <div class="stat-icon bg-secondary bg-opacity-10 text-secondary me-2 me-md-3">
@@ -165,7 +131,6 @@
         <div class="col-12 col-md-auto">
             <div class="btn-group btn-group-sm flex-wrap" role="group">
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn active" onclick="setDateFilter('today')">Today</button>
-                <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('yesterday')">Yest.</button>
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('week')">Week</button>
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('month')">Month</button>
                 <button type="button" class="btn btn-outline-secondary quick-filter-btn" onclick="setDateFilter('all')">All</button>
@@ -181,14 +146,6 @@
             <div class="d-flex align-items-center gap-1">
                 <label class="mb-0 text-muted small">To:</label>
                 <input type="date" class="form-control form-control-sm" id="dateTo" onchange="setDateFilter('custom')">
-            </div>
-        </div>
-        <div class="col-12 col-md-auto">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="excludeNegative" checked onchange="loadStaffStats()">
-                <label class="form-check-label small text-muted" for="excludeNegative" title="Exclude historical tickets where Znuny ticket existed before extractor saw it">
-                    Exclude negative time
-                </label>
             </div>
         </div>
         <div class="col-auto ms-auto">
@@ -207,7 +164,7 @@
             <i class="bi bi-bar-chart me-1"></i>Staff Performance
             <small class="text-muted">(click name to view details)</small>
         </h6>
-        <div class="sync-info" id="syncInfo">
+        <div class="sync-info">
             Auto-updates every 30s
         </div>
     </div>
@@ -217,44 +174,20 @@
                 <tr>
                     <th style="width: 40px;">#</th>
                     <th>Staff</th>
-                    <th class="text-center" style="width: 70px;" title="ISP Portal Tickets">ISP</th>
-                    <th class="text-center d-none d-md-table-cell" style="width: 70px;" title="Znuny-Only Tickets">Znuny</th>
-                    <th class="text-center d-none d-sm-table-cell" style="width: 70px;">Articles</th>
-                    <th class="text-center d-none d-lg-table-cell" style="width: 70px;" title="Site Visits">Visits</th>
-                    <th class="text-center" style="width: 80px;">On Time %</th>
-                    <th class="text-center d-none d-sm-table-cell" style="width: 70px;">Avg Time</th>
-                    <th class="d-none d-xl-table-cell" style="width: 140px;">Breakdown</th>
+                    <th class="text-center" style="width: 120px;" title="Znuny tickets created by this staff">Tickets</th>
+                    <th class="text-center" style="width: 120px;" title="Articles authored by this staff">Articles</th>
+                    <th class="text-center" style="width: 120px;" title="Site visits assigned (completed / total)">Site Visits</th>
                 </tr>
             </thead>
             <tbody id="staffTable">
                 <tr>
-                    <td colspan="9" class="text-center text-muted py-4">
+                    <td colspan="5" class="text-center text-muted py-4">
                         <i class="bi bi-cloud-download fs-3 d-block mb-2"></i>
                         Loading staff statistics...
                     </td>
                 </tr>
             </tbody>
         </table>
-    </div>
-</div>
-
-<!-- Legend -->
-<div class="table-container mt-3">
-    <h6 class="mb-2"><i class="bi bi-info-circle me-1"></i>Performance Legend</h6>
-    <div class="small">
-        <div class="row g-2">
-            <div class="col-12 col-md-4">
-                <span class="badge bg-success me-1">On Time</span> &lt;5 min to create ticket
-            </div>
-            <div class="col-12 col-md-4">
-                <span class="perf-good">Green</span> &ge;80% on time |
-                <span class="perf-warning">Yellow</span> 50-80% |
-                <span class="perf-bad">Red</span> &lt;50%
-            </div>
-            <div class="col-12 col-md-4">
-                <strong>Avg Time:</strong> Average time from extractor to Znuny
-            </div>
-        </div>
     </div>
 </div>
 {% endblock %}
@@ -268,9 +201,17 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(() => { if (!document.hidden) loadStaffStats(); }, 30000);
 });
 
+// Format a Date using local getters (Date is already MVT-aligned via getNowMaldives).
+function formatDateInput(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
 function setDateFilter(filter, autoLoad = true) {
     currentFilter = filter;
-    const today = new Date();
+    const today = getNowMaldives();  // MVT-aware "now" from common.js
     const dateFrom = document.getElementById('dateFrom');
     const dateTo = document.getElementById('dateTo');
 
@@ -285,16 +226,9 @@ function setDateFilter(filter, autoLoad = true) {
             dateFrom.value = todayStr;
             dateTo.value = todayStr;
             break;
-        case 'yesterday':
-            const yesterday = new Date(today);
-            yesterday.setDate(today.getDate() - 1);
-            const yesterdayStr = formatDateInput(yesterday);
-            dateFrom.value = yesterdayStr;
-            dateTo.value = yesterdayStr;
-            break;
         case 'week':
             const weekStart = new Date(today);
-            weekStart.setDate(today.getDate() - 7);
+            weekStart.setDate(today.getDate() - 6);  // last 7 days inclusive
             dateFrom.value = formatDateInput(weekStart);
             dateTo.value = formatDateInput(today);
             break;
@@ -314,49 +248,32 @@ function setDateFilter(filter, autoLoad = true) {
     if (autoLoad) loadStaffStats();
 }
 
-function formatDateInput(date) {
-    return date.toISOString().split('T')[0];
-}
-
 async function loadStaffStats() {
     showLoading(true);
     try {
         const dateFrom = document.getElementById('dateFrom').value;
         const dateTo = document.getElementById('dateTo').value;
-        const excludeNegative = document.getElementById('excludeNegative').checked;
 
-        let url = '/api/staff-stats-detailed';
+        let url = '/api/staff-summary';
         const params = new URLSearchParams();
         if (dateFrom) params.append('date_from', dateFrom);
         if (dateTo) params.append('date_to', dateTo);
-        params.append('exclude_negative', excludeNegative);
         if (params.toString()) url += '?' + params.toString();
 
         const response = await fetch(url);
         const data = await response.json();
-        const stats = data.stats || data;  // Handle both wrapped and unwrapped responses
+        const stats = data.stats || data;
 
         document.getElementById('totalTickets').textContent = stats.total_tickets || 0;
-        document.getElementById('totalZnunyOnly').textContent = stats.total_znuny_only || 0;
         document.getElementById('totalArticles').textContent = stats.total_articles || 0;
         document.getElementById('totalSiteVisits').textContent = stats.total_site_visits || 0;
-        document.getElementById('totalStaff').textContent = stats.staff?.length || 0;
-
-        // Calculate average on-time percentage
-        if (stats.staff && stats.staff.length > 0) {
-            const avgOnTime = stats.staff.reduce((sum, s) => sum + (s.on_time_pct || 0), 0) / stats.staff.length;
-            const avgEl = document.getElementById('avgOnTime');
-            avgEl.textContent = Math.round(avgOnTime) + '%';
-            avgEl.className = 'stat-value ' + (avgOnTime >= 80 ? 'perf-good' : avgOnTime >= 50 ? 'perf-warning' : 'perf-bad');
-        }
+        document.getElementById('totalStaff').textContent = stats.total_staff || 0;
 
         const infoEl = document.getElementById('dateRangeInfo');
         if (stats.date_from && stats.date_to) {
-            if (stats.date_from === stats.date_to) {
-                infoEl.textContent = `Stats for: ${stats.date_from}`;
-            } else {
-                infoEl.textContent = `Stats from ${stats.date_from} to ${stats.date_to}`;
-            }
+            infoEl.textContent = stats.date_from === stats.date_to
+                ? `Stats for: ${stats.date_from}`
+                : `Stats from ${stats.date_from} to ${stats.date_to}`;
         } else {
             infoEl.textContent = 'All-time stats';
         }
@@ -375,9 +292,9 @@ function renderStaffTable(staff) {
     if (!staff || staff.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="9" class="text-center text-muted py-4">
-                    <i class="bi bi-cloud-download fs-3 d-block mb-2"></i>
-                    Loading staff statistics...
+                <td colspan="5" class="text-center text-muted py-4">
+                    <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                    No staff activity for this period
                 </td>
             </tr>
         `;
@@ -388,81 +305,26 @@ function renderStaffTable(staff) {
         const rank = index + 1;
         const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-default';
 
-        const onTimePct = s.on_time_pct || 0;
-        const perfClass = onTimePct >= 80 ? 'perf-good' : onTimePct >= 50 ? 'perf-warning' : 'perf-bad';
-        const rowClass = onTimePct >= 80 ? 'row-good' : onTimePct >= 50 ? 'row-warning' : 'row-bad';
-
-        const avgMin = s.avg_minutes || 0;
-        const avgClass = avgMin <= 5 ? 'perf-good' : avgMin <= 10 ? 'perf-warning' : 'perf-bad';
-        const avgText = avgMin < 60 ? Math.round(avgMin) + 'm' : Math.floor(avgMin/60) + 'h ' + Math.round(avgMin%60) + 'm';
-
-        const total = s.tickets_created || 1;
-
-        // Site visits display
-        const siteVisitsTotal = s.site_visits_total || 0;
-        const siteVisitsCompleted = s.site_visits_completed || 0;
-        const siteVisitsText = siteVisitsTotal > 0 ? `${siteVisitsCompleted}/${siteVisitsTotal}` : '0';
+        const visitsTotal = s.site_visits_total || 0;
+        const visitsCompleted = s.site_visits_completed || 0;
+        const visitsText = visitsTotal > 0 ? `${visitsCompleted}/${visitsTotal}` : '0';
 
         return `
-            <tr class="staff-row ${rowClass}" onclick="window.location='/staff/${encodeURIComponent(s.name)}'">
-                <td>
-                    <span class="rank-badge ${rankClass}">${rank}</span>
-                </td>
-                <td>
-                    <strong>${escapeHtml(s.name)}</strong>
-                </td>
+            <tr class="staff-row" onclick="window.location='/staff/${encodeURIComponent(s.name)}'">
+                <td><span class="rank-badge ${rankClass}">${rank}</span></td>
+                <td><strong>${escapeHtml(s.name)}</strong></td>
                 <td class="text-center">
                     <span class="badge bg-success">${s.tickets_created || 0}</span>
                 </td>
-                <td class="text-center d-none d-md-table-cell">
-                    <span class="badge" style="background-color: #8a2be2;">${s.znuny_only_count || 0}</span>
-                </td>
-                <td class="text-center d-none d-sm-table-cell">
-                    <span class="badge bg-info">${s.articles_count || 0}</span>
-                </td>
-                <td class="text-center d-none d-lg-table-cell">
-                    <span class="badge bg-warning text-dark" title="${siteVisitsCompleted} completed / ${siteVisitsTotal} total">${siteVisitsText}</span>
+                <td class="text-center">
+                    <span class="badge bg-info">${s.articles_created || 0}</span>
                 </td>
                 <td class="text-center">
-                    <span class="${perfClass}">${onTimePct}%</span>
-                </td>
-                <td class="text-center d-none d-sm-table-cell">
-                    <span class="${avgClass}">${avgText}</span>
-                </td>
-                <td class="d-none d-xl-table-cell">
-                    <div class="d-flex gap-1 small">
-                        <span class="badge bg-success" title="Within 5min">${s.within_5min || 0}</span>
-                        <span class="badge bg-warning" title="5-10min">${s.within_10min || 0}</span>
-                        <span class="badge bg-danger" title="Over 10min">${s.over_10min || 0}</span>
-                    </div>
+                    <span class="badge bg-warning text-dark" title="${visitsCompleted} completed / ${visitsTotal} total">${visitsText}</span>
                 </td>
             </tr>
         `;
     }).join('');
-}
-
-async function syncZnunyDetails() {
-    if (!confirm('Fetch detailed info from Znuny for all tickets?')) return;
-
-    showLoading(true);
-    document.getElementById('syncInfo').textContent = 'Syncing...';
-
-    try {
-        const response = await fetch('/api/sync-znuny-details', { method: 'POST' });
-        const data = await response.json();
-
-        document.getElementById('syncInfo').textContent =
-            `Synced: ${new Date().toLocaleTimeString()} - ${data.tickets_synced} tickets, ${data.articles_added} articles`;
-
-        await loadStaffStats();
-        alert(`Sync complete!\n${data.tickets_synced} tickets synced\n${data.articles_added} articles added`);
-    } catch (error) {
-        console.error('Error syncing:', error);
-        document.getElementById('syncInfo').textContent = 'Sync failed';
-        alert('Error syncing: ' + error.message);
-    } finally {
-        showLoading(false);
-    }
 }
 
 function exportCSV() {
