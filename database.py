@@ -1400,6 +1400,7 @@ class Database:
                 SELECT created_by as staff, COUNT(*) as znuny_only_count
                 FROM znuny_tickets
                 WHERE created_by IS NOT NULL AND created_by != ''
+                    AND isp_ticket_id IS NULL
                 {znuny_only_date_filter}
                 GROUP BY created_by
             """, znuny_only_params)
@@ -2600,34 +2601,78 @@ class Database:
             return [row["owner"] for row in cursor.fetchall()]
 
     def get_znuny_only_staff_stats(self, date_from: str = None, date_to: str = None) -> list:
-        """Get staff statistics for Znuny-only tickets."""
+        """Per-staff Znuny performance for the date range:
+        - tickets *created by* the staff member (creator attribution, scoped by
+          created/closed in range, with open/closed/avg-close breakdown)
+        - articles *created by* the staff member (author attribution, scoped by
+          the article's own created_at)
+
+        Staff who only wrote articles (no tickets created) in the range still
+        appear, and vice versa."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            query = """
+            staff = {}
+
+            def blank(name):
+                return {
+                    "created_by": name,
+                    "total_tickets": 0,
+                    "closed_tickets": 0,
+                    "open_tickets": 0,
+                    "avg_close_time_minutes": None,
+                    "total_articles": 0,
+                }
+
+            # Tickets created by each staff member (creator attribution)
+            date_sql, params = self._znuny_date_scope(date_from, date_to)
+            cursor.execute(f"""
                 SELECT
                     created_by,
                     COUNT(*) as total_tickets,
                     SUM(CASE WHEN LOWER(state) IN ('closed', 'resolved') THEN 1 ELSE 0 END) as closed_tickets,
-                    AVG(CASE WHEN time_to_close_minutes IS NOT NULL THEN time_to_close_minutes END) as avg_close_time,
-                    SUM(article_count) as total_articles
+                    AVG(CASE WHEN time_to_close_minutes IS NOT NULL THEN time_to_close_minutes END) as avg_close_time
                 FROM znuny_tickets
                 WHERE created_by IS NOT NULL AND created_by != ''
-            """
-            date_sql, params = self._znuny_date_scope(date_from, date_to)
-            query += date_sql
+                {date_sql}
+                GROUP BY created_by
+            """, params)
+            for row in cursor.fetchall():
+                name = row["created_by"]
+                rec = blank(name)
+                closed = row["closed_tickets"] or 0
+                rec["total_tickets"] = row["total_tickets"]
+                rec["closed_tickets"] = closed
+                rec["open_tickets"] = row["total_tickets"] - closed
+                rec["avg_close_time_minutes"] = round(row["avg_close_time"], 1) if row["avg_close_time"] else None
+                staff[name] = rec
 
-            query += " GROUP BY created_by ORDER BY total_tickets DESC"
-            cursor.execute(query, params)
+            # Articles created by each staff member (author attribution, scoped by
+            # the article's own created_at)
+            art_parts, art_params = [], []
+            if date_from:
+                art_parts.append("DATE(created_at) >= ?")
+                art_params.append(date_from)
+            if date_to:
+                art_parts.append("DATE(created_at) <= ?")
+                art_params.append(date_to)
+            art_where = (" AND " + " AND ".join(art_parts)) if art_parts else ""
+            cursor.execute(f"""
+                SELECT created_by, COUNT(*) as cnt
+                FROM znuny_articles
+                WHERE created_by IS NOT NULL AND created_by != ''
+                {art_where}
+                GROUP BY created_by
+            """, art_params)
+            for row in cursor.fetchall():
+                name = row["created_by"]
+                if name not in staff:
+                    staff[name] = blank(name)
+                staff[name]["total_articles"] = row["cnt"]
 
-            return [{
-                "created_by": row["created_by"],
-                "total_tickets": row["total_tickets"],
-                "closed_tickets": row["closed_tickets"] or 0,
-                "open_tickets": row["total_tickets"] - (row["closed_tickets"] or 0),
-                "avg_close_time_minutes": round(row["avg_close_time"], 1) if row["avg_close_time"] else None,
-                "total_articles": row["total_articles"] or 0
-            } for row in cursor.fetchall()]
+            result = list(staff.values())
+            result.sort(key=lambda x: (x["total_tickets"], x["total_articles"]), reverse=True)
+            return result
 
     def get_znuny_only_staff_names(self) -> list:
         """Get list of staff names who created Znuny-only tickets."""
