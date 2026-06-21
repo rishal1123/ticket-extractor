@@ -2418,6 +2418,31 @@ class Database:
             ))
             return cursor.lastrowid
 
+    @staticmethod
+    def _znuny_date_scope(date_from: str = None, date_to: str = None):
+        """Build a WHERE fragment matching tickets whose created_at OR closed_at
+        falls within [date_from, date_to]. This makes a date range include both
+        tickets created in the period and tickets closed in the period (so
+        closing work on older tickets is counted). Returns ('', []) when no
+        bounds are given. closed_at IS NULL rows naturally fail the closed_at
+        comparison, so they only match via created_at."""
+        if not date_from and not date_to:
+            return "", []
+
+        def bounds(col):
+            parts, p = [], []
+            if date_from:
+                parts.append(f"DATE({col}) >= ?")
+                p.append(date_from)
+            if date_to:
+                parts.append(f"DATE({col}) <= ?")
+                p.append(date_to)
+            return "(" + " AND ".join(parts) + ")", p
+
+        created_sql, created_p = bounds("created_at")
+        closed_sql, closed_p = bounds("closed_at")
+        return f" AND ({created_sql} OR {closed_sql})", created_p + closed_p
+
     def get_znuny_only_tickets(self, state: str = None, created_by: str = None,
                                 queue: str = None, owner: str = None,
                                 date_from: str = None, date_to: str = None,
@@ -2451,13 +2476,9 @@ class Database:
                 query += " AND LOWER(owner) = LOWER(?)"
                 params.append(owner)
 
-            if date_from:
-                query += " AND DATE(created_at) >= ?"
-                params.append(date_from)
-
-            if date_to:
-                query += " AND DATE(created_at) <= ?"
-                params.append(date_to)
+            date_sql, date_params = self._znuny_date_scope(date_from, date_to)
+            query += date_sql
+            params.extend(date_params)
 
             if linked == "yes":
                 query += " AND isp_ticket_id IS NOT NULL"
@@ -2497,13 +2518,22 @@ class Database:
 
             return {"total": total, "tickets": tickets}
 
-    def get_znuny_only_stats(self) -> dict:
-        """Get summary statistics for Znuny tickets (all + linked/unlinked breakdown)."""
+    def get_znuny_only_stats(self, date_from: str = None, date_to: str = None) -> dict:
+        """Get summary statistics for Znuny tickets (all + linked/unlinked breakdown).
+
+        When date_from/date_to are given, the total/open/closed/linked/unlinked and
+        avg-close counts are scoped to tickets whose created_at falls in that range
+        (matching the staff-stats and tickets tables on the page)."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
+            # Build a shared WHERE clause so all aggregates use the same date scope
+            # (matches tickets created OR closed within the range).
+            date_sql, params = self._znuny_date_scope(date_from, date_to)
+            where = "WHERE 1=1" + date_sql
+
             # All counts in one query
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN state IS NULL OR LOWER(state) NOT IN ('closed', 'resolved') THEN 1 ELSE 0 END) as open_count,
@@ -2511,7 +2541,8 @@ class Database:
                     SUM(CASE WHEN isp_ticket_id IS NOT NULL THEN 1 ELSE 0 END) as linked,
                     SUM(CASE WHEN isp_ticket_id IS NULL THEN 1 ELSE 0 END) as unlinked
                 FROM znuny_tickets
-            """)
+                {where}
+            """, params)
             row = cursor.fetchone()
             total = row["total"]
             open_count = row["open_count"]
@@ -2522,18 +2553,18 @@ class Database:
             # Today's date in MVT
             today = now_maldives().date().isoformat()
 
-            # Today's new (first seen today)
+            # Today's new (first seen today) - always all-time "today", not date-scoped
             cursor.execute("""
                 SELECT COUNT(*) as count FROM znuny_tickets
                 WHERE DATE(first_seen_at) = ?
             """, (today,))
             today_new = cursor.fetchone()["count"]
 
-            # Avg time to close (for closed tickets)
-            cursor.execute("""
+            # Avg time to close (for closed tickets in scope)
+            cursor.execute(f"""
                 SELECT AVG(time_to_close_minutes) as avg_time FROM znuny_tickets
-                WHERE time_to_close_minutes IS NOT NULL
-            """)
+                {where} AND time_to_close_minutes IS NOT NULL
+            """, params)
             avg_close_time = cursor.fetchone()["avg_time"]
 
             return {
@@ -2583,14 +2614,8 @@ class Database:
                 FROM znuny_tickets
                 WHERE created_by IS NOT NULL AND created_by != ''
             """
-            params = []
-
-            if date_from:
-                query += " AND DATE(created_at) >= ?"
-                params.append(date_from)
-            if date_to:
-                query += " AND DATE(created_at) <= ?"
-                params.append(date_to)
+            date_sql, params = self._znuny_date_scope(date_from, date_to)
+            query += date_sql
 
             query += " GROUP BY created_by ORDER BY total_tickets DESC"
             cursor.execute(query, params)

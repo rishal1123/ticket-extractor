@@ -274,8 +274,16 @@ function setDateFilter(filter) {
 }
 
 function getDateRange(filter) {
-    const today = new Date();
-    const formatDate = (d) => d.toISOString().split('T')[0];
+    // Use MVT-aware "now" (getNowMaldives from common.js) and read it with
+    // local getters so the date matches how created_at is stored (Maldives Time).
+    // Do NOT use toISOString() here — it re-converts to UTC and shifts the day.
+    const today = getNowMaldives();
+    const formatDate = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
 
     switch(filter) {
         case 'today':
@@ -344,7 +352,12 @@ async function loadOwnerNames() {
 
 async function loadStats() {
     try {
-        const response = await fetch('/api/znuny-only/stats');
+        const dateRange = getDateRange(currentDateFilter);
+        let url = '/api/znuny-only/stats?';
+        if (dateRange.from) url += `date_from=${dateRange.from}&`;
+        if (dateRange.to) url += `date_to=${dateRange.to}`;
+
+        const response = await fetch(url);
         const stats = await response.json();
 
         document.getElementById('totalTickets').textContent = stats.total || 0;

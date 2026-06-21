@@ -16,9 +16,12 @@ logger = get_logger("znuny_only_controller")
 
 @router.get("/stats")
 @handle_errors("get znuny-only stats")
-async def get_znuny_only_stats(db: Database = Depends(get_db)):
-    """Get summary statistics for Znuny-only tickets."""
-    stats = db.get_znuny_only_stats()
+async def get_znuny_only_stats(
+    date_filter: DateFilterParams = Depends(get_date_filter),
+    db: Database = Depends(get_db)
+):
+    """Get summary statistics for Znuny-only tickets (scoped to date range if given)."""
+    stats = db.get_znuny_only_stats(date_filter.date_from, date_filter.date_to)
     return JSONResponse(content=stats)
 
 
