@@ -27,10 +27,11 @@ class FlareSolverrClient:
             return {
                 "reachable": True,
                 "version": data.get("version"),
+                "user_agent": data.get("userAgent"),
                 "message": data.get("msg") or "ok",
             }
         except Exception as e:
-            return {"reachable": False, "version": None, "message": str(e)}
+            return {"reachable": False, "version": None, "user_agent": None, "message": str(e)}
 
     def solve(self, target_url: str, timeout_ms: int = 60000) -> dict | None:
         """Ask FlareSolverr to bypass a Cloudflare-protected URL.

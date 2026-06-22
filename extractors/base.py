@@ -228,6 +228,12 @@ class BaseExtractor(ABC):
             except Exception as e:
                 self.logger.warning(f"Failed to clear session directory: {e}")
 
+    def browser_user_agent(self) -> Optional[str]:
+        """User-Agent the portal's browser should use. Default None (Chromium's
+        own UA). Cloudflare-protected portals override to match FlareSolverr's UA,
+        so injected FlareSolverr cookies are accepted (clearance is UA-bound)."""
+        return None
+
     def _get_or_create_browser(self) -> BrowserManager:
         """Get or create a dedicated browser for this portal.
 
@@ -255,7 +261,7 @@ class BaseExtractor(ABC):
                         pass
                     BaseExtractor._portal_browsers.pop(portal, None)
 
-        browser = BrowserManager(headless=self.headless)
+        browser = BrowserManager(headless=self.headless, user_agent=self.browser_user_agent())
         session_dir = self._get_session_dir()
         browser.start(user_data_dir=session_dir)
         with BaseExtractor._portal_browsers_lock:
@@ -544,11 +550,25 @@ class BaseExtractor(ABC):
             self.logger.warning("Cookie injection failed after FlareSolverr solve")
             return
 
-        # Retry the navigation with the new cookies in place
-        self.logger.info("Cookies injected — retrying navigation")
-        self.browser.page.goto(url, **goto_kwargs)
+        # Retry the navigation with the new cookies in place. Use
+        # wait_until="domcontentloaded" (not "load") — on a Cloudflare interstitial
+        # this lets the challenge JS run and redirect to the real page reliably
+        # (verified: "load" gets stuck on the challenge, "domcontentloaded" clears).
+        retry_kwargs = {**goto_kwargs, "wait_until": "domcontentloaded"}
+        self.browser.page.goto(url, **retry_kwargs)
 
-        if self.browser.is_cloudflare_challenge():
+        # Cloudflare shows a brief "Just a moment" interstitial that its JS clears
+        # (using the injected clearance + matching UA) after a couple seconds and
+        # redirects to the real page. Poll for it to clear before concluding —
+        # checking immediately catches the transient challenge as a false failure.
+        cleared = not self.browser.is_cloudflare_challenge()
+        for _ in range(12):
+            if cleared:
+                break
+            self.browser.page.wait_for_timeout(1000)
+            cleared = not self.browser.is_cloudflare_challenge()
+
+        if not cleared:
             self.logger.warning("Cloudflare challenge persists after FlareSolverr solve — may need same IP as FlareSolverr")
             self.db.log_system("warning", f"extractor.{self.config.name}", f"Cloudflare challenge persists on {url} after cookie injection")
         else:

@@ -2,10 +2,33 @@ import time
 
 from .base import BaseExtractor
 from models.ticket import Ticket
+from config import Config
 
 
 class DhiraaguExtractor(BaseExtractor):
     """Extractor for Dhiraagu portal (AFAS system - Filament PHP)."""
+
+    # Cache of FlareSolverr's User-Agent (class-level, persists across instances).
+    _flare_ua: str = None
+
+    def browser_user_agent(self):
+        """Match FlareSolverr's User-Agent so the cf clearance carried by the
+        injected FlareSolverr cookies is accepted (clearance is UA-bound — proven:
+        cookies alone -> 'Just a moment'; cookies + FlareSolverr UA -> AFAS login)."""
+        if DhiraaguExtractor._flare_ua:
+            return DhiraaguExtractor._flare_ua
+        try:
+            from utils.flaresolverr import FlareSolverrClient
+            url = Config.get_flaresolverr_url()
+            if url:
+                ua = FlareSolverrClient(url).health().get("user_agent")
+                if ua:
+                    DhiraaguExtractor._flare_ua = ua
+                    self.logger.info(f"Dhiraagu browser UA <- FlareSolverr: {ua[:60]}")
+                    return ua
+        except Exception as e:
+            self.logger.warning(f"Could not get FlareSolverr UA: {e}")
+        return None  # fall back to Chromium default (Cloudflare won't be bypassed)
 
     # ============================================================
     # CSS SELECTORS
@@ -51,28 +74,23 @@ class DhiraaguExtractor(BaseExtractor):
         return f"{self.ORDERS_PAGE_URL}/{ticket.ticket_id}?activeRelationManager=notes"
 
     def is_logged_in(self) -> bool:
-        """Check if currently logged in to Dhiraagu portal."""
+        """Check if currently logged in to Dhiraagu portal.
+
+        Checks via the LOGIN page, NOT the protected /orders/hdc route: visiting
+        /orders/hdc while unauthenticated triggers a harder Cloudflare challenge
+        that poisons the browser so even /login then fails (verified). If already
+        authenticated, Dhiraagu redirects away from /login; otherwise the login
+        form is shown.
+        """
         try:
-            # Navigate to orders page and check if we can access it
-            self.navigate_to(self.ORDERS_PAGE_URL)
+            self.navigate_to(self.config.url)  # the /login URL
             time.sleep(2)
-
-            # If we're redirected to login page or see login form, we're not logged in
-            current_url = self.browser.page.url
-            if "login" in current_url:
-                return False
-
-            # Check for table (means we're logged in and on orders page)
-            tables = self.browser.page.query_selector_all(self.TABLE_SELECTOR)
-            if tables:
-                self.logger.info("Session is active - found orders table")
+            current_url = self.browser.page.url.lower()
+            # Redirected away from /login => we have a valid session.
+            if "/login" not in current_url:
+                self.logger.info("Session active - redirected away from login page")
                 return True
-
-            # Check for user menu (another sign of being logged in)
-            user_menu = self.browser.page.query_selector_all("[data-dropdown-trigger]")
-            if user_menu:
-                return True
-
+            # Still on the login page (form/Third Party button) => not logged in.
             return False
         except Exception as e:
             self.logger.debug(f"Session check failed: {e}")

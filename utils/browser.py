@@ -67,8 +67,9 @@ class BrowserManager:
     # Each thread gets one Playwright runtime, multiple browsers share it
     _thread_local = threading.local()
 
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, user_agent: str = None):
         self.headless = headless
+        self.user_agent = user_agent  # override Chromium's default UA (e.g. to match FlareSolverr)
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -124,12 +125,16 @@ class BrowserManager:
             # Persistent context - cookies/localStorage/sessionStorage saved to disk
             logger.info(f"Starting persistent browser (headless={self.headless}, dir={user_data_dir})")
             self._is_persistent = True
-            self._context = self._playwright.chromium.launch_persistent_context(
-                user_data_dir,
+            _ctx_kwargs = dict(
                 headless=self.headless,
                 args=CHROMIUM_ARGS,
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=ignore_https_errors,
+            )
+            if self.user_agent:
+                _ctx_kwargs["user_agent"] = self.user_agent
+            self._context = self._playwright.chromium.launch_persistent_context(
+                user_data_dir, **_ctx_kwargs
             )
             self._browser = None  # No separate Browser object with persistent context
             # Persistent context may already have a page open
