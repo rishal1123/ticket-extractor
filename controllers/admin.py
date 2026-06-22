@@ -292,6 +292,30 @@ async def update_isp_extraction(request: Request, db: Database = Depends(get_db)
     ))
 
 
+@settings_router.get("/portals")
+@handle_errors("get portal toggles")
+async def get_portal_toggles(db: Database = Depends(get_db)):
+    """Get per-portal extraction enabled state for all configured portals."""
+    from config import Config
+    portals = [
+        {"name": p.name, "enabled": db.get_portal_enabled(p.name)}
+        for p in Config.get_all_portals()
+    ]
+    return JSONResponse(content={"success": True, "portals": portals})
+
+
+@settings_router.post("/portals")
+@handle_errors("update portal toggles")
+async def update_portal_toggles(request: Request, db: Database = Depends(get_db)):
+    """Enable/disable extraction per portal. Body: {"portals": {"dhiraagu": true, ...}}."""
+    data = await request.json()
+    portals = data.get("portals", {}) or {}
+    for name, enabled in portals.items():
+        db.set_portal_enabled(name, bool(enabled))
+    logger.info(f"Per-portal extraction toggles updated: {portals}")
+    return JSONResponse(content=success_response("Portal settings saved"))
+
+
 @settings_router.get("")
 @handle_errors("get all settings")
 async def get_all_settings(db: Database = Depends(get_db)):

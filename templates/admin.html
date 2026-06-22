@@ -798,9 +798,13 @@
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" id="isp_extraction_enabled" checked>
                     <label class="form-check-label" for="isp_extraction_enabled">
-                        <strong>Enable ISP Checking</strong>
+                        <strong>Enable ISP Checking (all portals)</strong>
                     </label>
                 </div>
+                <hr class="my-3">
+                <label class="form-label small fw-bold mb-2">Per-Portal</label>
+                <p class="text-muted small mb-2">Turn individual ISP portals on or off. A disabled portal is skipped during extraction even when ISP Checking is on.</p>
+                <div id="portalToggles" class="row g-2"></div>
             </div>
         </div>
 
@@ -1631,6 +1635,22 @@ async function loadConfig() {
         if (typeof ispData.enabled === 'boolean') {
             document.getElementById('isp_extraction_enabled').checked = ispData.enabled;
         }
+
+        // Load per-portal toggles
+        const portalsResponse = await fetch('/api/settings/portals');
+        const portalsData = await portalsResponse.json();
+        const container = document.getElementById('portalToggles');
+        if (container && portalsData.portals) {
+            container.innerHTML = portalsData.portals.map(p => `
+                <div class="col-6 col-md-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input portal-toggle" type="checkbox"
+                               id="portal_${p.name}" data-portal="${p.name}" ${p.enabled ? 'checked' : ''}>
+                        <label class="form-check-label text-capitalize" for="portal_${p.name}">${p.name}</label>
+                    </div>
+                </div>
+            `).join('');
+        }
     } catch (error) {
         console.error('Error loading config:', error);
         alert('Error loading configuration');
@@ -1699,10 +1719,22 @@ async function saveConfig() {
         });
         const ispData = await ispResponse.json();
 
-        if (data.success && threshData.success && hoursData.success && ispData.success) {
+        // Save per-portal toggles
+        const portals = {};
+        document.querySelectorAll('.portal-toggle').forEach(el => {
+            portals[el.dataset.portal] = el.checked;
+        });
+        const portalsResponse = await fetch('/api/settings/portals', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ portals })
+        });
+        const portalsData = await portalsResponse.json();
+
+        if (data.success && threshData.success && hoursData.success && ispData.success && portalsData.success) {
             alert('Configuration saved successfully!\n\nNote: Some changes may require a server restart.');
         } else {
-            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || ispData.message || 'Unknown error'));
+            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || ispData.message || portalsData.message || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving config:', error);

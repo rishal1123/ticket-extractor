@@ -74,6 +74,10 @@ class SchedulerService:
         results = []
 
         for config in Config.get_all_portals():
+            if not db.get_portal_enabled(config.name):
+                logger.info(f"Portal {config.name} disabled in config, skipping")
+                continue
+
             if not config.url or not config.username:
                 logger.warning(f"Portal {config.name} not configured, skipping")
                 db.log_system("warning", f"extractor.{config.name}", "Portal not configured, skipping")
