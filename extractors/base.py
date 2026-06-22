@@ -37,6 +37,10 @@ class BaseExtractor(ABC):
     _login_cooldown_until: dict = {}     # portal -> epoch seconds to skip until
     LOGIN_FAIL_THRESHOLD = 3
     LOGIN_COOLDOWN_MINUTES = 30
+    # Whether to fall back to FlareSolverr when a Cloudflare challenge doesn't
+    # auto-clear. Off for portals that self-solve via stealth (Dhiraagu) — the
+    # injected, IP-bound cookies make things worse there.
+    USE_FLARESOLVERR_FALLBACK = True
     # Memory limit per browser - override in subclass for heavier portals
     MEMORY_LIMIT_MB = DEFAULT_MEMORY_LIMIT_MB
 
@@ -524,9 +528,26 @@ class BaseExtractor(ABC):
         if wait_until is not None:
             kwargs["wait_until"] = wait_until
         self.browser.page.goto(url, **kwargs)
-        # Transparently bypass Cloudflare challenges when FlareSolverr is configured
+        # Cloudflare: let the browser solve the JS challenge itself (a realistic
+        # UA + stealth evasions clears the "Just a moment" interstitial in a few
+        # seconds). Only fall back to FlareSolverr if it doesn't auto-clear AND
+        # the portal opts in — FlareSolverr's injected cookies are IP-bound and
+        # actively hurt when the browser can self-solve (e.g. Dhiraagu).
         if self.browser.is_cloudflare_challenge():
-            self._solve_cloudflare(url, kwargs)
+            if not self._wait_for_cf_autoclear() and self.USE_FLARESOLVERR_FALLBACK:
+                self._solve_cloudflare(url, kwargs)
+
+    def _wait_for_cf_autoclear(self, timeout_s: int = 35) -> bool:
+        """Poll for the Cloudflare interstitial to clear on its own. Returns True
+        if it cleared within timeout_s."""
+        for _ in range(timeout_s):
+            if not self.browser.is_cloudflare_challenge():
+                return True
+            self.browser.page.wait_for_timeout(1000)
+        cleared = not self.browser.is_cloudflare_challenge()
+        if cleared:
+            self.logger.info("Cloudflare challenge cleared by the browser itself")
+        return cleared
 
     def _solve_cloudflare(self, url: str, goto_kwargs: dict):
         """Use FlareSolverr to bypass a Cloudflare challenge on the current page."""

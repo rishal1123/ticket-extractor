@@ -59,7 +59,24 @@ CHROMIUM_ARGS = [
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
     "--disable-background-timer-throttling",
+    # Hide the automation flag so Cloudflare's bot checks don't trivially flag us.
+    "--disable-blink-features=AutomationControlled",
 ]
+
+# Init script applied to every context: mask the most obvious automation tells
+# (navigator.webdriver, missing window.chrome / plugins / languages) so the
+# browser can clear Cloudflare's JS challenge on its own.
+STEALTH_INIT_JS = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = window.chrome || { runtime: {}, app: {} };
+try { Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]}); } catch(e){}
+try { Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']}); } catch(e){}
+try {
+  const op = navigator.permissions.query.bind(navigator.permissions);
+  navigator.permissions.query = (p) => (p && p.name === 'notifications')
+    ? Promise.resolve({state: Notification.permission}) : op(p);
+} catch(e){}
+"""
 
 
 class BrowserManager:
@@ -152,6 +169,12 @@ class BrowserManager:
                 ignore_https_errors=ignore_https_errors,
             )
             self.page = self._context.new_page()
+
+        # Apply stealth evasions to all pages (before any navigation runs).
+        try:
+            self._context.add_init_script(STEALTH_INIT_JS)
+        except Exception as e:
+            logger.debug(f"Could not add stealth init script: {e}")
 
         # Detect actual Chromium PID (not the shared Playwright driver PID)
         self._detect_browser_pid(driver_pid, before_children)

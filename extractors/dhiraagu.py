@@ -8,27 +8,16 @@ from config import Config
 class DhiraaguExtractor(BaseExtractor):
     """Extractor for Dhiraagu portal (AFAS system - Filament PHP)."""
 
-    # Cache of FlareSolverr's User-Agent (class-level, persists across instances).
-    _flare_ua: str = None
+    # A realistic Chrome UA (NOT the Playwright "HeadlessChrome" default) so the
+    # browser clears Cloudflare's JS challenge on its own — proven: this UA +
+    # stealth evasions reaches the AFAS login page without FlareSolverr cookies.
+    REALISTIC_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    # Self-solve Cloudflare via stealth; FlareSolverr's IP-bound cookies hurt here.
+    USE_FLARESOLVERR_FALLBACK = False
 
     def browser_user_agent(self):
-        """Match FlareSolverr's User-Agent so the cf clearance carried by the
-        injected FlareSolverr cookies is accepted (clearance is UA-bound — proven:
-        cookies alone -> 'Just a moment'; cookies + FlareSolverr UA -> AFAS login)."""
-        if DhiraaguExtractor._flare_ua:
-            return DhiraaguExtractor._flare_ua
-        try:
-            from utils.flaresolverr import FlareSolverrClient
-            url = Config.get_flaresolverr_url()
-            if url:
-                ua = FlareSolverrClient(url).health().get("user_agent")
-                if ua:
-                    DhiraaguExtractor._flare_ua = ua
-                    self.logger.info(f"Dhiraagu browser UA <- FlareSolverr: {ua[:60]}")
-                    return ua
-        except Exception as e:
-            self.logger.warning(f"Could not get FlareSolverr UA: {e}")
-        return None  # fall back to Chromium default (Cloudflare won't be bypassed)
+        return self.REALISTIC_UA
 
     # ============================================================
     # CSS SELECTORS
@@ -100,15 +89,24 @@ class DhiraaguExtractor(BaseExtractor):
         self.logger.info(f"Logging into Dhiraagu portal: {self.config.url}")
 
         try:
-            self.navigate_to(self.config.url)
+            # is_logged_in() may have already loaded the /login page past
+            # Cloudflare — reuse it to avoid a second (slow, flaky) CF round-trip.
+            if not self.browser.page.query_selector(self.THIRDPARTY_BUTTON_XPATH):
+                self.navigate_to(self.config.url)
             time.sleep(2)
 
-            # Click "Third Party" button to show login form
+            # Click "Third Party" button to show login form. Wait generously — the
+            # Filament page can still be settling right after a Cloudflare clear.
             self.logger.info("Clicking Third Party button...")
-            if not self.wait_and_click(self.THIRDPARTY_BUTTON_XPATH):
+            if not self.wait_and_click(self.THIRDPARTY_BUTTON_XPATH, timeout=20):
                 self.logger.error("Failed to click Third Party button")
                 return False
-            time.sleep(2)
+
+            # The login form loads via Livewire after the click — wait for the
+            # email field to render before typing.
+            if not self.browser.wait_for_element(self.LOGIN_USERNAME_SELECTOR, timeout=20):
+                self.logger.error("Login form (email field) did not render after Third Party")
+                return False
 
             # Enter username
             if not self.wait_and_type(self.LOGIN_USERNAME_SELECTOR, self.config.username):
