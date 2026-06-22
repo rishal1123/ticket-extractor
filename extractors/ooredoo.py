@@ -90,40 +90,70 @@ class OoredooExtractor(BaseExtractor):
             self.logger.warning(f"Error checking login status: {e}")
             return False
 
+    def _login_error_text(self) -> str:
+        """Best-effort: read a visible login error/alert (e.g. bad credentials)."""
+        for sel in (".alert-danger", ".alert", ".invalid-feedback", "[role='alert']", ".error"):
+            try:
+                for el in self.find_elements(sel):
+                    txt = (el.text_content() or "").strip()
+                    if txt:
+                        return txt[:150]
+            except Exception:
+                pass
+        return ""
+
     def login(self) -> bool:
         self.logger.info(f"Logging into Ooredoo portal: {self.config.url}")
 
         try:
             self.navigate_to(self.LOGIN_URL)
-            time.sleep(2)
 
-            # Enter email
+            # Wait for the login form to actually render (handles slow loads).
+            # If it never appears, we may already be authenticated — verify.
+            try:
+                self.browser.page.wait_for_selector(self.LOGIN_EMAIL_SELECTOR, timeout=15000)
+            except Exception:
+                if self.is_logged_in():
+                    self.logger.info("Already authenticated (no login form shown)")
+                    return True
+                self.logger.error("Login form did not load")
+                self.take_screenshot("login_no_form")
+                return False
+
             if not self.wait_and_type(self.LOGIN_EMAIL_SELECTOR, self.config.username):
                 self.logger.error("Failed to enter email")
                 return False
-
-            # Enter password
             if not self.wait_and_type(self.LOGIN_PASSWORD_SELECTOR, self.config.password):
                 self.logger.error("Failed to enter password")
                 return False
-
-            # Click login button
             if not self.wait_and_click(self.LOGIN_BUTTON_SELECTOR):
                 self.logger.error("Failed to click login button")
                 return False
 
-            # Wait for login to complete
-            time.sleep(5)
-
-            # Verify login succeeded
-            current_url = self.browser.page.url
-            if "login" in current_url:
-                self.logger.error("Login failed - still on login page")
+            # Wait for the post-submit navigation OFF the login page instead of a
+            # fixed sleep (the old sleep(5) was sometimes too short -> false "still
+            # on login page"). A surfaced error means rejected credentials.
+            try:
+                self.browser.page.wait_for_url(
+                    lambda url: "login" not in (url or "").lower(), timeout=20000
+                )
+            except Exception:
+                err = self._login_error_text()
+                if err:
+                    self.logger.error(f"Ooredoo login rejected: {err}")
+                else:
+                    self.logger.error("Login failed - still on login page after submit")
                 self.take_screenshot("login_failed")
                 return False
 
-            self.logger.info("Login successful")
-            return True
+            # Authoritative check: can we actually reach the tickets table? This
+            # also covers landing on /public/ (a non-tickets page) after submit.
+            if self.is_logged_in():
+                self.logger.info("Login successful")
+                return True
+            self.logger.error("Login submitted but tickets page is not reachable")
+            self.take_screenshot("login_no_tickets")
+            return False
 
         except Exception as e:
             self.logger.error(f"Login error: {e}")
