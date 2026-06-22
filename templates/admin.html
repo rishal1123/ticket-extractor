@@ -181,6 +181,33 @@
     </div>
 </div>
 
+<!-- FlareSolverr Status (Cloudflare bypass, used by Dhiraagu) -->
+<div class="scheduler-status mb-3" style="background: #34495e;">
+    <div class="row g-2 align-items-center">
+        <div class="col-12 col-md-3">
+            <h5 class="mb-0"><i class="bi bi-shield-shaded me-1"></i>FlareSolverr</h5>
+            <div class="small opacity-75">Cloudflare bypass (Dhiraagu)</div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="small opacity-75">Status</div>
+            <div id="flareStatus"><span class="badge bg-secondary">--</span></div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="small opacity-75">Version</div>
+            <div class="fw-bold" id="flareVersion">--</div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="small opacity-75">URL / message</div>
+            <div class="small" id="flareInfo" style="word-break: break-all;">--</div>
+        </div>
+        <div class="col-12 col-md-1 text-end">
+            <button class="btn btn-light btn-sm" onclick="loadFlareStatus()" title="Re-check">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Summary Cards -->
 <div class="row mb-3 g-2">
     <div class="col-6 col-md-3">
@@ -870,12 +897,39 @@ async function changeAdminPassword() {
 async function refreshAll() {
     await Promise.all([
         loadSchedulerStatus(),
+        loadFlareStatus(),
         loadLoginSummary(),
         loadLoginEvents(),
         loadExtractionLogs(),
         loadSystemLogs(),
         loadLogStats()
     ]);
+}
+
+async function loadFlareStatus() {
+    const statusEl = document.getElementById('flareStatus');
+    const verEl = document.getElementById('flareVersion');
+    const infoEl = document.getElementById('flareInfo');
+    if (statusEl) statusEl.innerHTML = '<span class="badge bg-secondary">checking…</span>';
+    try {
+        const data = await (await fetch('/api/admin/flaresolverr-status')).json();
+        if (!data.configured) {
+            statusEl.innerHTML = '<span class="badge bg-secondary">Not configured</span>';
+            verEl.textContent = '--';
+            infoEl.textContent = data.message || 'FLARESOLVERR_URL not set';
+        } else if (data.reachable) {
+            statusEl.innerHTML = '<span class="badge bg-success">Reachable</span>';
+            verEl.textContent = data.version || '--';
+            infoEl.textContent = data.url;
+        } else {
+            statusEl.innerHTML = '<span class="badge bg-danger">Unreachable</span>';
+            verEl.textContent = '--';
+            infoEl.textContent = `${data.url} — ${data.message || 'no response'}`;
+        }
+    } catch (e) {
+        if (statusEl) statusEl.innerHTML = '<span class="badge bg-danger">Error</span>';
+        if (infoEl) infoEl.textContent = String(e);
+    }
 }
 
 let schedulerData = {};

@@ -14,6 +14,24 @@ class FlareSolverrClient:
     def __init__(self, url: str):
         self.url = url.rstrip("/")
 
+    def health(self, timeout_ms: int = 5000) -> dict:
+        """Ping FlareSolverr's root endpoint. Returns
+        {"reachable": bool, "version": str|None, "message": str}."""
+        try:
+            resp = httpx.get(f"{self.url}/", timeout=timeout_ms / 1000)
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except Exception:
+                data = {}
+            return {
+                "reachable": True,
+                "version": data.get("version"),
+                "message": data.get("msg") or "ok",
+            }
+        except Exception as e:
+            return {"reachable": False, "version": None, "message": str(e)}
+
     def solve(self, target_url: str, timeout_ms: int = 60000) -> dict | None:
         """Ask FlareSolverr to bypass a Cloudflare-protected URL.
 

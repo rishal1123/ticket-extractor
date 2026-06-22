@@ -26,6 +26,21 @@ logger = get_logger("admin_controller")
 _extraction_running = False
 
 
+@router.get("/flaresolverr-status")
+@handle_errors("flaresolverr status")
+async def flaresolverr_status():
+    """Report FlareSolverr availability (used to bypass Cloudflare for Dhiraagu)."""
+    from utils.flaresolverr import FlareSolverrClient
+    url = Config.get_flaresolverr_url()
+    if not url:
+        return JSONResponse(content={
+            "configured": False, "url": "", "reachable": False,
+            "version": None, "message": "FLARESOLVERR_URL not set",
+        })
+    health = FlareSolverrClient(url).health()
+    return JSONResponse(content={"configured": True, "url": url, **health})
+
+
 @router.post("/generate-staff-snapshots")
 @handle_errors("generate staff snapshots")
 async def generate_staff_snapshots(
