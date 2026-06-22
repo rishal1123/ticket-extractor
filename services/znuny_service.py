@@ -342,23 +342,23 @@ class ZnunyService:
         mark_closed is decoupled (ISP-linked only), so the sweep need not feed the
         open list. Pass force=True to run the catch-up regardless of the gate.
         """
-        user_ids = [uid for uid in ZnunyClient._user_names.keys() if str(uid).isdigit()]
-        if not user_ids:
-            logger.info("Creator sweep: no known agent user ids yet — skipping")
-            return set()
-
         open_swept = set()
         today = now_maldives().date().isoformat()
 
-        # Tier 1 — TODAY, all ticket types, every cycle.
+        # Tier 1 — TODAY: ALL Znuny tickets changed today (every service/creator/
+        # state), every cycle. Not limited to tracked agents, so today's stats are
+        # complete for every ticket type, not just OAN.
         today_start = now_maldives().replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
-        today_items = self.znuny_client.get_tickets_by_creators(user_ids, changed_since=today_start)
+        today_items = self.znuny_client.get_tickets_changed_since(today_start)
         open_swept |= self._ingest_swept_tickets(today_items, results)
         results["creator_sweep_today"] = len(today_items)
-        logger.info(f"Creator sweep (today) ingested {len(today_items)} tickets for {len(user_ids)} agents")
+        logger.info(f"Today sweep ingested {len(today_items)} tickets (all services)")
 
-        # Tier 2 — deeper catch-up for older tickets, once per day.
-        if force or self.db.get_setting("znuny_creator_sweep_date") != today:
+        # Tier 2 — deeper catch-up for older tickets created by tracked agents,
+        # once per day. (Full instance history is unbounded, so the catch-up stays
+        # scoped to tracked agents — the chosen 'by creator' scope.)
+        user_ids = [uid for uid in ZnunyClient._user_names.keys() if str(uid).isdigit()]
+        if user_ids and (force or self.db.get_setting("znuny_creator_sweep_date") != today):
             sweep_start = now_maldives()
             watermark = self.db.get_setting("znuny_creator_sweep_last")
             mode = f"incremental since {watermark}" if watermark else "full backfill"

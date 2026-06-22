@@ -682,9 +682,27 @@ class ZnunyClient:
         if changed_since:
             criteria["TicketChangeTimeNewerDate"] = changed_since
         ids = self._ticket_search(**criteria)
+        out = self._fetch_and_build(ids)
+        logger.info(f"Creator sweep: fetched {len(out)} tickets for {len(uids)} users")
+        return out
+
+    def get_tickets_changed_since(self, changed_since: str) -> list[dict]:
+        """Fetch ALL Znuny tickets (every service/creator/state) changed at/after
+        `changed_since` ("YYYY-MM-DD HH:MM:SS", Znuny system time). Used to keep
+        the current day complete for every ticket type, not just OAN. Returns the
+        same item dicts as get_tickets_by_creators."""
+        if not changed_since:
+            return []
+        ids = self._ticket_search(TicketChangeTimeNewerDate=changed_since, Limit=20000)
+        out = self._fetch_and_build(ids)
+        logger.info(f"Changed-since sweep: fetched {len(out)} tickets since {changed_since}")
+        return out
+
+    def _fetch_and_build(self, ids: list) -> list[dict]:
+        """Batched TicketGet(+articles) for the given TicketIDs -> item dicts
+        {details, title, state_type, closed_at}. Harvests creator names per batch."""
         if not ids:
             return []
-
         out: list[dict] = []
         with ZnunyClient._page_lock:
             for i in range(0, len(ids), TICKETGET_BATCH_SIZE):
@@ -707,7 +725,6 @@ class ZnunyClient:
                         "state_type": state_type,
                         "closed_at": closed_at,
                     })
-        logger.info(f"Creator sweep: fetched {len(out)} tickets for {len(uids)} users")
         return out
 
     def _build_details_from_ticket(self, ticket_number: str, ticket_id: str, t: dict,

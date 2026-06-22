@@ -1637,7 +1637,7 @@ class Database:
 
         cursor.execute("""
             SELECT created_by AS name, COUNT(*) AS n FROM znuny_tickets
-            WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
+            WHERE created_by IS NOT NULL AND created_by != '' AND DATE(substr(created_at, 1, 19)) = ?
             GROUP BY created_by
         """, (date_str,))
         for row in cursor.fetchall():
@@ -1645,7 +1645,7 @@ class Database:
 
         cursor.execute("""
             SELECT created_by AS name, COUNT(*) AS n FROM znuny_articles
-            WHERE created_by IS NOT NULL AND created_by != '' AND DATE(created_at) = ?
+            WHERE created_by IS NOT NULL AND created_by != '' AND DATE(substr(created_at, 1, 19)) = ?
             GROUP BY created_by
         """, (date_str,))
         for row in cursor.fetchall():
@@ -1693,8 +1693,8 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT DISTINCT DATE(created_at) d FROM znuny_tickets WHERE created_at IS NOT NULL
-                UNION SELECT DISTINCT DATE(created_at) FROM znuny_articles WHERE created_at IS NOT NULL
+                SELECT DISTINCT DATE(substr(created_at, 1, 19)) d FROM znuny_tickets WHERE created_at IS NOT NULL
+                UNION SELECT DISTINCT DATE(substr(created_at, 1, 19)) FROM znuny_articles WHERE created_at IS NOT NULL
                 UNION SELECT DISTINCT DATE(visit_date) FROM site_visits WHERE visit_date IS NOT NULL
             """)
             return sorted(d for (d,) in cursor.fetchall() if d)
@@ -2708,6 +2708,13 @@ class Database:
                     queue = COALESCE(excluded.queue, znuny_tickets.queue),
                     priority = COALESCE(excluded.priority, znuny_tickets.priority),
                     owner = COALESCE(excluded.owner, znuny_tickets.owner),
+                    -- created_at/created_by are authoritative from Znuny; refresh
+                    -- them so a later sync corrects any stale earlier value
+                    -- (e.g. wrong created date or an unresolved creator name).
+                    created_at = COALESCE(excluded.created_at, znuny_tickets.created_at),
+                    created_by = CASE
+                        WHEN excluded.created_by IS NOT NULL AND excluded.created_by != ''
+                        THEN excluded.created_by ELSE znuny_tickets.created_by END,
                     closed_at = excluded.closed_at,
                     time_to_close_minutes = excluded.time_to_close_minutes,
                     article_count = excluded.article_count,
@@ -2749,12 +2756,15 @@ class Database:
             return "", []
 
         def bounds(col):
+            # substr(...,1,19) takes the MVT wall-clock part; bare DATE() on a
+            # +05:00 timestamp converts to UTC and shifts early-morning tickets to
+            # the previous day.
             parts, p = [], []
             if date_from:
-                parts.append(f"DATE({col}) >= ?")
+                parts.append(f"DATE(substr({col}, 1, 19)) >= ?")
                 p.append(date_from)
             if date_to:
-                parts.append(f"DATE({col}) <= ?")
+                parts.append(f"DATE(substr({col}, 1, 19)) <= ?")
                 p.append(date_to)
             return "(" + " AND ".join(parts) + ")", p
 
