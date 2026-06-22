@@ -190,8 +190,15 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     assigned_match = re.search(r"Assigned to:\s*(.+?)(?:\n|$)", body, re.IGNORECASE)
     if assigned_match:
         raw = assigned_match.group(1).strip()
-        # Split on @ and whitespace to extract individual names, then rejoin with comma
-        names = [n.strip() for n in re.split(r'\s*@\s*', raw) if n.strip()]
+        # Split on @ to extract individual names, then rejoin with comma. Some
+        # articles number the assignees as a list ("[1] @raidh [2] @ayan"), so
+        # strip "[n]" markers and drop tokens that are only a number marker.
+        names = []
+        for part in re.split(r'\s*@\s*', raw):
+            cleaned = re.sub(r'\[\s*\d+\s*\]', ' ', part)   # remove [1], [2], ...
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip(' .,;:-')
+            if cleaned:
+                names.append(cleaned)
         assigned_to = ", ".join(names)
 
     # Get visit date from article creation date
