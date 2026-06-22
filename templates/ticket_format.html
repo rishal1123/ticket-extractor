@@ -48,24 +48,59 @@
         <div class="alert alert-info py-2"><i class="bi bi-info-circle me-1"></i>{{ w }}</div>
         {% endfor %}
         <pre class="block" id="block">{{ result.text }}</pre>
+        <div id="htmlBlock" style="display:none">{{ result.html|safe }}</div>
     {% endif %}
 </div>
 
 <script>
 const btn = document.getElementById('copyBtn');
+
+function copiedFeedback() {
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copied';
+    setTimeout(() => { btn.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copy'; }, 1500);
+}
+
+// Legacy fallback for non-secure contexts (plain HTTP over a LAN IP): select the
+// rich HTML and execCommand('copy') so the bold heading + links still survive.
+function legacyCopy(html, text) {
+    const node = document.createElement('div');
+    node.contentEditable = 'true';
+    node.innerHTML = html || text;
+    node.style.cssText = 'position:fixed;left:-9999px;top:0;white-space:pre-wrap;';
+    document.body.appendChild(node);
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    sel.removeAllRanges();
+    document.body.removeChild(node);
+    return ok;
+}
+
 if (btn) {
     btn.addEventListener('click', async () => {
         const text = document.getElementById('block')?.innerText || '';
+        const html = document.getElementById('htmlBlock')?.innerHTML || '';
+        // Preferred: rich (text/html) + plain (text/plain) so a paste into Znuny/
+        // Outlook/Gmail keeps the bold heading and clickable URLs.
         try {
-            await navigator.clipboard.writeText(text);
-            btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copied';
-            setTimeout(() => { btn.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copy'; }, 1500);
+            if (html && window.ClipboardItem && navigator.clipboard?.write) {
+                await navigator.clipboard.write([new ClipboardItem({
+                    'text/html': new Blob([html], { type: 'text/html' }),
+                    'text/plain': new Blob([text], { type: 'text/plain' }),
+                })]);
+            } else if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                throw new Error('Clipboard API unavailable');
+            }
+            copiedFeedback();
+            return;
         } catch (e) {
-            // Fallback: select the block
-            const r = document.createRange();
-            r.selectNode(document.getElementById('block'));
-            window.getSelection().removeAllRanges();
-            window.getSelection().addRange(r);
+            if (legacyCopy(html, text)) copiedFeedback();
         }
     });
 }

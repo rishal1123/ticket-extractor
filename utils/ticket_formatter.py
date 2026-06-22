@@ -103,10 +103,19 @@ def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[di
         return {"ok": False, "isp": None, "text": result.text or "", "missing": [],
                 "warnings": [], "error": "Could not detect the ISP from the captured data."}
 
+    # Rich HTML (bold heading + clickable URLs), same as the standalone formatter,
+    # so the Copy button can put rich text on the clipboard.
+    try:
+        from formatter.services.clipboard import text_to_html
+        html = text_to_html(result.text)
+    except Exception:
+        html = ""
+
     return {
         "ok": True,
         "isp": result.isp,
         "text": result.text,
+        "html": html,
         "missing": list(result.missing_labels()),
         "warnings": list(result.warnings),
         "error": None,
