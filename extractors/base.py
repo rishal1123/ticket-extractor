@@ -29,6 +29,14 @@ class BaseExtractor(ABC):
     _portal_browsers_lock = threading.Lock()
     # Track consecutive 0-ticket extraction cycles per portal
     _consecutive_zero_counts: dict = {}
+    # Login-failure backoff: with persistent browsers a working portal logs in
+    # rarely (session reuse). A portal that keeps FAILING login shouldn't be
+    # hammered every cycle — after N consecutive failed cycles it's put in a
+    # cooldown and skipped until it expires.
+    _login_fail_cycles: dict = {}        # portal -> consecutive failed-login cycles
+    _login_cooldown_until: dict = {}     # portal -> epoch seconds to skip until
+    LOGIN_FAIL_THRESHOLD = 3
+    LOGIN_COOLDOWN_MINUTES = 30
     # Memory limit per browser - override in subclass for heavier portals
     MEMORY_LIMIT_MB = DEFAULT_MEMORY_LIMIT_MB
 
@@ -142,9 +150,27 @@ class BaseExtractor(ABC):
         if success:
             self.db.log_login_event(self.config.name, "login_success")
         else:
+            reason = self._diagnose_login_failure()
             self.db.log_login_event(self.config.name, "login_failed", success=False)
-            self.db.log_system("error", f"extractor.{self.config.name}", "Login failed")
+            self.db.log_system("error", f"extractor.{self.config.name}", f"Login failed: {reason}")
+            self.logger.error(f"Login failed: {reason}")
         return success
+
+    def _diagnose_login_failure(self) -> str:
+        """Best-effort reason for why login() returned False, so failures are
+        actionable instead of a bare 'Login failed'."""
+        try:
+            if not self.browser or not self.browser.page:
+                return "no browser/page available"
+            if self.browser.is_cloudflare_challenge():
+                fs = "configured" if Config.get_flaresolverr_url() else "NOT configured"
+                return f"Cloudflare challenge blocking login (FlareSolverr {fs})"
+            url = (self.browser.page.url or "").lower()
+            if "login" in url or "signin" in url or "/account/" in url:
+                return f"still on the login page after submit — likely wrong credentials or changed form ({url})"
+            return f"login() returned False (current url: {url or 'unknown'})"
+        except Exception as e:
+            return f"could not diagnose ({e})"
 
     def _get_browser_memory_mb(self, browser: BrowserManager) -> float:
         """Get total memory usage (MB) for the browser's Chromium process tree."""
@@ -252,6 +278,19 @@ class BaseExtractor(ABC):
             "error": None
         }
 
+        portal = self.config.name
+
+        # Login-failure cooldown: skip this portal while it's backing off so we
+        # don't re-attempt a broken login every cycle (login stays rare).
+        cooldown_until = BaseExtractor._login_cooldown_until.get(portal, 0)
+        if time.time() < cooldown_until:
+            mins_left = int((cooldown_until - time.time()) / 60) + 1
+            self.logger.warning(f"[{portal}] Login cooldown active ({mins_left}m left) - skipping extraction")
+            result["status"] = "skipped"
+            result["error"] = f"login cooldown ({mins_left}m left)"
+            return result
+
+        got_past_login = False  # set once any attempt clears login
         for attempt in range(max_retries):
             try:
                 self.logger.info(f"Starting extraction (attempt {attempt + 1}/{max_retries})")
@@ -267,6 +306,7 @@ class BaseExtractor(ABC):
                 # Ensure logged in (checks session, re-logins if needed)
                 if not self.ensure_logged_in():
                     raise Exception("Login failed")
+                got_past_login = True  # any failure after this is extraction, not login
 
                 # Wait for page to stabilize
                 time.sleep(2)
@@ -418,6 +458,32 @@ class BaseExtractor(ABC):
                 if attempt < max_retries - 1:
                     self.logger.info(f"Retrying in 5 seconds...")
                     time.sleep(5)
+
+        # Login-failure backoff bookkeeping. A failed run that never got past
+        # login (returned False OR raised in is_logged_in/login) counts toward
+        # the streak; extraction-phase failures do not.
+        login_failed = result["status"] == "failed" and not got_past_login
+        if result["status"] == "success":
+            # Recovered — clear any login-failure streak/cooldown.
+            BaseExtractor._login_fail_cycles.pop(portal, None)
+            BaseExtractor._login_cooldown_until.pop(portal, None)
+        elif login_failed:
+            cycles = BaseExtractor._login_fail_cycles.get(portal, 0) + 1
+            BaseExtractor._login_fail_cycles[portal] = cycles
+            if cycles >= self.LOGIN_FAIL_THRESHOLD:
+                BaseExtractor._login_cooldown_until[portal] = (
+                    time.time() + self.LOGIN_COOLDOWN_MINUTES * 60
+                )
+                BaseExtractor._login_fail_cycles[portal] = 0
+                self.logger.warning(
+                    f"[{portal}] Login failed {cycles} cycles in a row - "
+                    f"backing off for {self.LOGIN_COOLDOWN_MINUTES} min"
+                )
+                self.db.log_system(
+                    "error", f"extractor.{portal}",
+                    f"Login keeps failing ({cycles} cycles); cooling down "
+                    f"{self.LOGIN_COOLDOWN_MINUTES} min. Check the last 'Login failed: ...' reason."
+                )
 
         # If all retries failed, clear session data for a fresh start next cycle
         if result["status"] == "failed":
