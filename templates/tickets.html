@@ -22,6 +22,50 @@
 {% endblock %}
 
 {% block content %}
+<!-- Summary Cards (reflect the active date filter) -->
+<div class="row mb-3 g-2" id="ticketsSummary">
+    <div class="col-6 col-md">
+        <div class="stat-card card h-100">
+            <div class="card-body text-center py-2">
+                <div class="stat-value" id="sumTotal">0</div>
+                <div class="text-muted small">Total <span id="sumPeriod">Today</span></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md">
+        <div class="stat-card card h-100" style="border-left: 4px solid #27ae60;">
+            <div class="card-body text-center py-2">
+                <div class="stat-value" style="color:#27ae60;" id="sumOpen">0</div>
+                <div class="text-muted small">Open</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md">
+        <div class="stat-card card h-100" style="border-left: 4px solid #7f8c8d;">
+            <div class="card-body text-center py-2">
+                <div class="stat-value" style="color:#7f8c8d;" id="sumClosed">0</div>
+                <div class="text-muted small">Closed</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md">
+        <div class="stat-card card h-100" style="border-left: 4px solid #7c3aed;">
+            <div class="card-body text-center py-2">
+                <div class="stat-value" style="color:#7c3aed;" id="sumInZnuny">0</div>
+                <div class="text-muted small">In Znuny</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md">
+        <div class="stat-card card h-100" style="border-left: 4px solid #dc3545;">
+            <div class="card-body text-center py-2">
+                <div class="stat-value" style="color:#dc3545;" id="sumPending">0</div>
+                <div class="text-muted small">Not in Znuny</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Filters -->
 <div class="filter-section">
     <div class="row g-2 align-items-end">
@@ -185,6 +229,7 @@ function applyFilters() {
     }
     const filtered = filterTickets(ticketsCache);
     updateFilterCount(filtered.length, ticketsCache.length);
+    updateSummary(filtered);
     const paginated = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
     renderTickets(paginated);
     renderPagination(filtered.length, currentPage, pageSize, 'goToPage');
@@ -217,6 +262,20 @@ function filterTickets(tickets) {
     }
 
     return filtered;
+}
+
+function updateSummary(tickets) {
+    const total = tickets.length;
+    const closed = tickets.filter(t => t.completed_at).length;
+    const open = total - closed;
+    const inZnuny = tickets.filter(t => t.in_znuny || t.znuny_ticket_id).length;
+    document.getElementById('sumTotal').textContent = total;
+    document.getElementById('sumOpen').textContent = open;
+    document.getElementById('sumClosed').textContent = closed;
+    document.getElementById('sumInZnuny').textContent = inZnuny;
+    document.getElementById('sumPending').textContent = total - inZnuny;
+    const labels = { all: '(All)', today: 'Today', yesterday: 'Yesterday', week: '(7 Days)' };
+    document.getElementById('sumPeriod').textContent = labels[currentDateFilter] || '';
 }
 
 function updateFilterCount(filtered, total) {
@@ -296,6 +355,7 @@ async function loadTickets() {
         ticketsCache = data.tickets;
         const filtered = filterTickets(ticketsCache);
         updateFilterCount(filtered.length, ticketsCache.length);
+        updateSummary(filtered);
 
         const paginated = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
         renderTickets(paginated);
