@@ -14,9 +14,11 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/tickets.db
       - FLARESOLVERR_URL=http://flaresolverr:8191
+    # FlareSolverr is optional now (Dhiraagu uses real headed Chrome, not
+    # FlareSolverr), so don't block app startup on it — just start it alongside.
     depends_on:
       flaresolverr:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
     shm_size: '2gb'
     healthcheck:

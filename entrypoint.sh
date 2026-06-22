@@ -12,4 +12,12 @@ echo "Checking database (init + migrations)..."
 python -c "from database import Database; Database(); print('Database ready')"
 
 echo "Starting application..."
-exec python app.py
+# Run under a virtual X display (xvfb) so the real Chrome can launch HEADED,
+# which is required to pass Cloudflare on Dhiraagu (headless gets challenged).
+# Other portals run headless and are unaffected. If xvfb is missing (e.g. a
+# non-Docker run), fall back to running directly.
+if command -v xvfb-run >/dev/null 2>&1; then
+    exec xvfb-run -a --server-args="-screen 0 1920x1080x24" python app.py
+else
+    exec python app.py
+fi

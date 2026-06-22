@@ -9,14 +9,18 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright system dependencies for Chromium + curl for healthcheck
+# Install Playwright system dependencies for Chromium + curl for healthcheck +
+# xvfb (virtual display so the real Chrome can run HEADED — required to pass
+# Cloudflare on Dhiraagu; headless Chrome gets challenged).
 # Uses install-deps (apt packages) separately from browser download for reliability
 RUN playwright install-deps chromium && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends curl xvfb && \
     rm -rf /var/lib/apt/lists/*
 
-# Download Playwright Chromium browser binary (no apt needed)
-RUN playwright install chromium
+# Download Playwright Chromium (used by Ooredoo/ROL/Medianet) AND the real Google
+# Chrome channel (Dhiraagu uses real Chrome headed to bypass Cloudflare).
+RUN playwright install chromium && \
+    playwright install --with-deps chrome
 
 # Copy application code
 COPY . .
