@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Cloudflare on Dhiraagu; headless Chrome gets challenged).
 # Uses install-deps (apt packages) separately from browser download for reliability
 RUN playwright install-deps chromium && \
-    apt-get install -y --no-install-recommends curl xvfb && \
+    apt-get install -y --no-install-recommends curl xvfb xauth && \
     rm -rf /var/lib/apt/lists/*
 
 # Download Playwright Chromium (used by Ooredoo/ROL/Medianet) AND the real Google
