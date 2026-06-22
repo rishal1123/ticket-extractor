@@ -13,6 +13,11 @@ logger = get_logger("database")
 # Maldives timezone (UTC+5)
 MVT = timezone(timedelta(hours=5))
 
+# Tickets left open longer than this are treated as stale-cleanup outliers and
+# excluded from "Avg Close" so one ancient ticket closed today can't skew the
+# average to weeks/months (30 days).
+CLOSE_AVG_CAP_MINUTES = 30 * 24 * 60
+
 # Reusable SQL fragment for calculating site visit duration in minutes.
 # Computes: completion_time - (visit_date + scheduled_time)
 # The completion time parameter must be bound twice (once for the CASE, once for julianday).
@@ -2956,10 +2961,13 @@ class Database:
             """, (today,))
             today_new = cursor.fetchone()["count"]
 
-            # Avg time to close (for closed tickets in scope)
+            # Avg time to close. Exclude stale-cleanup outliers (tickets left open
+            # longer than CLOSE_AVG_CAP) so one ancient ticket closed in-period
+            # doesn't blow the average to weeks/months — keeps it a typical figure.
             cursor.execute(f"""
                 SELECT AVG(time_to_close_minutes) as avg_time FROM znuny_tickets
                 {where} AND time_to_close_minutes IS NOT NULL
+                    AND time_to_close_minutes <= {CLOSE_AVG_CAP_MINUTES}
             """, params)
             avg_close_time = cursor.fetchone()["avg_time"]
 
@@ -3026,7 +3034,7 @@ class Database:
                     created_by,
                     COUNT(*) as total_tickets,
                     SUM(CASE WHEN LOWER(state) IN ('closed', 'resolved') THEN 1 ELSE 0 END) as closed_tickets,
-                    AVG(CASE WHEN time_to_close_minutes IS NOT NULL THEN time_to_close_minutes END) as avg_close_time
+                    AVG(CASE WHEN time_to_close_minutes IS NOT NULL AND time_to_close_minutes <= {CLOSE_AVG_CAP_MINUTES} THEN time_to_close_minutes END) as avg_close_time
                 FROM znuny_tickets
                 WHERE created_by IS NOT NULL AND created_by != ''
                 {date_sql}
