@@ -272,6 +272,26 @@ async def update_operating_hours(request: Request, db: Database = Depends(get_db
     return JSONResponse(content=success_response("Operating hours saved"))
 
 
+@settings_router.get("/isp-extraction")
+@handle_errors("get ISP extraction setting")
+async def get_isp_extraction(db: Database = Depends(get_db)):
+    """Get whether scheduled ISP portal extraction is enabled."""
+    return JSONResponse(content={"success": True, "enabled": db.get_isp_extraction_enabled()})
+
+
+@settings_router.post("/isp-extraction")
+@handle_errors("update ISP extraction setting")
+async def update_isp_extraction(request: Request, db: Database = Depends(get_db)):
+    """Enable/disable scheduled ISP portal extraction (scraping ISP portals)."""
+    data = await request.json()
+    enabled = bool(data.get("enabled", True))
+    db.set_isp_extraction_enabled(enabled)
+    logger.info(f"ISP extraction {'enabled' if enabled else 'disabled'} via config")
+    return JSONResponse(content=success_response(
+        f"ISP checking {'enabled' if enabled else 'disabled'}"
+    ))
+
+
 @settings_router.get("")
 @handle_errors("get all settings")
 async def get_all_settings(db: Database = Depends(get_db)):

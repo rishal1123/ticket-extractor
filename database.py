@@ -2680,6 +2680,28 @@ class Database:
                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 """, (key, val, now_maldives()))
 
+    # ==================== ISP Extraction Toggle ====================
+
+    def get_isp_extraction_enabled(self) -> bool:
+        """Whether scheduled ISP portal extraction (scraping) is enabled. Default True."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM app_settings WHERE key = ?", ("isp_extraction_enabled",))
+            row = cursor.fetchone()
+        if row is None:
+            return True  # default: enabled
+        return row["value"] == "1"
+
+    def set_isp_extraction_enabled(self, enabled: bool):
+        """Enable/disable scheduled ISP portal extraction."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """, ("isp_extraction_enabled", "1" if enabled else "0", now_maldives()))
+
     # ==================== Portal Config (DB-stored) ====================
 
     def get_config_settings(self) -> dict:

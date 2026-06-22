@@ -790,6 +790,20 @@
             </div>
         </div>
 
+        <!-- ISP Extraction Toggle -->
+        <div class="col-12">
+            <div class="config-section">
+                <h6><i class="bi bi-hdd-network me-1"></i>ISP Checking (Portal Extraction)</h6>
+                <p class="text-muted small mb-3">When disabled, the scheduler stops extracting tickets from the ISP portals (Dhiraagu, Ooredoo, ROL, Medianet). Znuny sync is unaffected.</p>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="isp_extraction_enabled" checked>
+                    <label class="form-check-label" for="isp_extraction_enabled">
+                        <strong>Enable ISP Checking</strong>
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <!-- Security Settings -->
         <div class="col-12 col-md-6">
             <div class="config-section">
@@ -1610,6 +1624,13 @@ async function loadConfig() {
             document.getElementById('operating_hours_start').value = hoursData.hours.start_hour ?? 7;
             document.getElementById('operating_hours_end').value = hoursData.hours.end_hour ?? 22;
         }
+
+        // Load ISP extraction toggle
+        const ispResponse = await fetch('/api/settings/isp-extraction');
+        const ispData = await ispResponse.json();
+        if (typeof ispData.enabled === 'boolean') {
+            document.getElementById('isp_extraction_enabled').checked = ispData.enabled;
+        }
     } catch (error) {
         console.error('Error loading config:', error);
         alert('Error loading configuration');
@@ -1670,10 +1691,18 @@ async function saveConfig() {
 
         const hoursData = await hoursResponse.json();
 
-        if (data.success && threshData.success && hoursData.success) {
+        // Save ISP extraction toggle
+        const ispResponse = await fetch('/api/settings/isp-extraction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: document.getElementById('isp_extraction_enabled').checked })
+        });
+        const ispData = await ispResponse.json();
+
+        if (data.success && threshData.success && hoursData.success && ispData.success) {
             alert('Configuration saved successfully!\n\nNote: Some changes may require a server restart.');
         } else {
-            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || 'Unknown error'));
+            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || ispData.message || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving config:', error);

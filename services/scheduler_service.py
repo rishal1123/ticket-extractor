@@ -172,6 +172,14 @@ class SchedulerService:
         except Exception:
             return True  # Default to running if check fails
 
+    def _is_isp_extraction_enabled(self) -> bool:
+        """Check if scheduled ISP portal extraction is enabled (Admin > Config)."""
+        try:
+            db = Database()
+            return db.get_isp_extraction_enabled()
+        except Exception:
+            return True  # Default to running if check fails
+
     @staticmethod
     def _reset_thread_playwright():
         """Clear the extraction worker's thread-local Playwright reference.
@@ -235,6 +243,10 @@ class SchedulerService:
 
                 if not self._is_within_operating_hours():
                     logger.info("Portal extraction skipped - outside operating hours")
+                    continue
+
+                if not self._is_isp_extraction_enabled():
+                    logger.info("Portal extraction skipped - ISP checking disabled in config")
                     continue
 
                 logger.info("[ExtractionWorker] Starting portal extraction...")
@@ -599,6 +611,7 @@ class SchedulerService:
             hours = db.get_operating_hours()
             status["operating_hours"] = hours
             status["within_operating_hours"] = self._is_within_operating_hours()
+            status["isp_extraction_enabled"] = db.get_isp_extraction_enabled()
         except Exception:
             pass
         return status
