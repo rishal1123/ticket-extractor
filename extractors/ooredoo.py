@@ -67,6 +67,9 @@ class OoredooExtractor(BaseExtractor):
 
     # ============================================================
 
+    def detail_url(self, ticket) -> str:
+        return self.TICKET_DETAIL_URL.format(ticket_id=ticket.ticket_id)
+
     def is_logged_in(self) -> bool:
         """Check if currently logged in to Ooredoo portal."""
         try:

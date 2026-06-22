@@ -28,6 +28,7 @@ class Ticket:
     znuny_url: Optional[str] = None              # Direct URL to ticket in Znuny
     portal_url: Optional[str] = None             # Direct URL to ticket in ISP portal
     time_to_create_minutes: Optional[float] = None  # Pre-calculated time to create (minutes)
+    raw_dump: Optional[str] = None               # Raw portal detail-page text, for the formatter
 
     def to_dict(self) -> dict:
         return {
@@ -53,7 +54,8 @@ class Ticket:
             "znuny_address": self.znuny_address,
             "znuny_url": self.znuny_url,
             "portal_url": self.portal_url,
-            "time_to_create_minutes": self.time_to_create_minutes
+            "time_to_create_minutes": self.time_to_create_minutes,
+            "raw_dump": self.raw_dump
         }
 
     @classmethod
@@ -100,5 +102,6 @@ class Ticket:
             znuny_created_by=data.get("znuny_created_by"),
             znuny_address=data.get("znuny_address"),
             znuny_url=data.get("znuny_url"),
-            portal_url=data.get("portal_url")
+            portal_url=data.get("portal_url"),
+            raw_dump=data.get("raw_dump")
         )

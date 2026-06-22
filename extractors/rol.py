@@ -116,6 +116,10 @@ class ROLExtractor(BaseExtractor):
             self.take_screenshot("login_error")
             return False
 
+    def detail_url(self, ticket) -> str:
+        # ROL stores the internal id in ticket_id; the display id is in account.
+        return f"https://support.rol.net.mv/staff/index.php?/Tickets/Ticket/View/{ticket.ticket_id}/inbox/55/-1/-1"
+
     def is_logged_in(self) -> bool:
         """Check if currently logged in by looking for logout button."""
         try:

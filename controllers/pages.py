@@ -8,6 +8,8 @@ from fastapi.templating import Jinja2Templates
 import os
 
 from config import Config, APP_VERSION
+from database import Database
+from utils.ticket_formatter import format_ticket_dump
 
 router = APIRouter()
 
@@ -41,6 +43,26 @@ async def tickets_page(request: Request):
     return templates.TemplateResponse(
         "tickets.html",
         {"request": request, "active_page": "tickets"}
+    )
+
+
+@router.get("/tickets/{ticket_id}/format", response_class=HTMLResponse)
+async def ticket_format_page(request: Request, ticket_id: int):
+    """Standalone page (opened in a new tab) showing the standardized, formatted
+    ticket block for an ISP ticket, generated from its captured portal dump."""
+    db = Database()
+    ticket = db.get_ticket_by_id(ticket_id)
+    if not ticket:
+        result = {"ok": False, "isp": None, "text": "", "missing": [], "warnings": [],
+                  "error": "Ticket not found."}
+        meta = {"ticket_id": ticket_id, "portal": ""}
+    else:
+        result = format_ticket_dump(ticket.raw_dump, ticket.portal)
+        meta = {"ticket_id": ticket.ticket_id, "portal": ticket.portal,
+                "customer_name": ticket.customer_name or ""}
+    return templates.TemplateResponse(
+        "ticket_format.html",
+        {"request": request, "result": result, "meta": meta}
     )
 
 

@@ -47,6 +47,9 @@ class DhiraaguExtractor(BaseExtractor):
     COL_SUBMITTED_DATE = 8 # Submitted date (portal_created_at)
     COL_KPI = 9            # KPI (e.g., "30 Hr 40 Min")
 
+    def detail_url(self, ticket) -> str:
+        return f"{self.ORDERS_PAGE_URL}/{ticket.ticket_id}?activeRelationManager=notes"
+
     def is_logged_in(self) -> bool:
         """Check if currently logged in to Dhiraagu portal."""
         try:

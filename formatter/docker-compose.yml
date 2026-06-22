@@ -1,0 +1,40 @@
+# Portainer stack for the ISP Ticket Formatter web app.
+#
+# Deploy in Portainer:  Stacks -> Add stack -> paste this file (or point it at
+# the Git repo). Set values under "Environment variables" (ADMIN_PASSWORD,
+# SECRET_KEY, ZNUNY_*, HOST_PORT) — they fill the ${...} placeholders below.
+# (Locally, `docker compose up` auto-reads a .env file for the same values.)
+# No .env file is required in the repo, so a git-based deploy won't fail.
+services:
+  formatter:
+    build: .
+    # If you build/push the image instead of building in Portainer, set:
+    # image: isp-ticket-formatter:latest
+    container_name: isp-ticket-formatter
+    # Pass config into the container via interpolation (from Portainer's stack
+    # env vars, or a local .env). Unset secrets fall back to safe defaults.
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      SECRET_KEY: ${SECRET_KEY:-}
+      ZNUNY_URL: ${ZNUNY_URL:-}
+      ZNUNY_WEBSERVICE: ${ZNUNY_WEBSERVICE:-GenericTicketConnectorREST}
+      ZNUNY_USER: ${ZNUNY_USER:-}
+      ZNUNY_PASSWORD: ${ZNUNY_PASSWORD:-}
+      ZNUNY_VERIFY_SSL: ${ZNUNY_VERIFY_SSL:-true}
+      ZNUNY_TIMEOUT: ${ZNUNY_TIMEOUT:-5}
+      ZNUNY_CACHE_TTL: ${ZNUNY_CACHE_TTL:-60}
+    ports:
+      - "${HOST_PORT:-8087}:8000"
+    # Persist admin-edited address rules across redeploys.
+    volumes:
+      - formatter_config:/app/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  formatter_config:

@@ -120,6 +120,13 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+            # Raw portal detail-page text captured at initial extraction, used by
+            # the ticket formatter (migration for existing DBs)
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN raw_dump TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             # Rename time to portal_created_at if needed (migration)
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN portal_created_at DATETIME")
@@ -484,6 +491,7 @@ class Database:
                         kpi = ?,
                         notes = ?,
                         portal_url = COALESCE(?, portal_url),
+                        raw_dump = COALESCE(?, raw_dump),
                         updated_at = ?,
                         completed_at = ?
                     WHERE id = ?
@@ -498,6 +506,7 @@ class Database:
                     ticket.kpi,
                     ticket.notes,
                     ticket.portal_url,
+                    ticket.raw_dump,
                     now_maldives(),
                     ticket.completed_at,  # Set completed_at if provided
                     existing_id
@@ -520,8 +529,8 @@ class Database:
                     INSERT INTO tickets (
                         portal, ticket_id, address, account, customer_name, ticket_type,
                         portal_created_at, service_type, status, kpi, notes, portal_url,
-                        completed_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        raw_dump, completed_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     ticket.portal,
                     ticket.ticket_id,
@@ -535,6 +544,7 @@ class Database:
                     ticket.kpi,
                     ticket.notes,
                     ticket.portal_url,
+                    ticket.raw_dump,
                     ticket.completed_at,  # Set completed_at if provided (for closed tickets)
                     current_time,
                     current_time
@@ -768,6 +778,29 @@ class Database:
                 WHERE in_znuny = 1 AND znuny_ticket_id IS NOT NULL AND completed_at IS NULL
                 ORDER BY updated_at DESC
             """)
+            return [self._row_to_ticket(row) for row in cursor.fetchall()]
+
+    def set_ticket_raw_dump(self, ticket_id: int, raw_dump: str):
+        """Store the raw portal detail-page text for a ticket (for the formatter)."""
+        with self._get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE tickets SET raw_dump = ?, updated_at = ? WHERE id = ?",
+                (raw_dump, now_maldives(), ticket_id),
+            )
+
+    def get_isp_tickets_needing_dump(self, portal: str = None) -> list[Ticket]:
+        """Active, not-in-Znuny ISP tickets missing a raw_dump — used to backfill
+        formatter data for tickets captured before raw_dump existed."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            q = ("SELECT * FROM tickets WHERE completed_at IS NULL AND in_znuny = 0 "
+                 "AND (raw_dump IS NULL OR raw_dump = '')")
+            params = []
+            if portal:
+                q += " AND portal = ?"
+                params.append(portal)
+            q += " ORDER BY created_at DESC"
+            cursor.execute(q, params)
             return [self._row_to_ticket(row) for row in cursor.fetchall()]
 
     def get_tickets_needing_znuny_details(self) -> list[Ticket]:
@@ -2399,6 +2432,7 @@ class Database:
             znuny_address=row["znuny_address"] if "znuny_address" in keys else None,
             znuny_url=row["znuny_url"] if "znuny_url" in keys else None,
             portal_url=row["portal_url"] if "portal_url" in keys else None,
+            raw_dump=row["raw_dump"] if "raw_dump" in keys else None,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
             completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None

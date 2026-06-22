@@ -510,6 +510,12 @@ function renderTicketRow(ticket, onClick) {
         ? '<i class="bi bi-check-circle-fill znuny-yes"></i>'
         : '<i class="bi bi-x-circle-fill znuny-no"></i>';
 
+    // Not-in-Znuny ISP tickets: a "Format" button opens the standardized,
+    // formatter-generated ticket block in a new tab (stops the row click).
+    const formatBtn = (!ticket.in_znuny && ticket.id)
+        ? `<a href="/tickets/${ticket.id}/format" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary py-0 px-1 ms-1" title="Generate formatted ticket" onclick="event.stopPropagation();"><i class="bi bi-file-earmark-text"></i></a>`
+        : '';
+
     let timeToCreate = '-';
     if (ticket.created_at && ticket.znuny_created_at) {
         const extractorDate = new Date(ticket.created_at);
@@ -526,7 +532,7 @@ function renderTicketRow(ticket, onClick) {
         <td class="d-none d-lg-table-cell">${escapeHtml(ticket.ticket_type) || '-'}</td>
         <td class="d-none d-sm-table-cell">${escapeHtml(ticket.status) || '-'}</td>
         <td class="d-none d-md-table-cell"><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
-        <td class="znuny-status">${znunyIcon}</td>
+        <td class="znuny-status">${znunyIcon}${formatBtn}</td>
         <td>${timeToCreate}</td>
         <td class="d-none d-sm-table-cell"><small>${escapeHtml(ticket.znuny_created_by) || '-'}</small></td>
     `;

@@ -90,6 +90,32 @@ class BaseExtractor(ABC):
         """
         return Ticket(portal=self.config.name, ticket_id=ticket_id)
 
+    def detail_url(self, ticket) -> Optional[str]:
+        """Detail-page URL used to capture the raw dump for the formatter.
+
+        Defaults to the stored portal_url (set by SPA portals like Medianet).
+        URL-pattern portals (Dhiraagu/Ooredoo/ROL) override to build it from the
+        ticket id.
+        """
+        return getattr(ticket, "portal_url", None)
+
+    def capture_raw_dump(self, ticket) -> Optional[str]:
+        """Navigate to the ticket's detail page and return its full text, stored
+        as raw_dump and later fed to the ticket formatter. Best-effort: returns
+        None on any problem. Assumes an active, logged-in browser for this portal.
+        """
+        url = self.detail_url(ticket)
+        if not url or not self.browser or not self.browser.page:
+            return None
+        try:
+            self.navigate_to(url)
+            time.sleep(2)
+            text = self.browser.page.inner_text("body")
+            return text.strip() or None
+        except Exception as e:
+            self.logger.warning(f"capture_raw_dump failed for {ticket.ticket_id}: {e}")
+            return None
+
     def fetch_completion_notes(self, missing_ticket_ids: set[str]) -> dict[str, str]:
         """Fetch final notes/comments for tickets about to be marked complete.
 
@@ -259,6 +285,7 @@ class BaseExtractor(ABC):
                 # their data isn't clobbered by deliberately-thin re-extraction — their
                 # updates come from Znuny instead.
                 present_known_ids = []
+                new_captures = []  # (db_id, ticket) for raw-dump capture
                 for ticket in tickets:
                     found_ticket_ids.add(ticket.ticket_id)
                     if ticket.ticket_id in self._known_ticket_ids:
@@ -267,6 +294,7 @@ class BaseExtractor(ABC):
                     ticket_id, is_new, is_updated = self.db.upsert_ticket(ticket)
                     if is_new:
                         result["tickets_new"] += 1
+                        new_captures.append((ticket_id, ticket))
                     elif is_updated:
                         result["tickets_updated"] += 1
 
@@ -327,6 +355,28 @@ class BaseExtractor(ABC):
                             f"Extraction returned 0 tickets but {len(existing_ticket_ids)} active - "
                             f"zero-ticket cycle {zero_count}/{required_cycles}, skipping completion"
                         )
+
+                # Capture the raw portal dump (for the ticket formatter) for newly
+                # seen tickets, plus a few existing open not-in-Znuny tickets that
+                # are still missing it (backfill, capped to keep the cycle light).
+                try:
+                    targets = list(new_captures)
+                    for bt in self.db.get_isp_tickets_needing_dump(self.config.name)[:5]:
+                        targets.append((bt.id, bt))
+                    done = set()
+                    captured = 0
+                    for db_id, t in targets:
+                        if db_id in done:
+                            continue
+                        done.add(db_id)
+                        dump = self.capture_raw_dump(t)
+                        if dump:
+                            self.db.set_ticket_raw_dump(db_id, dump)
+                            captured += 1
+                    if captured:
+                        self.logger.info(f"Captured raw dump for {captured} ticket(s)")
+                except Exception as e:
+                    self.logger.warning(f"Raw dump capture pass error (non-critical): {e}")
 
                 # Don't logout if keeping session active
                 if not keep_session:
