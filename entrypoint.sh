@@ -4,6 +4,15 @@ set -e
 echo "=== Ticket Extractor - Starting ==="
 echo "Python $(python --version 2>&1 | cut -d' ' -f2) | PID $$"
 
+# Auto-install/upgrade Python deps from requirements.txt on every start, so a
+# Portainer redeploy that updates the code (volume/repo) also picks up new
+# dependencies without rebuilding the image. Best-effort: if offline, fall back
+# to the deps baked into the image. Fast when already satisfied.
+if [ -f requirements.txt ]; then
+    echo "Installing/updating dependencies from requirements.txt..."
+    pip install --no-cache-dir -r requirements.txt || echo "WARN: pip install failed; using baked-in deps"
+fi
+
 # Database init + migration check BEFORE starting the app.
 # Database() applies the schema/migrations on construction; running it here (and
 # failing fast under `set -e`) guarantees the DB is fully migrated before the
