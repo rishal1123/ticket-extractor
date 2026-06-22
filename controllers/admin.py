@@ -82,6 +82,10 @@ async def get_scheduler_status():
         if "operating_hours" in status:
             result["operating_hours"] = status["operating_hours"]
             result["within_operating_hours"] = status.get("within_operating_hours", True)
+        if "isp_extraction_enabled" in status:
+            result["isp_extraction_enabled"] = status["isp_extraction_enabled"]
+        if "portals_enabled" in status:
+            result["portals_enabled"] = status["portals_enabled"]
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error getting scheduler status: {e}")

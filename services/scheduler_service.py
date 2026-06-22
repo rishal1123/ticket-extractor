@@ -616,6 +616,9 @@ class SchedulerService:
             status["operating_hours"] = hours
             status["within_operating_hours"] = self._is_within_operating_hours()
             status["isp_extraction_enabled"] = db.get_isp_extraction_enabled()
+            status["portals_enabled"] = {
+                p.name: db.get_portal_enabled(p.name) for p in Config.get_all_portals()
+            }
         except Exception:
             pass
         return status

@@ -84,6 +84,10 @@
     opacity: 0.65;
     filter: grayscale(40%);
 }
+.stat-card.disabled {
+    opacity: 0.55;
+    filter: grayscale(80%);
+}
 @keyframes pulse-stale {
     0%, 100% { box-shadow: none; }
     50% { box-shadow: 0 0 8px rgba(220, 53, 69, 0.3); }
@@ -750,6 +754,21 @@ function updateExtractionInfo(portal, info) {
     if (!el) return;
 
     const card = el.closest('.stat-card');
+
+    // Disabled (global ISP checking off, or this portal turned off in Config)
+    // takes precedence over stale/paused.
+    const ispEnabled = schedulerData?.isp_extraction_enabled !== false;
+    const portalEnabled = schedulerData?.portals_enabled
+        ? schedulerData.portals_enabled[portal] !== false : true;
+    if (!ispEnabled || !portalEnabled) {
+        if (card) { card.classList.remove('stale', 'paused'); card.classList.add('disabled'); }
+        const why = !ispEnabled ? 'ISP checking off' : 'Portal disabled';
+        el.innerHTML = `<small class="d-block text-secondary mt-1"><i class="bi bi-slash-circle"></i> <strong>Disabled</strong></small>`
+            + `<small class="d-block text-muted">${why}</small>`;
+        return;
+    }
+    if (card) card.classList.remove('disabled');
+
     const isPaused = schedulerData?.operating_hours?.enabled && !schedulerData?.within_operating_hours;
     const startHour = schedulerData?.operating_hours?.start_hour ?? 7;
     const startLabel = startHour === 0 ? '12:00 AM' : startHour < 12 ? `${startHour}:00 AM` : startHour === 12 ? '12:00 PM' : `${startHour - 12}:00 PM`;
