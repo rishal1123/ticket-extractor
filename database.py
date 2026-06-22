@@ -633,11 +633,11 @@ class Database:
                 params.extend([search_param, search_param, search_param, search_param])
 
             if date_from:
-                conditions.append("DATE(created_at) >= ?")
+                conditions.append("DATE(substr(created_at, 1, 19)) >= ?")
                 params.append(date_from)
 
             if date_to:
-                conditions.append("DATE(created_at) <= ?")
+                conditions.append("DATE(substr(created_at, 1, 19)) <= ?")
                 params.append(date_to)
 
             # Build query
@@ -846,10 +846,10 @@ class Database:
             params = []
 
             if date_from:
-                conditions.append("DATE(za.created_at) >= ?")
+                conditions.append("DATE(substr(za.created_at, 1, 19)) >= ?")
                 params.append(date_from)
             if date_to:
-                conditions.append("DATE(za.created_at) <= ?")
+                conditions.append("DATE(substr(za.created_at, 1, 19)) <= ?")
                 params.append(date_to)
             if staff:
                 conditions.append("LOWER(za.created_by) = LOWER(?)")
@@ -891,13 +891,13 @@ class Database:
             params_articles = []
 
             if date_from:
-                date_filter_tickets += " AND DATE(znuny_created_at) >= ?"
-                date_filter_articles += " AND DATE(created_at) >= ?"
+                date_filter_tickets += " AND DATE(substr(znuny_created_at, 1, 19)) >= ?"
+                date_filter_articles += " AND DATE(substr(created_at, 1, 19)) >= ?"
                 params_tickets.append(date_from)
                 params_articles.append(date_from)
             if date_to:
-                date_filter_tickets += " AND DATE(znuny_created_at) <= ?"
-                date_filter_articles += " AND DATE(created_at) <= ?"
+                date_filter_tickets += " AND DATE(substr(znuny_created_at, 1, 19)) <= ?"
+                date_filter_articles += " AND DATE(substr(created_at, 1, 19)) <= ?"
                 params_tickets.append(date_to)
                 params_articles.append(date_to)
 
@@ -1102,9 +1102,9 @@ class Database:
                     ticket_type,
                     in_znuny,
                     completed_at IS NOT NULL as is_completed,
-                    DATE(created_at) = ? as is_today_extracted,
-                    DATE(znuny_created_at) = ? as is_today_znuny,
-                    DATE(completed_at) = ? as is_today_completed,
+                    DATE(substr(created_at, 1, 19)) = ? as is_today_extracted,
+                    DATE(substr(znuny_created_at, 1, 19)) = ? as is_today_znuny,
+                    DATE(substr(completed_at, 1, 19)) = ? as is_today_completed,
                     COUNT(*) as cnt
                 FROM tickets
                 GROUP BY portal, status, ticket_type, in_znuny, is_completed,
@@ -1158,7 +1158,7 @@ class Database:
             # Single query for all site visit stats
             cursor.execute("""
                 SELECT
-                    SUM(CASE WHEN DATE(created_at) = ? THEN 1 ELSE 0 END) as today_created,
+                    SUM(CASE WHEN DATE(substr(created_at, 1, 19)) = ? THEN 1 ELSE 0 END) as today_created,
                     SUM(CASE WHEN status = 'completed' AND DATE(visit_date) = ? THEN 1 ELSE 0 END) as today_completed,
                     SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
                 FROM site_visits
@@ -1171,7 +1171,7 @@ class Database:
             # Today's articles
             cursor.execute("""
                 SELECT COUNT(*) as count FROM znuny_articles
-                WHERE DATE(created_at) = ?
+                WHERE DATE(substr(created_at, 1, 19)) = ?
             """, (today,))
             today_articles_created = cursor.fetchone()["count"]
 
@@ -1270,7 +1270,7 @@ class Database:
                     SUM(CASE WHEN event_type = 'login_success' THEN 1 ELSE 0 END) as logins_today,
                     SUM(CASE WHEN event_type = 'session_reused' THEN 1 ELSE 0 END) as sessions_reused_today
                 FROM login_stats
-                WHERE DATE(created_at) = ?
+                WHERE DATE(substr(created_at, 1, 19)) = ?
             """, (today,))
             today_row = cursor.fetchone()
 
@@ -1308,10 +1308,10 @@ class Database:
             date_filter = ""
             params = [t_good, t_good, t_warning, t_warning]
             if date_from:
-                date_filter += " AND DATE(znuny_created_at) >= ?"
+                date_filter += " AND DATE(substr(znuny_created_at, 1, 19)) >= ?"
                 params.append(date_from)
             if date_to:
-                date_filter += " AND DATE(znuny_created_at) <= ?"
+                date_filter += " AND DATE(substr(znuny_created_at, 1, 19)) <= ?"
                 params.append(date_to)
 
             # Add filter for negative time if exclude_negative is True
@@ -1364,10 +1364,10 @@ class Database:
             article_params = []
             article_date_filter = ""
             if date_from:
-                article_date_filter += " AND DATE(created_at) >= ?"
+                article_date_filter += " AND DATE(substr(created_at, 1, 19)) >= ?"
                 article_params.append(date_from)
             if date_to:
-                article_date_filter += " AND DATE(created_at) <= ?"
+                article_date_filter += " AND DATE(substr(created_at, 1, 19)) <= ?"
                 article_params.append(date_to)
 
             cursor.execute(f"""
@@ -1397,10 +1397,10 @@ class Database:
             znuny_only_params = []
             znuny_only_date_filter = ""
             if date_from:
-                znuny_only_date_filter += " AND DATE(created_at) >= ?"
+                znuny_only_date_filter += " AND DATE(substr(created_at, 1, 19)) >= ?"
                 znuny_only_params.append(date_from)
             if date_to:
-                znuny_only_date_filter += " AND DATE(created_at) <= ?"
+                znuny_only_date_filter += " AND DATE(substr(created_at, 1, 19)) <= ?"
                 znuny_only_params.append(date_to)
 
             cursor.execute(f"""
@@ -1546,10 +1546,10 @@ class Database:
             def dfilter(col):
                 sql, p = "", []
                 if date_from:
-                    sql += f" AND DATE({col}) >= ?"
+                    sql += f" AND DATE(substr({col}, 1, 19)) >= ?"
                     p.append(date_from)
                 if date_to:
-                    sql += f" AND DATE({col}) <= ?"
+                    sql += f" AND DATE(substr({col}, 1, 19)) <= ?"
                     p.append(date_to)
                 return sql, p
 
@@ -1845,17 +1845,17 @@ class Database:
             params = [staff_name]
 
             if date_from:
-                query += " AND DATE(znuny_created_at) >= ?"
+                query += " AND DATE(substr(znuny_created_at, 1, 19)) >= ?"
                 params.append(date_from)
             if date_to:
-                query += " AND DATE(znuny_created_at) <= ?"
+                query += " AND DATE(substr(znuny_created_at, 1, 19)) <= ?"
                 params.append(date_to)
 
             # Get total count
             count_query = query.replace("SELECT *,", "SELECT COUNT(*) FROM (SELECT *,").replace("FROM tickets", "FROM tickets) sub")
             cursor.execute(count_query.split("FROM (SELECT")[0] + " FROM tickets WHERE znuny_created_by = ?" +
-                          (" AND DATE(znuny_created_at) >= ?" if date_from else "") +
-                          (" AND DATE(znuny_created_at) <= ?" if date_to else ""),
+                          (" AND DATE(substr(znuny_created_at, 1, 19)) >= ?" if date_from else "") +
+                          (" AND DATE(substr(znuny_created_at, 1, 19)) <= ?" if date_to else ""),
                           params[:len([p for p in [staff_name, date_from, date_to] if p])])
             total = cursor.fetchone()[0]
 
@@ -1891,7 +1891,7 @@ class Database:
 
             cursor.execute("""
                 SELECT
-                    DATE(znuny_created_at) as date,
+                    DATE(substr(znuny_created_at, 1, 19)) as date,
                     COUNT(*) as tickets_created,
                     SUM(CASE WHEN
                         (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) * 24 * 60 >= 0
@@ -1908,8 +1908,8 @@ class Database:
                 WHERE znuny_created_by = ?
                     AND znuny_created_at IS NOT NULL
                     AND created_at IS NOT NULL
-                    AND DATE(znuny_created_at) >= DATE('now', ? || ' days')
-                GROUP BY DATE(znuny_created_at)
+                    AND DATE(substr(znuny_created_at, 1, 19)) >= DATE('now', ? || ' days')
+                GROUP BY DATE(substr(znuny_created_at, 1, 19))
                 ORDER BY date DESC
             """, (t_good, staff_name, -days))
 
@@ -1947,10 +1947,10 @@ class Database:
             params = [min_delay_minutes]
 
             if date_from:
-                query += " AND DATE(znuny_created_at) >= ?"
+                query += " AND DATE(substr(znuny_created_at, 1, 19)) >= ?"
                 params.append(date_from)
             if date_to:
-                query += " AND DATE(znuny_created_at) <= ?"
+                query += " AND DATE(substr(znuny_created_at, 1, 19)) <= ?"
                 params.append(date_to)
 
             query += " GROUP BY znuny_created_by ORDER BY delayed_count DESC"
@@ -2483,7 +2483,7 @@ class Database:
             today_date = now_maldives().date().isoformat()
             cursor.execute("""
                 SELECT level, COUNT(*) as count FROM system_logs
-                WHERE DATE(created_at) = ?
+                WHERE DATE(substr(created_at, 1, 19)) = ?
                 GROUP BY level
             """, (today_date,))
             today = {row["level"]: row["count"] for row in cursor.fetchall()}
@@ -2885,7 +2885,7 @@ class Database:
             # Today's new (first seen today) - always all-time "today", not date-scoped
             cursor.execute("""
                 SELECT COUNT(*) as count FROM znuny_tickets
-                WHERE DATE(first_seen_at) = ?
+                WHERE DATE(substr(first_seen_at, 1, 19)) = ?
             """, (today,))
             today_new = cursor.fetchone()["count"]
 
@@ -2979,10 +2979,10 @@ class Database:
             # the article's own created_at)
             art_parts, art_params = [], []
             if date_from:
-                art_parts.append("DATE(created_at) >= ?")
+                art_parts.append("DATE(substr(created_at, 1, 19)) >= ?")
                 art_params.append(date_from)
             if date_to:
-                art_parts.append("DATE(created_at) <= ?")
+                art_parts.append("DATE(substr(created_at, 1, 19)) <= ?")
                 art_params.append(date_to)
             art_where = (" AND " + " AND ".join(art_parts)) if art_parts else ""
             cursor.execute(f"""
@@ -3307,10 +3307,10 @@ class Database:
             params = [staff_name]
 
             if date_from:
-                query += " AND DATE(created_at) >= ?"
+                query += " AND DATE(substr(created_at, 1, 19)) >= ?"
                 params.append(date_from)
             if date_to:
-                query += " AND DATE(created_at) <= ?"
+                query += " AND DATE(substr(created_at, 1, 19)) <= ?"
                 params.append(date_to)
 
             # Get total count
@@ -3355,10 +3355,10 @@ class Database:
             params = [staff_name]
 
             if date_from:
-                query += " AND DATE(a.created_at) >= ?"
+                query += " AND DATE(substr(a.created_at, 1, 19)) >= ?"
                 params.append(date_from)
             if date_to:
-                query += " AND DATE(a.created_at) <= ?"
+                query += " AND DATE(substr(a.created_at, 1, 19)) <= ?"
                 params.append(date_to)
 
             # Get total count
@@ -3406,10 +3406,10 @@ class Database:
             params = []
 
             if date_from:
-                query += " AND DATE(created_at) >= ?"
+                query += " AND DATE(substr(created_at, 1, 19)) >= ?"
                 params.append(date_from)
             if date_to:
-                query += " AND DATE(created_at) <= ?"
+                query += " AND DATE(substr(created_at, 1, 19)) <= ?"
                 params.append(date_to)
 
             query += " GROUP BY portal ORDER BY total DESC"
