@@ -41,6 +41,11 @@ class BaseExtractor(ABC):
     # auto-clear. Off for portals that self-solve via stealth (Dhiraagu) — the
     # injected, IP-bound cookies make things worse there.
     USE_FLARESOLVERR_FALLBACK = True
+    # Browser channel ("chrome" = real Chrome) and forced-headed mode. Cloudflare
+    # flags HEADLESS browsers; real Chrome run HEADED passes (matches a human's
+    # manual browser). Set both for Cloudflare-protected portals (Dhiraagu).
+    BROWSER_CHANNEL = None
+    FORCE_HEADED = False
     # Memory limit per browser - override in subclass for heavier portals
     MEMORY_LIMIT_MB = DEFAULT_MEMORY_LIMIT_MB
 
@@ -265,7 +270,12 @@ class BaseExtractor(ABC):
                         pass
                     BaseExtractor._portal_browsers.pop(portal, None)
 
-        browser = BrowserManager(headless=self.headless, user_agent=self.browser_user_agent())
+        effective_headless = False if self.FORCE_HEADED else self.headless
+        browser = BrowserManager(
+            headless=effective_headless,
+            user_agent=self.browser_user_agent(),
+            channel=self.BROWSER_CHANNEL,
+        )
         session_dir = self._get_session_dir()
         browser.start(user_data_dir=session_dir)
         with BaseExtractor._portal_browsers_lock:

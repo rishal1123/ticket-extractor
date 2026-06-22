@@ -84,9 +84,10 @@ class BrowserManager:
     # Each thread gets one Playwright runtime, multiple browsers share it
     _thread_local = threading.local()
 
-    def __init__(self, headless: bool = False, user_agent: str = None):
+    def __init__(self, headless: bool = False, user_agent: str = None, channel: str = None):
         self.headless = headless
         self.user_agent = user_agent  # override Chromium's default UA (e.g. to match FlareSolverr)
+        self.channel = channel        # e.g. "chrome" to use the real Chrome (passes Cloudflare; Chromium gets flagged)
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -150,6 +151,8 @@ class BrowserManager:
             )
             if self.user_agent:
                 _ctx_kwargs["user_agent"] = self.user_agent
+            if self.channel:
+                _ctx_kwargs["channel"] = self.channel
             self._context = self._playwright.chromium.launch_persistent_context(
                 user_data_dir, **_ctx_kwargs
             )

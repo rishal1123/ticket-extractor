@@ -8,16 +8,15 @@ from config import Config
 class DhiraaguExtractor(BaseExtractor):
     """Extractor for Dhiraagu portal (AFAS system - Filament PHP)."""
 
-    # A realistic Chrome UA (NOT the Playwright "HeadlessChrome" default) so the
-    # browser clears Cloudflare's JS challenge on its own — proven: this UA +
-    # stealth evasions reaches the AFAS login page without FlareSolverr cookies.
-    REALISTIC_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-    # Self-solve Cloudflare via stealth; FlareSolverr's IP-bound cookies hurt here.
+    # Cloudflare flags HEADLESS browsers; the real Chrome run HEADED passes
+    # (verified: chrome/headed -> AFAS login; chrome|chromium/headless -> "Just a
+    # moment"). Matches accessing Dhiraagu manually in Chrome on the same IP.
+    BROWSER_CHANNEL = "chrome"
+    FORCE_HEADED = True
+    # Self-solve Cloudflare via the real headed browser; FlareSolverr's IP-bound
+    # cookies hurt here, so don't fall back to it.
     USE_FLARESOLVERR_FALLBACK = False
-
-    def browser_user_agent(self):
-        return self.REALISTIC_UA
+    # Use real Chrome's own User-Agent (don't override).
 
     # ============================================================
     # CSS SELECTORS
