@@ -313,6 +313,27 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Failed to trigger customer report: {e}")
 
+    def _quick_isp_check(self):
+        """Every 1 min: link unlinked active ISP tickets to Znuny and refresh the
+        latest Znuny comment for active linked ISP tickets. Runs in a short-lived
+        thread so it never blocks the scheduler loop, with a reentrancy guard."""
+        if not self._has_db_credentials() or not self._is_within_operating_hours():
+            return
+        if getattr(self, "_quick_check_running", False):
+            logger.debug("Quick ISP check still running, skipping this minute")
+            return
+        self._quick_check_running = True
+
+        def _run():
+            try:
+                ZnunyService().quick_isp_znuny_check()
+            except Exception as e:
+                logger.error(f"Quick ISP check failed: {e}")
+            finally:
+                self._quick_check_running = False
+
+        threading.Thread(target=_run, daemon=True, name="QuickISPCheck").start()
+
     def _generate_staff_snapshots(self):
         """Freeze the just-completed day's per-staff stats snapshot (daily, at
         midnight). Today is served live by the page, so only prior days need a
@@ -516,6 +537,8 @@ class SchedulerService:
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
         schedule.every(5).minutes.do(self._worker_health_check)
         schedule.every(1).hours.do(self._scheduled_browser_restart)
+        # Every 1 min: link active ISP tickets to Znuny + refresh their last comment
+        schedule.every(1).minutes.do(self._quick_isp_check)
         # Freeze the completed day's per-staff snapshot once at midnight (today is
         # served live by the page; the creator sweep refreshes prior snapshots).
         schedule.every().day.at("00:30").do(self._generate_staff_snapshots)

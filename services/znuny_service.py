@@ -58,12 +58,14 @@ class ZnunyService:
             logger.error(f"Error checking Znuny for ticket {ticket_id}: {e}")
             return {"success": False, "message": str(e)}
 
-    def sync_ticket_details(self, ticket_id: int) -> Dict:
+    def sync_ticket_details(self, ticket_id: int, bypass_cache: bool = False) -> Dict:
         """
         Fetch and sync detailed information from Znuny for a ticket.
 
         Args:
             ticket_id: Internal ticket database ID
+            bypass_cache: skip the TTL cache (used by the 1-min quick check so the
+                latest comment is fresh, not up to 6 min stale)
 
         Returns:
             Dict with synced details or error
@@ -76,7 +78,7 @@ class ZnunyService:
             return {"success": False, "message": "Ticket not linked to Znuny"}
 
         try:
-            details = self.znuny_client.get_ticket_details(ticket.znuny_ticket_id)
+            details = self.znuny_client.get_ticket_details(ticket.znuny_ticket_id, bypass_cache=bypass_cache)
             if not details:
                 return {"success": False, "message": "Could not fetch Znuny details"}
 
@@ -142,6 +144,40 @@ class ZnunyService:
         except Exception as e:
             logger.error(f"Error syncing Znuny details for ticket {ticket_id}: {e}")
             return {"success": False, "message": str(e)}
+
+    def quick_isp_znuny_check(self) -> Dict:
+        """1-minute lightweight check scoped to ACTIVE ISP tickets only:
+          1. Link unlinked active ISP tickets that now exist in Znuny.
+          2. Refresh the latest Znuny comment (articles) for active linked ISP
+             tickets, so the dashboard ticket-detail modal shows fresh comments.
+
+        Deliberately narrow (ISP tickets only) so it stays cheap at 1-min cadence,
+        separate from the hourly/midnight full syncs.
+        """
+        result = {"linked": 0, "refreshed": 0, "errors": 0}
+
+        # 1. Link unlinked active ISP tickets
+        try:
+            link = self.sync_unchecked_tickets()
+            result["linked"] = link.get("found", 0)
+        except Exception as e:
+            logger.error(f"Quick check (link) error: {e}")
+            result["errors"] += 1
+
+        # 2. Refresh latest comment for active linked ISP tickets (bypass TTL cache
+        #    so comments are current; the article-count check still avoids re-parse
+        #    when nothing changed).
+        for ticket in self.db.get_active_linked_isp_tickets():
+            try:
+                r = self.sync_ticket_details(ticket.id, bypass_cache=True)
+                if r.get("success"):
+                    result["refreshed"] += 1
+            except Exception as e:
+                logger.error(f"Quick check (comment) error for ticket {ticket.id}: {e}")
+                result["errors"] += 1
+
+        logger.info(f"Quick ISP Znuny check: linked={result['linked']} refreshed={result['refreshed']} errors={result['errors']}")
+        return result
 
     def sync_unchecked_tickets(self) -> Dict:
         """

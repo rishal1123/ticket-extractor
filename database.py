@@ -758,6 +758,18 @@ class Database:
                 "last_sync_time": row["last_sync_time"]
             }
 
+    def get_active_linked_isp_tickets(self) -> list[Ticket]:
+        """Active ISP tickets already linked to Znuny (in_znuny=1, not completed).
+        Used by the 1-minute quick check to refresh their latest Znuny comment."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM tickets
+                WHERE in_znuny = 1 AND znuny_ticket_id IS NOT NULL AND completed_at IS NULL
+                ORDER BY updated_at DESC
+            """)
+            return [self._row_to_ticket(row) for row in cursor.fetchall()]
+
     def get_tickets_needing_znuny_details(self) -> list[Ticket]:
         """Get tickets that have znuny_ticket_id but no znuny_created_by (need detail sync)."""
         with self._get_connection() as conn:
