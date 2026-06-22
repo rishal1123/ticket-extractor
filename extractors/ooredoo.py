@@ -70,11 +70,23 @@ class OoredooExtractor(BaseExtractor):
     def detail_url(self, ticket) -> str:
         return self.TICKET_DETAIL_URL.format(ticket_id=ticket.ticket_id)
 
+    # Ooredoo's portal is slow; the default 10s timeout caused false login
+    # failures (submit click and page loads timing out). Give it more room.
+    NAV_TIMEOUT_MS = 30000
+
+    def _relax_timeouts(self):
+        """Raise the page's default timeout — Ooredoo is slow to load/navigate."""
+        try:
+            self.browser.page.set_default_timeout(self.NAV_TIMEOUT_MS)
+        except Exception:
+            pass
+
     def is_logged_in(self) -> bool:
         """Check if currently logged in to Ooredoo portal."""
         try:
+            self._relax_timeouts()
             # Navigate to tickets page and check if we can access it
-            self.navigate_to(self.TICKETS_URL)
+            self.navigate_to(self.TICKETS_URL, timeout=self.NAV_TIMEOUT_MS)
             time.sleep(2)
 
             # If redirected to login page, we're not logged in
@@ -106,12 +118,13 @@ class OoredooExtractor(BaseExtractor):
         self.logger.info(f"Logging into Ooredoo portal: {self.config.url}")
 
         try:
-            self.navigate_to(self.LOGIN_URL)
+            self._relax_timeouts()
+            self.navigate_to(self.LOGIN_URL, timeout=self.NAV_TIMEOUT_MS)
 
             # Wait for the login form to actually render (handles slow loads).
             # If it never appears, we may already be authenticated — verify.
             try:
-                self.browser.page.wait_for_selector(self.LOGIN_EMAIL_SELECTOR, timeout=15000)
+                self.browser.page.wait_for_selector(self.LOGIN_EMAIL_SELECTOR, timeout=self.NAV_TIMEOUT_MS)
             except Exception:
                 if self.is_logged_in():
                     self.logger.info("Already authenticated (no login form shown)")
@@ -126,33 +139,35 @@ class OoredooExtractor(BaseExtractor):
             if not self.wait_and_type(self.LOGIN_PASSWORD_SELECTOR, self.config.password):
                 self.logger.error("Failed to enter password")
                 return False
-            if not self.wait_and_click(self.LOGIN_BUTTON_SELECTOR):
-                self.logger.error("Failed to click login button")
-                return False
 
-            # Wait for the post-submit navigation OFF the login page instead of a
-            # fixed sleep (the old sleep(5) was sometimes too short -> false "still
-            # on login page"). A surfaced error means rejected credentials.
+            # Submit. Ooredoo's post-submit navigation is slow, so the click's
+            # built-in "wait for navigation" can elapse — that's fine, the click
+            # still fired. Don't treat that as a failure; verify the result below.
+            try:
+                self.browser.page.click(self.LOGIN_BUTTON_SELECTOR, timeout=self.NAV_TIMEOUT_MS)
+            except Exception as e:
+                self.logger.info(f"Submit click navigation wait elapsed ({e}); verifying anyway")
+
+            # Best-effort: wait for the page to leave the login URL.
             try:
                 self.browser.page.wait_for_url(
-                    lambda url: "login" not in (url or "").lower(), timeout=20000
+                    lambda url: "login" not in (url or "").lower(), timeout=self.NAV_TIMEOUT_MS
                 )
             except Exception:
-                err = self._login_error_text()
-                if err:
-                    self.logger.error(f"Ooredoo login rejected: {err}")
-                else:
-                    self.logger.error("Login failed - still on login page after submit")
-                self.take_screenshot("login_failed")
-                return False
+                pass  # don't fail yet — the tickets check below is authoritative
 
-            # Authoritative check: can we actually reach the tickets table? This
-            # also covers landing on /public/ (a non-tickets page) after submit.
+            # Authoritative check: can we actually reach the tickets table? Covers
+            # both a slow login and landing on /public/ (a non-tickets page).
             if self.is_logged_in():
                 self.logger.info("Login successful")
                 return True
-            self.logger.error("Login submitted but tickets page is not reachable")
-            self.take_screenshot("login_no_tickets")
+
+            err = self._login_error_text()
+            self.logger.error(
+                f"Login not confirmed (url={self.browser.page.url}; "
+                f"error={err or 'none'})"
+            )
+            self.take_screenshot("login_failed")
             return False
 
         except Exception as e:
