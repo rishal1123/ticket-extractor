@@ -24,6 +24,30 @@ _PORTAL_KEYWORD = {
 }
 
 
+def _load_address_rules() -> Optional[dict]:
+    """Load the formatter's admin-editable address/atoll validation rules."""
+    try:
+        from formatter.services import rules_store
+        return rules_store.load()
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"Could not load address rules: {e}")
+        return None
+
+
+def _get_znuny():
+    """Return a Znuny client for the formatter's cross-checks (verify_address /
+    account_exists), or None when Znuny isn't configured. Reuses the app's own
+    ZnunyClient against the same instance."""
+    try:
+        from config import Config
+        if Config.get_znuny_url() and Config.get_znuny_username() and Config.get_znuny_password():
+            from znuny_client import ZnunyClient
+            return ZnunyClient()
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"Znuny verification unavailable: {e}")
+    return None
+
+
 def manual_from_ticket(ticket) -> dict:
     """Auto-fill the formatter's manual fields from a ticket where we can.
 
@@ -67,7 +91,14 @@ def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[di
     keyword = _PORTAL_KEYWORD.get((portal or "").lower(), portal or "")
     raw = f"{keyword}\n{raw_dump}"
 
-    result = TicketModel().build(raw, manual or {})
+    # Apply the same verifications the standalone formatter does:
+    #  - address/atoll format rules (pure, admin-configurable JSON)
+    #  - Znuny cross-checks (address exists as CustomerID; account relocation)
+    result = TicketModel().build(
+        raw, manual or {},
+        address_rules=_load_address_rules(),
+        znuny=_get_znuny(),
+    )
     if not result.detected:
         return {"ok": False, "isp": None, "text": result.text or "", "missing": [],
                 "warnings": [], "error": "Could not detect the ISP from the captured data."}

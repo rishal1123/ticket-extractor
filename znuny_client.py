@@ -350,6 +350,36 @@ class ZnunyClient:
             ids = [ids]
         return [str(i) for i in ids]
 
+    def _customer_field_exists(self, field: str, value: str) -> "bool | None":
+        """True if any ticket matches field==value (exact), False if none, None on
+        error/unverifiable. Used by the ticket formatter's address/account checks
+        (CustomerID holds the address in this Znuny instance)."""
+        value = (value or "").strip()
+        if not value:
+            return None
+        try:
+            resp = self._http().post(
+                f"{self.ws_url}/TicketSearch",
+                json={**self._auth(), field: value},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.warning(f"TicketSearch {field}={value} failed: {e}")
+            return None
+        if isinstance(data, dict) and data.get("Error"):
+            return None
+        ids = data.get("TicketID") if isinstance(data, dict) else None
+        return bool(ids)
+
+    def verify_address(self, address_id: str) -> "bool | None":
+        """True if a ticket's CustomerID equals this address exactly (else False/None)."""
+        return self._customer_field_exists("CustomerID", address_id)
+
+    def account_exists(self, account_id: str) -> "bool | None":
+        """True if a ticket exists for this account (CustomerUserLogin) — possible relocation."""
+        return self._customer_field_exists("CustomerUserLogin", account_id)
+
     def _ticket_get(self, ticket_ids: list[str], with_articles: bool = False) -> list[dict]:
         """GET /Ticket/:TicketID for one or more ids (batched, comma-separated)."""
         if not ticket_ids:
