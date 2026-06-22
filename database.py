@@ -1717,6 +1717,56 @@ class Database:
 
         return agg
 
+    def cleanup_site_visit_assignees(self) -> dict:
+        """One-time fix: strip '[n]' list markers (e.g. "[1] @raidh [2] @ayan")
+        from site_visits.assigned_to — these created a bogus "[1]" staff member.
+        Then drop bogus snapshot rows and rebuild the affected days so the real
+        assignees get credited. Idempotent — safe to run more than once."""
+        import re
+
+        def _clean(raw: str) -> str:
+            names = []
+            for part in re.split(r'[,@]', raw or ''):
+                c = re.sub(r'\[\s*\d+\s*\]', ' ', part)   # remove [1], [2], ...
+                c = re.sub(r'\s+', ' ', c).strip(' .,;:-')
+                if c and not c.isdigit():
+                    names.append(c)
+            return ", ".join(names)
+
+        fixed = []
+        affected_dates = set()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, assigned_to, visit_date FROM site_visits WHERE assigned_to LIKE '%[%'")
+            for r in cursor.fetchall():
+                new = _clean(r["assigned_to"])
+                if new != (r["assigned_to"] or ""):
+                    cursor.execute(
+                        "UPDATE site_visits SET assigned_to = ?, updated_at = ? WHERE id = ?",
+                        (new, now_maldives(), r["id"])
+                    )
+                    fixed.append({"id": r["id"], "old": r["assigned_to"], "new": new})
+                    if r["visit_date"]:
+                        affected_dates.add(str(r["visit_date"])[:10])
+            # Drop any leftover bogus snapshot rows whose staff name is a marker.
+            cursor.execute("DELETE FROM staff_performance_daily WHERE staff_name LIKE '%[%'")
+            snap_deleted = cursor.rowcount
+
+        # Rebuild affected days from the cleaned data (own connection; runs after
+        # the UPDATE above has committed).
+        for d in sorted(affected_dates):
+            try:
+                self.generate_staff_daily_snapshot(d)
+            except Exception:
+                pass
+
+        return {
+            "rows_fixed": len(fixed),
+            "details": fixed,
+            "snapshot_rows_deleted": snap_deleted,
+            "dates_regenerated": sorted(affected_dates),
+        }
+
     def generate_staff_daily_snapshot(self, date_str: str) -> int:
         """(Re)generate the per-staff snapshot rows in staff_performance_daily for
         a single day. Replaces any existing rows for the day. Returns staff count."""
