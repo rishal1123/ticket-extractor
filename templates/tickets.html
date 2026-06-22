@@ -64,6 +64,22 @@
             </div>
         </div>
     </div>
+    <div class="col-6 col-md">
+        <div class="stat-card card h-100" style="border-left: 4px solid #2e86de;">
+            <div class="card-body text-center py-2">
+                <div class="stat-value" style="color:#2e86de;" id="sumZnunyOpen">0</div>
+                <div class="text-muted small">Znuny Open</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md">
+        <div class="stat-card card h-100" style="border-left: 4px solid #8e44ad;">
+            <div class="card-body text-center py-2">
+                <div class="stat-value" style="color:#8e44ad;" id="sumZnunyClosed">0</div>
+                <div class="text-muted small">Znuny Closed</div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Filters -->
@@ -269,11 +285,17 @@ function updateSummary(tickets) {
     const closed = tickets.filter(t => t.completed_at).length;
     const open = total - closed;
     const inZnuny = tickets.filter(t => t.in_znuny || t.znuny_ticket_id).length;
+    // Znuny open/closed: only tickets with a known linked Znuny state
+    const isZnunyClosed = s => s && /closed|resolved/i.test(s);
+    const znunyClosed = tickets.filter(t => isZnunyClosed(t.znuny_state)).length;
+    const znunyOpen = tickets.filter(t => t.znuny_state && !isZnunyClosed(t.znuny_state)).length;
     document.getElementById('sumTotal').textContent = total;
     document.getElementById('sumOpen').textContent = open;
     document.getElementById('sumClosed').textContent = closed;
     document.getElementById('sumInZnuny').textContent = inZnuny;
     document.getElementById('sumPending').textContent = total - inZnuny;
+    document.getElementById('sumZnunyOpen').textContent = znunyOpen;
+    document.getElementById('sumZnunyClosed').textContent = znunyClosed;
     const labels = { all: '(All)', today: 'Today', yesterday: 'Yesterday', week: '(7 Days)' };
     document.getElementById('sumPeriod').textContent = labels[currentDateFilter] || '';
 }

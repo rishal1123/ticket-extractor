@@ -2688,6 +2688,27 @@ class Database:
                 return {"state": row["state"], "queue": row["queue"], "owner": row["owner"], "priority": row["priority"]}
             return None
 
+    def get_znuny_states_for(self, znuny_ticket_ids: list) -> dict:
+        """Batch-fetch Znuny state for many ticket numbers. Returns
+        {znuny_ticket_id: state}. Used to enrich the ISP tickets list with the
+        linked Znuny ticket's open/closed state."""
+        ids = [str(i) for i in znuny_ticket_ids if i]
+        if not ids:
+            return {}
+        out = {}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                ph = ",".join("?" * len(chunk))
+                cursor.execute(
+                    f"SELECT znuny_ticket_id, state FROM znuny_tickets WHERE znuny_ticket_id IN ({ph})",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    out[row["znuny_ticket_id"]] = row["state"]
+        return out
+
     def upsert_znuny_only_ticket(self, data: dict) -> int:
         """Insert or update a Znuny ticket. Stores ALL Znuny tickets (ISP-linked and orphan)."""
         now = now_maldives()
