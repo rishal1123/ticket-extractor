@@ -674,9 +674,13 @@
                     <label class="form-label small">Dashboard Host</label>
                     <input type="text" class="form-control form-control-sm" id="cfg_DASHBOARD_HOST">
                 </div>
-                <div class="mb-0">
+                <div class="mb-2">
                     <label class="form-label small">Dashboard Port</label>
                     <input type="number" class="form-control form-control-sm" id="cfg_DASHBOARD_PORT" min="1" max="65535">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">FlareSolverr URL <span class="text-muted">(Cloudflare bypass for Dhiraagu)</span></label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_FLARESOLVERR_URL" placeholder="http://flaresolverr:8191">
                 </div>
             </div>
         </div>
@@ -1356,7 +1360,8 @@ const configKeys = [
     'ROL_URL', 'ROL_USERNAME', 'ROL_PASSWORD',
     'MEDIANET_URL', 'MEDIANET_USERNAME', 'MEDIANET_PASSWORD',
     'ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD',
-    'EXTRACTION_INTERVAL_MINUTES', 'DASHBOARD_HOST', 'DASHBOARD_PORT'
+    'EXTRACTION_INTERVAL_MINUTES', 'DASHBOARD_HOST', 'DASHBOARD_PORT',
+    'FLARESOLVERR_URL'
 ];
 
 // Load config when switching to config tab

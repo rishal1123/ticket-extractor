@@ -93,8 +93,9 @@ class Config:
 
     @classmethod
     def get_flaresolverr_url(cls) -> str:
-        """Return FlareSolverr base URL, or empty string if not configured."""
-        return os.getenv("FLARESOLVERR_URL", "")
+        """Return FlareSolverr base URL, or empty string if not configured.
+        DB (cfg_FLARESOLVERR_URL) takes precedence over the .env fallback."""
+        return _get("FLARESOLVERR_URL", "")
 
     # Portal URLs for template links
     @classmethod

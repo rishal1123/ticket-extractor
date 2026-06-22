@@ -21,7 +21,8 @@ class ConfigService:
         'Medianet Portal': ['MEDIANET_URL', 'MEDIANET_USERNAME', 'MEDIANET_PASSWORD'],
         'Znuny API': ['ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD'],
         'Scheduler settings': ['EXTRACTION_INTERVAL_MINUTES', 'ZNUNY_SYNC_INTERVAL_MINUTES'],
-        'Dashboard settings': ['DASHBOARD_HOST', 'DASHBOARD_PORT']
+        'Dashboard settings': ['DASHBOARD_HOST', 'DASHBOARD_PORT'],
+        'FlareSolverr': ['FLARESOLVERR_URL']
     }
 
     def __init__(self):
