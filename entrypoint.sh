@@ -77,6 +77,18 @@ if command -v Xvfb >/dev/null 2>&1; then
     fi
 fi
 
+# Start a lightweight window manager (fluxbox) on the virtual display. Without a
+# WM, Chrome's windows/iframes don't receive proper focus and some interactive
+# widgets fail to render or can't be clicked — notably the Cloudflare Turnstile
+# "Verify you are human" checkbox (it shows as text only, with no clickable box).
+# fluxbox gives the browser a managed, focusable window so the checkbox renders and
+# can be solved via noVNC. Best-effort: never blocks the app.
+if [ -n "${DISPLAY:-}" ] && command -v fluxbox >/dev/null 2>&1; then
+    echo "Starting fluxbox window manager on ${DISPLAY}..."
+    fluxbox >/tmp/fluxbox.log 2>&1 &
+    sleep 1
+fi
+
 # Start noVNC (x11vnc + websockify) so an operator can open a browser, SEE the
 # headed Chrome running on the virtual display, and manually solve a Cloudflare
 # challenge (Turnstile/CAPTCHA) that the automatic bypass can't. It drives the
@@ -87,12 +99,12 @@ if [ -n "${DISPLAY:-}" ] && command -v x11vnc >/dev/null 2>&1; then
     NOVNC_PORT="${NOVNC_PORT:-6080}"
     if [ -n "${VNC_PASSWORD:-}" ]; then
         echo "Starting x11vnc (password-protected) on display ${DISPLAY}..."
-        x11vnc -display "$DISPLAY" -forever -shared -passwd "$VNC_PASSWORD" \
+        x11vnc -display "$DISPLAY" -forever -shared -noxdamage -passwd "$VNC_PASSWORD" \
             -rfbport 5900 -bg -o /tmp/x11vnc.log >/dev/null 2>&1 || \
             echo "WARN: x11vnc failed to start — see /tmp/x11vnc.log"
     else
         echo "WARN: VNC_PASSWORD not set — noVNC will be OPEN with NO password. Set VNC_PASSWORD to secure it."
-        x11vnc -display "$DISPLAY" -forever -shared -nopw \
+        x11vnc -display "$DISPLAY" -forever -shared -noxdamage -nopw \
             -rfbport 5900 -bg -o /tmp/x11vnc.log >/dev/null 2>&1 || \
             echo "WARN: x11vnc failed to start — see /tmp/x11vnc.log"
     fi
