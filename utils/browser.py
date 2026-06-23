@@ -148,6 +148,13 @@ class BrowserManager:
                 args=CHROMIUM_ARGS,
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=ignore_https_errors,
+                # Drop Playwright's default --enable-automation flag. It sets the
+                # "controlled by automated software" signals (incl. navigator.webdriver
+                # tells) that Cloudflare Turnstile keys on, which makes the "Verify you
+                # are human" widget render as TEXT ONLY with no clickable checkbox.
+                # Removing it lets the interactive checkbox appear so the challenge can
+                # self-clear or be ticked by hand via noVNC.
+                ignore_default_args=["--enable-automation"],
             )
             if self.user_agent:
                 _ctx_kwargs["user_agent"] = self.user_agent
