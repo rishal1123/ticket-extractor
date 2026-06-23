@@ -26,10 +26,71 @@ echo "Starting application..."
 # Xvfb directly and set DISPLAY ourselves — more robust than xvfb-run (no xauth
 # dependency). Other portals run headless and are unaffected. If Xvfb is missing
 # (e.g. a non-Docker run), just run directly.
+#
+# IMPORTANT: with `restart: unless-stopped`, Docker restarts the SAME container
+# (filesystem preserved), so a stale /tmp/.X99-lock + /tmp/.X11-unix/X99 socket
+# from the previous run survive. Xvfb then refuses to start on :99 ("server
+# already active"), exits, and DISPLAY=:99 points at a dead server — Chrome then
+# fails with "Missing X server or $DISPLAY" and Dhiraagu breaks on every restart
+# after the first. So we clean stale locks first and VERIFY Xvfb is actually up
+# before exporting DISPLAY (don't leave DISPLAY set pointing at nothing).
+DISPLAY_NUM=99
 if command -v Xvfb >/dev/null 2>&1; then
-    echo "Starting Xvfb virtual display on :99..."
-    Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
-    export DISPLAY=:99
-    sleep 1
+    echo "Starting Xvfb virtual display on :${DISPLAY_NUM}..."
+    # Clear stale lock/socket left by a previous run of this same container.
+    rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
+
+    Xvfb ":${DISPLAY_NUM}" -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+    XVFB_PID=$!
+
+    # Wait (up to ~10s) for the X socket to appear AND the process to still be alive.
+    xvfb_ready=false
+    for _ in $(seq 1 20); do
+        if [ -S "/tmp/.X11-unix/X${DISPLAY_NUM}" ] && kill -0 "$XVFB_PID" 2>/dev/null; then
+            xvfb_ready=true
+            break
+        fi
+        sleep 0.5
+    done
+
+    if [ "$xvfb_ready" = true ]; then
+        export DISPLAY=":${DISPLAY_NUM}"
+        echo "Xvfb ready on DISPLAY=${DISPLAY} (pid ${XVFB_PID})"
+    else
+        # Leave DISPLAY UNSET rather than pointing at a dead server. Dhiraagu will
+        # fail to bypass Cloudflare, but the rest of the app still runs headless.
+        echo "WARN: Xvfb did not come up on :${DISPLAY_NUM} — see /tmp/xvfb.log. DISPLAY left unset."
+        cat /tmp/xvfb.log 2>/dev/null || true
+    fi
 fi
+
+# Start noVNC (x11vnc + websockify) so an operator can open a browser, SEE the
+# headed Chrome running on the virtual display, and manually solve a Cloudflare
+# challenge (Turnstile/CAPTCHA) that the automatic bypass can't. It drives the
+# SAME persistent browser the extractor uses, so the resulting cf_clearance is
+# saved to the session and reused by subsequent automated cycles. Only meaningful
+# when the display is up. Best-effort: failures here never block the app.
+if [ -n "${DISPLAY:-}" ] && command -v x11vnc >/dev/null 2>&1; then
+    NOVNC_PORT="${NOVNC_PORT:-6080}"
+    if [ -n "${VNC_PASSWORD:-}" ]; then
+        echo "Starting x11vnc (password-protected) on display ${DISPLAY}..."
+        x11vnc -display "$DISPLAY" -forever -shared -passwd "$VNC_PASSWORD" \
+            -rfbport 5900 -bg -o /tmp/x11vnc.log >/dev/null 2>&1 || \
+            echo "WARN: x11vnc failed to start — see /tmp/x11vnc.log"
+    else
+        echo "WARN: VNC_PASSWORD not set — noVNC will be OPEN with NO password. Set VNC_PASSWORD to secure it."
+        x11vnc -display "$DISPLAY" -forever -shared -nopw \
+            -rfbport 5900 -bg -o /tmp/x11vnc.log >/dev/null 2>&1 || \
+            echo "WARN: x11vnc failed to start — see /tmp/x11vnc.log"
+    fi
+
+    # websockify serves the noVNC web client and bridges it to x11vnc on :5900.
+    if [ -d /usr/share/novnc ] && command -v websockify >/dev/null 2>&1; then
+        websockify --web=/usr/share/novnc "$NOVNC_PORT" localhost:5900 >/tmp/novnc.log 2>&1 &
+        echo "noVNC ready: open http://<host>:${NOVNC_PORT}/vnc.html to drive the headed Chrome"
+    else
+        echo "WARN: noVNC web client (/usr/share/novnc) or websockify missing — VNC available on raw port 5900 only."
+    fi
+fi
+
 exec python app.py

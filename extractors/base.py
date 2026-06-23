@@ -37,6 +37,13 @@ class BaseExtractor(ABC):
     _login_cooldown_until: dict = {}     # portal -> epoch seconds to skip until
     LOGIN_FAIL_THRESHOLD = 3
     LOGIN_COOLDOWN_MINUTES = 30
+    # Cloudflare manual-bypass pause: portals whose Cloudflare challenge couldn't be
+    # cleared automatically and are now waiting for an operator to solve it by hand
+    # via noVNC. While paused, the portal's browser is kept ALIVE and parked on the
+    # challenge (not killed, session not cleared) and automated extraction is
+    # skipped. Resumes automatically once the challenge is gone from the parked page
+    # (passive check — no navigation, so the operator is never interrupted mid-solve).
+    _manual_cf_paused: dict = {}         # portal -> True while awaiting manual CF bypass
     # Whether to fall back to FlareSolverr when a Cloudflare challenge doesn't
     # auto-clear. Off for portals that self-solve via stealth (Dhiraagu) — the
     # injected, IP-bound cookies make things worse there.
@@ -60,6 +67,15 @@ class BaseExtractor(ABC):
         # (only newly-seen tickets get a full extraction; notes are never fetched —
         # ticket updates come from Znuny). Populated in run() before extract_tickets().
         self._known_ticket_ids: set[str] = set()
+        # Set by navigate_to() when a Cloudflare challenge can't be cleared
+        # automatically (headed portals only). run() turns this into a pause that
+        # waits for a manual bypass via noVNC instead of retrying / clearing session.
+        self._cf_manual_required = False
+
+    @classmethod
+    def manual_cf_paused_portals(cls) -> list[str]:
+        """Portals currently paused awaiting a manual Cloudflare bypass (via noVNC)."""
+        return [p for p, paused in cls._manual_cf_paused.items() if paused]
 
     @abstractmethod
     def login(self) -> bool:
@@ -310,6 +326,22 @@ class BaseExtractor(ABC):
             result["error"] = f"login cooldown ({mins_left}m left)"
             return result
 
+        # Manual Cloudflare bypass: if a prior cycle hit a CF challenge that couldn't
+        # be auto-cleared, automated extraction is PAUSED until an operator solves it
+        # by hand via noVNC. Resume the moment the parked page is no longer a
+        # challenge — checked passively (no navigation) so we never reload the page
+        # out from under an operator mid-solve.
+        if BaseExtractor._manual_cf_paused.get(portal):
+            if not self._resume_if_cf_cleared(portal):
+                self.logger.warning(
+                    f"[{portal}] PAUSED awaiting manual Cloudflare bypass — open noVNC "
+                    f"and solve the challenge; extraction resumes automatically"
+                )
+                result["status"] = "paused"
+                result["error"] = "awaiting manual Cloudflare bypass (open noVNC)"
+                return result
+            # Cleared — fall through and extract normally this cycle.
+
         got_past_login = False  # set once any attempt clears login
         for attempt in range(max_retries):
             try:
@@ -465,6 +497,23 @@ class BaseExtractor(ABC):
                     "error", f"extractor.{self.config.name}",
                     f"Extraction attempt {attempt + 1}/{max_retries} failed: {e}"
                 )
+                # Manual Cloudflare bypass needed: don't retry or kill the browser —
+                # PAUSE and keep it parked on the challenge (session preserved) so an
+                # operator can solve it via noVNC. Resumes automatically next cycle.
+                if self._cf_manual_required:
+                    BaseExtractor._manual_cf_paused[portal] = True
+                    result["status"] = "paused"
+                    result["error"] = "awaiting manual Cloudflare bypass (open noVNC)"
+                    self.db.log_system(
+                        "warning", f"extractor.{portal}",
+                        "Cloudflare challenge needs manual bypass — extraction PAUSED. "
+                        "Open noVNC (http://<host>:6080/vnc.html), solve the challenge; "
+                        "extraction resumes automatically once cleared."
+                    )
+                    self.logger.warning(
+                        f"[{portal}] Extraction PAUSED — awaiting manual Cloudflare bypass via noVNC"
+                    )
+                    break
                 # Kill this portal's browser on error so next attempt starts fresh
                 portal = self.config.name
                 with BaseExtractor._portal_browsers_lock:
@@ -529,6 +578,43 @@ class BaseExtractor(ABC):
 
         return result
 
+    def _resume_if_cf_cleared(self, portal: str) -> bool:
+        """While paused for a manual Cloudflare bypass, check — WITHOUT navigating —
+        whether the operator has cleared the challenge on the parked browser.
+
+        Returns True (and clears the pause) once the parked page is no longer a
+        Cloudflare challenge; otherwise keeps the browser alive and parked. This is
+        deliberately non-invasive: it only reads the CURRENT page, so it never
+        reloads the page out from under an operator who is mid-solve in noVNC.
+        """
+        browser = BaseExtractor._portal_browsers.get(portal)
+        if browser is None or not browser.is_alive():
+            # Parked browser is gone (crash / 1-hour restart). Recreate it and
+            # re-present the login page so the operator has the challenge to solve,
+            # then stay paused. Raw goto (not navigate_to) so we don't recurse.
+            try:
+                self.browser = self._get_or_create_browser()
+                self.browser.page.goto(self.config.url, wait_until="domcontentloaded")
+                self.logger.info(f"[{portal}] Re-presented login page for manual Cloudflare bypass")
+            except Exception as e:
+                self.logger.warning(f"[{portal}] Could not re-present Cloudflare page: {e}")
+            return False
+        try:
+            if browser.is_cloudflare_challenge():
+                return False
+        except Exception:
+            return False
+        # Challenge gone — operator solved it. Resume automated extraction.
+        BaseExtractor._manual_cf_paused.pop(portal, None)
+        self._cf_manual_required = False
+        self.browser = browser
+        self.logger.info(f"[{portal}] Cloudflare challenge cleared by operator — resuming automated extraction")
+        self.db.log_system(
+            "info", f"extractor.{portal}",
+            "Manual Cloudflare bypass detected — resuming automated extraction"
+        )
+        return True
+
     def navigate_to(self, url: str, timeout: int = None, wait_until: str = None):
         """Navigate to a URL. timeout is in milliseconds (default uses page default)."""
         self.logger.debug(f"Navigating to: {url}")
@@ -544,8 +630,21 @@ class BaseExtractor(ABC):
         # the portal opts in — FlareSolverr's injected cookies are IP-bound and
         # actively hurt when the browser can self-solve (e.g. Dhiraagu).
         if self.browser.is_cloudflare_challenge():
-            if not self._wait_for_cf_autoclear() and self.USE_FLARESOLVERR_FALLBACK:
+            cleared = self._wait_for_cf_autoclear()
+            if not cleared and self.USE_FLARESOLVERR_FALLBACK:
                 self._solve_cloudflare(url, kwargs)
+                cleared = not self.browser.is_cloudflare_challenge()
+            if not cleared and self.FORCE_HEADED:
+                # Headed portal (visible on the Xvfb display): this is an interactive
+                # challenge the browser can't self-solve. Flag it so run() PAUSES and
+                # waits for an operator to solve it by hand via noVNC, instead of
+                # hammering a challenge that won't clear. Only headed portals qualify —
+                # a headless browser has nothing for an operator to see/click.
+                self._cf_manual_required = True
+                self.logger.warning(
+                    f"Cloudflare challenge on {url} could not be cleared automatically "
+                    f"— manual bypass required (solve it via noVNC)"
+                )
 
     def _wait_for_cf_autoclear(self, timeout_s: int = 35) -> bool:
         """Poll for the Cloudflare interstitial to clear on its own. Returns True

@@ -6,6 +6,9 @@ services:
     container_name: ticket-extractor
     ports:
       - "8003:8000"
+      # noVNC: open http://<host>:6080/vnc.html to watch/drive the headed Chrome
+      # and solve a Cloudflare challenge by hand (Dhiraagu). Secure with VNC_PASSWORD.
+      - "6080:6080"
     volumes:
       - extractor_data:/app/data
     environment:
@@ -15,6 +18,9 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/tickets.db
       - FLARESOLVERR_URL=http://flaresolverr:8191
+      # Password for the noVNC session. If unset, noVNC is OPEN with no auth —
+      # set this (e.g. in a .env file or Portainer) when 6080 is reachable.
+      - VNC_PASSWORD=${VNC_PASSWORD:-}
     # FlareSolverr is optional now (Dhiraagu uses real headed Chrome, not
     # FlareSolverr), so don't block app startup on it — just start it alongside.
     depends_on:

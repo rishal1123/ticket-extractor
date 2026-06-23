@@ -663,6 +663,25 @@ docker compose restart
 - **FlareSolverr sidecar** (`ghcr.io/flaresolverr/flaresolverr`) for Cloudflare-protected portals (e.g. Dhiraagu); app is wired via `FLARESOLVERR_URL=http://flaresolverr:8191`
 - App start is gated on FlareSolverr being healthy (`depends_on: condition: service_healthy`); FlareSolverr healthcheck hits its root URL via `python -m urllib` (no curl/wget assumption)
 - `entrypoint.sh` runs the DB init/migration check (`Database()`) and fails fast before launching `app.py`
+- **Xvfb (virtual display) for Dhiraagu's headed Chrome.** `entrypoint.sh` cleans any stale `/tmp/.X99-lock` + `/tmp/.X11-unix/X99` (a `restart: unless-stopped` restart reuses the container filesystem, so a leftover lock would make a fresh Xvfb refuse `:99` → `Missing X server or $DISPLAY` → Dhiraagu breaks on every restart after the first), then starts Xvfb and **verifies the socket is live before exporting `DISPLAY`** (so DISPLAY never points at a dead server).
+- **noVNC for manual Cloudflare bypass.** `x11vnc` + `websockify` serve the noVNC web client on port `6080`; open `http://<host>:6080/vnc.html` to watch and **drive the headed Chrome by hand** when the automatic Cloudflare bypass can't clear an interactive challenge (Turnstile/CAPTCHA). It drives the *same* persistent browser the extractor uses, so the `cf_clearance` you obtain is saved to the session and reused by later automated cycles. Secure it with `VNC_PASSWORD` (env/compose); if unset, noVNC is open with no auth.
+
+### Manual Cloudflare bypass workflow (noVNC) — auto-pause / auto-resume
+
+When a headed portal (Dhiraagu) hits a Cloudflare challenge the browser **can't clear on its own** (interactive Turnstile/CAPTCHA), the extractor **automatically pauses** that portal and waits for a human — it does NOT keep hammering the challenge or wipe the session.
+
+**How auto-pause works** (`extractors/base.py`):
+- `navigate_to()` sets `self._cf_manual_required` when a CF challenge persists after auto-clear (and FlareSolverr, if enabled) — but only for `FORCE_HEADED` portals (a headless browser has nothing for an operator to see/click).
+- `run()` then sets `BaseExtractor._manual_cf_paused[portal] = True`, returns status `paused`, and **keeps the browser alive and parked on the challenge** (it is NOT killed, the session dir is NOT cleared, and the login-failure cooldown does NOT count it).
+- A `system_logs` warning is written telling the operator to open noVNC; the paused portal also appears in `/api/admin/scheduler-status` under `manual_cf_paused`.
+
+**Operator steps:**
+1. Open `http://<host>:6080/vnc.html` — you'll see the real Chrome window parked on the Dhiraagu Cloudflare challenge.
+2. Solve the Turnstile checkbox / CAPTCHA by hand. (You only need to clear CF — the extractor logs in automatically afterward with the stored credentials.)
+
+**Auto-resume:** on each cycle, `run()` calls `_resume_if_cf_cleared()`, which **passively** checks the parked page (no navigation — so it never reloads the page out from under you mid-solve). Once the page is no longer a CF challenge, it clears the pause and the normal extraction cycle resumes; `login()` reuses the now-cleared page. Because it's the **same persistent context** (`data/browser_sessions/dhiraagu/`), the `cf_clearance` cookie persists and later automated cycles reuse the warmed session.
+
+- Caveat: a `user_data_dir` can only be open in one Chrome at a time, so you can't run a second browser on that profile — you take the wheel of the existing one. If the parked browser dies (crash / the 1-hour restart), the next paused cycle recreates it and re-presents the login page. As noted in the Dhiraagu portal notes, this is an occasional rescue, not a per-cycle need, as long as cadence stays low.
 
 ## Scheduler
 

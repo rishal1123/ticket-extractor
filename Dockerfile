@@ -11,10 +11,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright system dependencies for Chromium + curl for healthcheck +
 # xvfb (virtual display so the real Chrome can run HEADED — required to pass
-# Cloudflare on Dhiraagu; headless Chrome gets challenged).
+# Cloudflare on Dhiraagu; headless Chrome gets challenged) + x11vnc/novnc/websockify
+# so an operator can watch and DRIVE that headed Chrome from a browser to solve a
+# Cloudflare challenge by hand when the automatic bypass can't (Turnstile/CAPTCHA).
 # Uses install-deps (apt packages) separately from browser download for reliability
 RUN playwright install-deps chromium && \
-    apt-get install -y --no-install-recommends curl xvfb xauth tzdata && \
+    apt-get install -y --no-install-recommends \
+        curl xvfb xauth tzdata x11vnc novnc websockify && \
     rm -rf /var/lib/apt/lists/*
 
 # Default container timezone to Maldives (UTC+5). Overridable via the TZ env var.
