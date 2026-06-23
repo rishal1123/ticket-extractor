@@ -1,0 +1,9 @@
+# Force LF on files that run inside the Linux container, regardless of the host
+# OS or git core.autocrlf setting. Without this, a Windows checkout stores/ships
+# CRLF and the container fails at startup with "bad interpreter: /bin/bash^M"
+# (a classic Portainer/Docker-from-Windows breakage).
+*.sh            text eol=lf
+entrypoint.sh   text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf

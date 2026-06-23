@@ -35,8 +35,11 @@ COPY . .
 # Create data directories for persistent volumes
 RUN mkdir -p /app/data /app/data/browser_sessions
 
-# Make entrypoint executable
-RUN chmod +x /app/entrypoint.sh
+# Normalize line endings (strip CR) then make entrypoint executable. Defensive:
+# if the build context arrived with CRLF (e.g. a Windows checkout or a Portainer
+# stack built from a Windows-edited repo), a bare CRLF entrypoint fails at startup
+# with "bad interpreter: /bin/bash^M". This guarantees LF inside the image.
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Expose port
 EXPOSE 8000

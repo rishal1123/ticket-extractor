@@ -616,6 +616,15 @@ docker compose down
 
 No `.env` file mount needed - credentials are stored in the SQLite database inside the persistent volume.
 
+### Portainer Deployment
+
+Deploy as a **standalone Compose stack** (a "Docker Standalone" environment, not Swarm) — the stack relies on `build:`, `shm_size`, healthcheck and `depends_on`, which Swarm ignores. Recommended: a **Git repository stack** pointing at this repo so Portainer builds the image (the `Dockerfile` is needed; a paste-only Web Editor stack can't `build:`).
+
+- **Ports:** app on host `8003`, **noVNC on host `6080`** (`http://<host>:6080/vnc.html`) for the manual Cloudflare bypass.
+- **noVNC password:** add a stack **Environment variable** `VNC_PASSWORD` in the Portainer UI — the compose reads `${VNC_PASSWORD:-}`. If left unset, noVNC is open with no auth, so set it whenever `6080` is reachable.
+- **Restart vs. redeploy:** Portainer's container **Restart** button does a `docker restart` (same container, `/tmp` preserved). `entrypoint.sh` cleans the stale `/tmp/.X99-lock` and verifies Xvfb before exporting `DISPLAY`, so headed-Chrome/Dhiraagu survives restarts. To pick up new code/deps, **Update the stack** / **re-pull & redeploy** (recreates the container).
+- **Line endings:** `entrypoint.sh` (and other `*.sh`) are pinned to LF via `.gitattributes`, and the `Dockerfile` strips CR (`sed -i 's/\r$//'`) before `chmod +x`. This prevents the classic `bad interpreter: /bin/bash^M` failure when the stack is built from a Windows-edited repo.
+
 ### Dockerfile Details
 
 ```dockerfile
