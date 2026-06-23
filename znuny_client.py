@@ -42,8 +42,8 @@ import httpx
 from config import Config
 from utils.logger import get_logger
 
-# Maldives timezone (UTC+5). Znuny's system timezone is Indian/Maldives, so the
-# REST API returns timestamps already in Maldives time.
+# Maldives timezone (UTC+5). Znuny's system timezone (OTRSTimeZone) is UTC, so the
+# REST API returns timestamps in UTC -- they must be converted to Maldives time.
 MALDIVES_TZ = timezone(timedelta(hours=5))
 
 logger = get_logger("znuny")
@@ -221,13 +221,17 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
 
 
 def _parse_dt(value: str) -> datetime | None:
-    """Parse a Znuny REST timestamp ('YYYY-MM-DD HH:MM:SS') as Maldives time."""
+    """Parse a Znuny REST timestamp ('YYYY-MM-DD HH:MM:SS').
+
+    The API returns times in Znuny's system timezone (UTC), so they are parsed
+    as UTC and converted to Maldives time (+05:00).
+    """
     if not value:
         return None
     value = value.strip()
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
-            return datetime.strptime(value, fmt).replace(tzinfo=MALDIVES_TZ)
+            return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc).astimezone(MALDIVES_TZ)
         except ValueError:
             continue
     return None
@@ -772,8 +776,9 @@ class ZnunyClient:
         ideally, from the rest of the same batch) via _harvest_user_names().
         """
         znuny_url = self._zoom_url(ticket_id)
-        created_at_str = t.get("Created") or ""
-        created_at = _parse_dt(created_at_str)
+        created_at = _parse_dt(t.get("Created") or "")
+        # Display string must reflect the converted Maldives time, not the raw UTC API string.
+        created_at_str = created_at.strftime("%Y-%m-%d %H:%M:%S") if created_at else ""
         owner = t.get("Owner") or ""
         state = t.get("State") or ""
         queue = t.get("Queue") or ""
@@ -795,8 +800,8 @@ class ZnunyClient:
                 via = CHANNEL_VIA.get(int(a.get("CommunicationChannelID")), "")
             except (TypeError, ValueError):
                 via = ""
-            art_created_str = a.get("CreateTime") or ""
-            art_created = _parse_dt(art_created_str)
+            art_created = _parse_dt(a.get("CreateTime") or "")
+            art_created_str = art_created.strftime("%Y-%m-%d %H:%M:%S") if art_created else ""
 
             # Attribute notes to the staff who wrote them (agent-sender articles only).
             is_agent = str(a.get("SenderType")) == "agent"

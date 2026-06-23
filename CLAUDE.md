@@ -478,7 +478,7 @@ What it does:
 
 **Creator-name resolution:** the API returns the ticket/article creator as a numeric `CreateBy` id. Agent-authored articles (`SenderType=agent`) expose the staff member's display name in `From`, so a `{user_id: name}` map is harvested (class-level, persists across the sync) and used to resolve ticket/article creators. Owner login is the fallback when an id hasn't been seen yet.
 
-**Times:** the API returns timestamps in Znuny's system timezone (Indian/Maldives), parsed as `MALDIVES_TZ`.
+**Times:** the API returns timestamps in Znuny's system timezone, which is **UTC** (`OTRSTimeZone`). `_parse_dt()` parses them as UTC and converts to Maldives time (`MALDIVES_TZ`, +05:00). Do **not** tag the raw string as `MALDIVES_TZ` directly — that stores everything 5 hours early.
 
 **Key Classes:**
 - `ZnunyClient` - Main client with class-level shared HTTP session + caches (persist across instances)
