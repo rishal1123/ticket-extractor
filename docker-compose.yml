@@ -9,6 +9,7 @@ services:
     volumes:
       - extractor_data:/app/data
     environment:
+      - TZ=Indian/Maldives
       - DASHBOARD_HOST=0.0.0.0
       - DASHBOARD_PORT=8000
       - PYTHONUNBUFFERED=1

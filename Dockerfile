@@ -14,8 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Cloudflare on Dhiraagu; headless Chrome gets challenged).
 # Uses install-deps (apt packages) separately from browser download for reliability
 RUN playwright install-deps chromium && \
-    apt-get install -y --no-install-recommends curl xvfb xauth && \
+    apt-get install -y --no-install-recommends curl xvfb xauth tzdata && \
     rm -rf /var/lib/apt/lists/*
+
+# Default container timezone to Maldives (UTC+5). Overridable via the TZ env var.
+ENV TZ=Indian/Maldives
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Download Playwright Chromium (used by Ooredoo/ROL/Medianet) AND the real Google
 # Chrome channel (Dhiraagu uses real Chrome headed to bypass Cloudflare).
