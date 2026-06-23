@@ -4,6 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ticket-extractor
+    # Stable hostname so Chrome's profile SingletonLock (which stores hostname-pid)
+    # keeps the same hostname across container recreates. Without this, a recreate
+    # gets a new random hostname and Chrome treats the old lock as "another
+    # computer" and refuses to open the persistent profile (exit 21). entrypoint.sh
+    # also clears stale Singleton* locks as the primary fix; this is belt-and-suspenders.
+    hostname: ticket-extractor
     ports:
       - "8003:8000"
       # noVNC: open http://<host>:6080/vnc.html to watch/drive the headed Chrome

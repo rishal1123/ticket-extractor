@@ -20,6 +20,19 @@ fi
 echo "Checking database (init + migrations)..."
 python -c "from database import Database; Database(); print('Database ready')"
 
+# Remove stale Chrome profile locks (SingletonLock/SingletonCookie/SingletonSocket)
+# left in the persistent browser sessions by a previous container. These live on
+# the named volume, so on a container RECREATE the new container has a different
+# hostname and Chrome refuses to open the profile ("in use by another Chrome
+# process ... on another computer"), exiting with code 21 — which is exactly why
+# Dhiraagu's headed Chrome fails to launch and noVNC shows a black screen. No
+# Chrome is running yet at this point, so clearing them is safe; Chrome recreates
+# them on launch.
+if [ -d /app/data/browser_sessions ]; then
+    echo "Clearing stale Chrome profile locks in browser_sessions..."
+    find /app/data/browser_sessions -maxdepth 2 -name 'Singleton*' -print -delete 2>/dev/null || true
+fi
+
 echo "Starting application..."
 # Start a virtual X display (Xvfb) so the real Chrome can launch HEADED, which
 # is required to pass Cloudflare on Dhiraagu (headless gets challenged). We start
