@@ -237,15 +237,18 @@ class BrowserManager:
             )
             self.page = self._context.new_page()
 
-        # Apply stealth evasions to all pages (before any navigation runs). Chromium
-        # only — the script masks Chrome-specific tells (window.chrome, plugins); on
-        # Firefox a fake window.chrome would itself be a tell, and webdriver is already
-        # handled via firefox_user_prefs.
-        if not is_firefox:
-            try:
-                self._context.add_init_script(STEALTH_INIT_JS)
-            except Exception as e:
-                logger.debug(f"Could not add stealth init script: {e}")
+        # Apply stealth evasions to all pages (before any navigation runs).
+        # Chromium gets the full script (masks window.chrome, plugins, etc.). Firefox
+        # gets ONLY the navigator.webdriver mask — a fake window.chrome would be a tell
+        # on Gecko, but a true `webdriver` flag makes Cloudflare Turnstile loop, so
+        # hard-mask it on top of the dom.webdriver.enabled pref.
+        try:
+            self._context.add_init_script(
+                STEALTH_INIT_JS if not is_firefox
+                else "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
+        except Exception as e:
+            logger.debug(f"Could not add stealth init script: {e}")
 
         # Detect actual Chromium PID (not the shared Playwright driver PID)
         self._detect_browser_pid(driver_pid, before_children)
