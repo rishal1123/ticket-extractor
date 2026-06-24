@@ -119,13 +119,15 @@ This single global fix covers all Playwright call sites (BrowserManager, extract
 
 ### Memory Limits Per Portal
 
-| Portal | Memory Limit | Timeout | Notes |
-|--------|-------------|---------|-------|
-| Dhiraagu | 800 MB | 10s (default) | Filament/Laravel admin panel |
-| Ooredoo | 800 MB | 10s (default) | DataTables-based portal |
-| ROL | 800 MB | 30s | Kayako helpdesk (slow) |
-| Medianet | 1500 MB | 60s | React SPA, uses `wait_until="commit"` |
-| Znuny | N/A | 10s | Self-signed cert (`ignore_https_errors=True`) |
+| Portal | Memory Limit | Images | Timeout | Notes |
+|--------|-------------|--------|---------|-------|
+| Dhiraagu | 800 MB | on | 10s (default) | Filament/Laravel admin panel; images ON so the Cloudflare challenge renders |
+| Ooredoo | 600 MB | off | 10s (default) | DataTables-based portal |
+| ROL | 600 MB | off | 30s | Kayako helpdesk (slow) |
+| Medianet | 1000 MB | off | 60s | React SPA, uses `wait_until="commit"` |
+| Znuny | N/A | — | 10s | Self-signed cert (`ignore_https_errors=True`) |
+
+**Memory reduction:** all browsers launch with Site Isolation disabled (`--disable-features=IsolateOrigins,site-per-process`, collapses per-site/iframe renderer processes), a renderer-process cap, tiny disk/media caches, and no software rasterizer (`utils/browser.py` `CHROMIUM_ARGS`). Non-Cloudflare portals also disable image loading (`DISABLE_IMAGES = True` → `--blink-settings=imagesEnabled=false`). When a browser exceeds its `MEMORY_LIMIT_MB`, `_check_memory_and_reset()` recycles it (session persists on disk).
 
 ### Session & Error Recovery
 - Browser sessions persist to disk (cookies, localStorage) across restarts
