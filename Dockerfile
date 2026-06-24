@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Uses install-deps (apt packages) separately from browser download for reliability
 RUN playwright install-deps chromium && \
     apt-get install -y --no-install-recommends \
-        curl xvfb xauth tzdata x11vnc novnc websockify fluxbox socat && \
+        curl xvfb xauth tzdata x11vnc novnc websockify fluxbox socat \
+        libgl1-mesa-dri libglx-mesa0 libegl1 libgles2 mesa-vulkan-drivers && \
     rm -rf /var/lib/apt/lists/*
 
 # Default container timezone to Maldives (UTC+5). Overridable via the TZ env var.
