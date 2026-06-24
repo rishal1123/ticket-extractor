@@ -24,7 +24,7 @@ services:
       # Drive Dhiraagu's Cloudflare-bound headed Chrome in the dedicated sidecar
       # over CDP. The app connects here instead of launching a local headed Chrome;
       # when this is set, the app skips its own Xvfb/noVNC entirely. Unset = local.
-      - DHIRAAGU_BROWSER_CDP=dhiraagu-browser:9222
+      - DHIRAAGU_BROWSER_CDP=dhiraagu-browser:9223
     # FlareSolverr is optional now (Dhiraagu uses real headed Chrome, not
     # FlareSolverr); the browser sidecar hosts Dhiraagu's Chrome. Don't block app
     # startup on either — just start them alongside.
@@ -63,10 +63,10 @@ services:
       # noVNC: open http://<host>:6080/vnc.html to watch/drive the headed Chrome
       # and solve a Cloudflare challenge by hand. Secure with VNC_PASSWORD.
       - "6080:6080"
-    # CDP (:9222) is NOT published to the host — only the app needs it, over the
-    # internal Docker network. Don't expose DevTools to the outside.
+    # CDP forwarder (:9223 -> Chrome's loopback :9222) is reachable only on the
+    # internal Docker network, not published to the host. Don't expose DevTools out.
     expose:
-      - "9222"
+      - "9223"
     volumes:
       - dhiraagu_profile:/profile
     environment:

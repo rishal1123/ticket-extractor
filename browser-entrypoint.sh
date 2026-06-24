@@ -60,17 +60,26 @@ fi
 mkdir -p /profile
 find /profile -maxdepth 1 -name 'Singleton*' -delete 2>/dev/null || true
 
+# CDP forwarder: Chrome binds DevTools to LOOPBACK only and ignores
+# --remote-debugging-address=0.0.0.0 (a security restriction in recent Chrome), so
+# a cross-container connect to :9222 is refused (ECONNREFUSED). socat exposes
+# 0.0.0.0:9223 -> 127.0.0.1:9222 so the app can reach it. The app connects by IP to
+# :9223; Chrome accepts the IP Host header and builds its ws URL from it, so the
+# whole handshake works. Started before Chrome (fork = connects per-request, lazily).
+echo "Starting socat CDP forwarder 0.0.0.0:9223 -> 127.0.0.1:9222..."
+socat TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222 >/tmp/socat.log 2>&1 &
+
 # Pick the real Google Chrome binary (installed via `playwright install chrome`).
 CHROME="$(command -v google-chrome-stable || command -v google-chrome || echo /opt/google/chrome/chrome)"
-echo "Launching headed Chrome with CDP on :9222 ($CHROME)..."
+echo "Launching headed Chrome with CDP on 127.0.0.1:9222 ($CHROME)..."
 
 # Launched directly (NOT via Playwright), so there is no --enable-automation flag
 # and navigator.webdriver stays false — better for Cloudflare than a Playwright
 # launch. --remote-allow-origins=* is REQUIRED for CDP attach on Chrome 111+.
+# Chrome binds :9222 to loopback (see socat note above); the app reaches it via :9223.
 exec "$CHROME" \
     --user-data-dir=/profile \
     --remote-debugging-port=9222 \
-    --remote-debugging-address=0.0.0.0 \
     --remote-allow-origins=* \
     --no-sandbox \
     --disable-dev-shm-usage \
