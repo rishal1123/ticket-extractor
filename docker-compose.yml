@@ -75,10 +75,11 @@ services:
       # set this (e.g. in a .env file or Portainer) when 6080 is reachable.
       - VNC_PASSWORD=${VNC_PASSWORD:-}
     restart: unless-stopped
-    # Dhiraagu's Chrome (single tab, images on for Cloudflare) gets 2GB. Chrome
-    # uses --disable-dev-shm-usage, so /dev/shm stays empty — keep shm small so it
-    # can't eat into the 2GB cap.
-    mem_limit: 2gb
+    # Dhiraagu's Chrome (single tab, images on for Cloudflare) gets 3GB headroom —
+    # headed Chrome + swiftshader WebGL (for Turnstile) + Xvfb/WM/VNC, so a renderer
+    # isn't OOM-killed (which shows as a crashed-iframe "sad face"). Chrome uses
+    # --disable-dev-shm-usage, so /dev/shm stays empty — keep shm small.
+    mem_limit: 3gb
     shm_size: '512m'
     logging:
       driver: "json-file"
