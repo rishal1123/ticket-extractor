@@ -2730,6 +2730,51 @@ class Database:
                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 """, (key, val, now_maldives()))
 
+    # ==================== Browser Memory Limits ====================
+
+    # Per-portal default browser memory limit (MB). The browser is reset when its
+    # Chrome process tree exceeds this. Dhiraagu's default is higher (Cloudflare
+    # headed Chrome); in Docker Dhiraagu runs in the sidecar and is bounded by that
+    # container's mem_limit instead — this app-side value applies to local fallback.
+    MEMORY_LIMIT_DEFAULTS = {"dhiraagu": 2000, "ooredoo": 1500, "rol": 1500, "medianet": 1500}
+
+    def get_memory_limits(self) -> dict:
+        """Per-portal browser memory limit (MB), config override or default."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT key, value FROM app_settings WHERE key IN (%s)" %
+                ",".join("?" * len(self.MEMORY_LIMIT_DEFAULTS)),
+                tuple(f"mem_limit_{p}" for p in self.MEMORY_LIMIT_DEFAULTS)
+            )
+            found = {row["key"]: row["value"] for row in cursor.fetchall()}
+        out = {}
+        for portal, default in self.MEMORY_LIMIT_DEFAULTS.items():
+            try:
+                out[portal] = int(found.get(f"mem_limit_{portal}", default))
+            except (TypeError, ValueError):
+                out[portal] = default
+        return out
+
+    def set_memory_limits(self, limits: dict):
+        """Set per-portal browser memory limits (MB). Ignores unknown portals and
+        clamps to a sane range (256MB..8192MB)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for portal, mb in (limits or {}).items():
+                p = str(portal).lower()
+                if p not in self.MEMORY_LIMIT_DEFAULTS:
+                    continue
+                try:
+                    val = max(256, min(8192, int(mb)))
+                except (TypeError, ValueError):
+                    continue
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """, (f"mem_limit_{p}", str(val), now_maldives()))
+
     # ==================== ISP Extraction Toggle ====================
 
     def get_isp_extraction_enabled(self) -> bool:

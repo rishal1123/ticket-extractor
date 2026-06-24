@@ -10,9 +10,9 @@ from models.ticket import Ticket
 class ROLExtractor(BaseExtractor):
     """Extractor for ROL portal (Kayako helpdesk system)."""
 
-    # Headless, text/DOM-only scrape — skip images and cap memory low.
+    # Headless, text/DOM-only scrape — skip images. Reset browser if it exceeds 1.5GB.
     DISABLE_IMAGES = True
-    MEMORY_LIMIT_MB = 600
+    MEMORY_LIMIT_MB = 1500
 
     # ============================================================
     # URL Configuration

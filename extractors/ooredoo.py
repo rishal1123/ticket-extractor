@@ -9,9 +9,9 @@ from models.ticket import Ticket
 class OoredooExtractor(BaseExtractor):
     """Extractor for Ooredoo portal (CBSMW - CBS Middleware)."""
 
-    # Headless, text/DOM-only scrape — skip images and cap memory low.
+    # Headless, text/DOM-only scrape — skip images. Reset browser if it exceeds 1.5GB.
     DISABLE_IMAGES = True
-    MEMORY_LIMIT_MB = 600
+    MEMORY_LIMIT_MB = 1500
 
     # ============================================================
     # PORTAL URLS

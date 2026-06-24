@@ -119,15 +119,17 @@ This single global fix covers all Playwright call sites (BrowserManager, extract
 
 ### Memory Limits Per Portal
 
-| Portal | Memory Limit | Images | Timeout | Notes |
+| Portal | Memory Limit (default) | Images | Timeout | Notes |
 |--------|-------------|--------|---------|-------|
-| Dhiraagu | 800 MB | on | 10s (default) | Filament/Laravel admin panel; images ON so the Cloudflare challenge renders |
-| Ooredoo | 600 MB | off | 10s (default) | DataTables-based portal |
-| ROL | 600 MB | off | 30s | Kayako helpdesk (slow) |
-| Medianet | 1000 MB | off | 60s | React SPA, uses `wait_until="commit"` |
+| Dhiraagu | 2000 MB | on | 10s (default) | In Docker runs in the `dhiraagu-browser` sidecar bounded by container `mem_limit: 2gb`; this app-side value is the local-launch fallback. Images ON so the Cloudflare challenge renders |
+| Ooredoo | 1500 MB | off | 10s (default) | DataTables-based portal |
+| ROL | 1500 MB | off | 30s | Kayako helpdesk (slow) |
+| Medianet | 1500 MB | off | 60s | React SPA, uses `wait_until="commit"` |
 | Znuny | N/A | — | 10s | Self-signed cert (`ignore_https_errors=True`) |
 
-**Memory reduction:** all browsers launch with Site Isolation disabled (`--disable-features=IsolateOrigins,site-per-process`, collapses per-site/iframe renderer processes), a renderer-process cap, tiny disk/media caches, and no software rasterizer (`utils/browser.py` `CHROMIUM_ARGS`). Non-Cloudflare portals also disable image loading (`DISABLE_IMAGES = True` → `--blink-settings=imagesEnabled=false`). When a browser exceeds its `MEMORY_LIMIT_MB`, `_check_memory_and_reset()` recycles it (session persists on disk).
+**Configurable via Admin → Config → "Browser Memory Limits".** Per-portal limits are stored in `app_settings` (`mem_limit_<portal>`, MB, clamped 256–8192) via `Database.get_memory_limits()` / `set_memory_limits()` and `GET/POST /api/settings/memory-limits`. The extractor resolves the live value with `BaseExtractor.memory_limit_mb()` (config override → class default `MEMORY_LIMIT_MB`); takes effect on the next browser reset (no restart needed). The values above are the defaults when unset.
+
+**Memory reduction:** all browsers launch with Site Isolation disabled (`--disable-features=IsolateOrigins,site-per-process`, collapses per-site/iframe renderer processes), a renderer-process cap, tiny disk/media caches, and no software rasterizer (`utils/browser.py` `CHROMIUM_ARGS`). Non-Cloudflare portals also disable image loading (`DISABLE_IMAGES = True` → `--blink-settings=imagesEnabled=false`). When a browser exceeds its limit, `_check_memory_and_reset()` recycles it (session persists on disk).
 
 ### Session & Error Recovery
 - Browser sessions persist to disk (cookies, localStorage) across restarts

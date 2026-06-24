@@ -75,7 +75,11 @@ services:
       # set this (e.g. in a .env file or Portainer) when 6080 is reachable.
       - VNC_PASSWORD=${VNC_PASSWORD:-}
     restart: unless-stopped
-    shm_size: '2gb'
+    # Dhiraagu's Chrome (single tab, images on for Cloudflare) gets 2GB. Chrome
+    # uses --disable-dev-shm-usage, so /dev/shm stays empty — keep shm small so it
+    # can't eat into the 2GB cap.
+    mem_limit: 2gb
+    shm_size: '512m'
     logging:
       driver: "json-file"
       options:

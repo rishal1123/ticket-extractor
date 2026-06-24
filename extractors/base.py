@@ -220,17 +220,29 @@ class BaseExtractor(ABC):
         except Exception:
             return 0.0
 
+    def memory_limit_mb(self) -> int:
+        """Effective browser memory limit (MB): the config-tab override for this
+        portal (Admin → Config), falling back to the class default MEMORY_LIMIT_MB."""
+        try:
+            v = self.db.get_setting(f"mem_limit_{self.config.name.lower()}")
+            if v:
+                return int(v)
+        except Exception:
+            pass
+        return self.MEMORY_LIMIT_MB
+
     def _check_memory_and_reset(self, portal: str, browser: BrowserManager) -> Optional[BrowserManager]:
         """Check browser memory usage and reset if over limit. Returns None if reset needed."""
         mem_mb = self._get_browser_memory_mb(browser)
         if mem_mb <= 0:
             return browser
-        self.logger.info(f"[{portal}] Browser memory: {mem_mb:.0f} MB (limit: {self.MEMORY_LIMIT_MB} MB)")
-        if mem_mb > self.MEMORY_LIMIT_MB:
-            self.logger.warning(f"[{portal}] Memory {mem_mb:.0f} MB exceeds {self.MEMORY_LIMIT_MB} MB - resetting browser")
+        limit_mb = self.memory_limit_mb()
+        self.logger.info(f"[{portal}] Browser memory: {mem_mb:.0f} MB (limit: {limit_mb} MB)")
+        if mem_mb > limit_mb:
+            self.logger.warning(f"[{portal}] Memory {mem_mb:.0f} MB exceeds {limit_mb} MB - resetting browser")
             self.db.log_system(
                 "warning", f"extractor.{portal}",
-                f"Browser memory {mem_mb:.0f} MB exceeds {self.MEMORY_LIMIT_MB} MB limit - resetting"
+                f"Browser memory {mem_mb:.0f} MB exceeds {limit_mb} MB limit - resetting"
             )
             try:
                 browser.stop()

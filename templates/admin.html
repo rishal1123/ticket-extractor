@@ -790,6 +790,48 @@
             </div>
         </div>
 
+        <!-- Browser Memory Limits -->
+        <div class="col-12">
+            <div class="config-section">
+                <h6><i class="bi bi-memory me-1"></i>Browser Memory Limits (MB)</h6>
+                <p class="text-muted small mb-3">Each ISP portal's browser is reset when its Chrome memory exceeds this limit (256–8192 MB). Higher = fewer resets, more RAM used.</p>
+                <div class="row g-3">
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small fw-bold">Dhiraagu</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control text-center" id="mem_dhiraagu" min="256" max="8192" step="50" value="2000">
+                            <span class="input-group-text">MB</span>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small fw-bold">Ooredoo</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control text-center" id="mem_ooredoo" min="256" max="8192" step="50" value="1500">
+                            <span class="input-group-text">MB</span>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small fw-bold">ROL</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control text-center" id="mem_rol" min="256" max="8192" step="50" value="1500">
+                            <span class="input-group-text">MB</span>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small fw-bold">Medianet</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control text-center" id="mem_medianet" min="256" max="8192" step="50" value="1500">
+                            <span class="input-group-text">MB</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="alert alert-info small mb-0 py-2 mt-3">
+                    <i class="bi bi-info-circle me-1"></i>
+                    In Docker, Dhiraagu's Chrome runs in the <strong>dhiraagu-browser</strong> sidecar and is bounded by that container's <code>mem_limit</code> (docker-compose). The Dhiraagu value here applies to the local-launch fallback. Takes effect on the next browser reset/restart.
+                </div>
+            </div>
+        </div>
+
         <!-- ISP Extraction Toggle -->
         <div class="col-12">
             <div class="config-section">
@@ -1629,6 +1671,16 @@ async function loadConfig() {
             document.getElementById('operating_hours_end').value = hoursData.hours.end_hour ?? 22;
         }
 
+        // Load browser memory limits
+        const memResponse = await fetch('/api/settings/memory-limits');
+        const memData = await memResponse.json();
+        if (memData.limits) {
+            ['dhiraagu', 'ooredoo', 'rol', 'medianet'].forEach(p => {
+                const el = document.getElementById('mem_' + p);
+                if (el && memData.limits[p] != null) el.value = memData.limits[p];
+            });
+        }
+
         // Load ISP extraction toggle
         const ispResponse = await fetch('/api/settings/isp-extraction');
         const ispData = await ispResponse.json();
@@ -1711,6 +1763,19 @@ async function saveConfig() {
 
         const hoursData = await hoursResponse.json();
 
+        // Save browser memory limits
+        const limits = {};
+        ['dhiraagu', 'ooredoo', 'rol', 'medianet'].forEach(p => {
+            const el = document.getElementById('mem_' + p);
+            if (el && el.value) limits[p] = parseInt(el.value);
+        });
+        const memSaveResponse = await fetch('/api/settings/memory-limits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limits })
+        });
+        const memSaveData = await memSaveResponse.json();
+
         // Save ISP extraction toggle
         const ispResponse = await fetch('/api/settings/isp-extraction', {
             method: 'POST',
@@ -1731,10 +1796,10 @@ async function saveConfig() {
         });
         const portalsData = await portalsResponse.json();
 
-        if (data.success && threshData.success && hoursData.success && ispData.success && portalsData.success) {
+        if (data.success && threshData.success && hoursData.success && memSaveData.success && ispData.success && portalsData.success) {
             alert('Configuration saved successfully!\n\nNote: Some changes may require a server restart.');
         } else {
-            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || ispData.message || portalsData.message || 'Unknown error'));
+            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || memSaveData.message || ispData.message || portalsData.message || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving config:', error);

@@ -14,6 +14,10 @@ class DhiraaguExtractor(BaseExtractor):
     # moment"). Matches accessing Dhiraagu manually in Chrome on the same IP.
     BROWSER_CHANNEL = "chrome"
     FORCE_HEADED = True
+    # In Docker, Dhiraagu's Chrome runs in the dhiraagu-browser sidecar and its
+    # memory is bounded by that container's mem_limit (2GB). This app-side cap only
+    # applies to the local-launch fallback (DHIRAAGU_BROWSER_CDP unset).
+    MEMORY_LIMIT_MB = 2000
     # Self-solve Cloudflare via the real headed browser; FlareSolverr's IP-bound
     # cookies hurt here, so don't fall back to it.
     USE_FLARESOLVERR_FALLBACK = False

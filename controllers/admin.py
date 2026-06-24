@@ -276,6 +276,24 @@ async def update_operating_hours(request: Request, db: Database = Depends(get_db
     return JSONResponse(content=success_response("Operating hours saved"))
 
 
+@settings_router.get("/memory-limits")
+@handle_errors("get memory limits")
+async def get_memory_limits(db: Database = Depends(get_db)):
+    """Per-portal browser memory limit (MB)."""
+    return JSONResponse(content={"success": True, "limits": db.get_memory_limits()})
+
+
+@settings_router.post("/memory-limits")
+@handle_errors("update memory limits")
+async def update_memory_limits(request: Request, db: Database = Depends(get_db)):
+    """Update per-portal browser memory limits (MB). Body: {"limits": {"ooredoo": 1500, ...}}."""
+    data = await request.json()
+    limits = data.get("limits", data) or {}
+    db.set_memory_limits(limits)
+    logger.info(f"Browser memory limits updated: {limits}")
+    return JSONResponse(content=success_response("Memory limits saved"))
+
+
 @settings_router.get("/isp-extraction")
 @handle_errors("get ISP extraction setting")
 async def get_isp_extraction(db: Database = Depends(get_db)):
