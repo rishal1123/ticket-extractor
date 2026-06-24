@@ -25,10 +25,11 @@ RUN playwright install-deps chromium && \
 ENV TZ=Indian/Maldives
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# Download Playwright Chromium (used by Ooredoo/ROL/Medianet) AND the real Google
-# Chrome channel (Dhiraagu uses real Chrome headed to bypass Cloudflare).
+# Download Playwright Chromium (used by Ooredoo/ROL/Medianet) AND Firefox (Dhiraagu
+# runs Firefox headed under Xvfb to bypass Cloudflare — Chrome's renderer crashes in
+# the container). --with-deps pulls Firefox's system libraries.
 RUN playwright install chromium && \
-    playwright install --with-deps chrome
+    playwright install --with-deps firefox
 
 # Copy application code
 COPY . .
@@ -40,8 +41,7 @@ RUN mkdir -p /app/data /app/data/browser_sessions
 # if the build context arrived with CRLF (e.g. a Windows checkout or a Portainer
 # stack built from a Windows-edited repo), a bare CRLF entrypoint fails at startup
 # with "bad interpreter: /bin/bash^M". This guarantees LF inside the image.
-RUN sed -i 's/\r$//' /app/entrypoint.sh /app/browser-entrypoint.sh && \
-    chmod +x /app/entrypoint.sh /app/browser-entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Expose port
 EXPOSE 8000

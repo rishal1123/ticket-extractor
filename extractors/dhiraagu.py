@@ -1,4 +1,3 @@
-import os
 import time
 
 from .base import BaseExtractor
@@ -9,19 +8,16 @@ from config import Config
 class DhiraaguExtractor(BaseExtractor):
     """Extractor for Dhiraagu portal (AFAS system - Filament PHP)."""
 
-    # Cloudflare flags HEADLESS browsers; the real Chrome run HEADED passes
-    # (verified: chrome/headed -> AFAS login; chrome|chromium/headless -> "Just a
-    # moment"). Matches accessing Dhiraagu manually in Chrome on the same IP.
-    BROWSER_CHANNEL = "chrome"
+    # Cloudflare flags HEADLESS browsers. We use FIREFOX run HEADED (under Xvfb in
+    # the app container): Chrome's renderer crashes in the container (sad face), but
+    # Gecko renders reliably headless on Linux AND passes Cloudflare when headed.
+    # Firefox uses prefs, not a channel, so BROWSER_CHANNEL stays None.
+    BROWSER_ENGINE = "firefox"
     FORCE_HEADED = True
-    # In Docker, Dhiraagu's Chrome runs in the dhiraagu-browser sidecar and its
-    # memory is bounded by that container's mem_limit (2GB). This app-side cap only
-    # applies to the local-launch fallback (DHIRAAGU_BROWSER_CDP unset).
     MEMORY_LIMIT_MB = 2000
     # Self-solve Cloudflare via the real headed browser; FlareSolverr's IP-bound
     # cookies hurt here, so don't fall back to it.
     USE_FLARESOLVERR_FALLBACK = False
-    # Use real Chrome's own User-Agent (don't override).
 
     # ============================================================
     # CSS SELECTORS
@@ -65,12 +61,6 @@ class DhiraaguExtractor(BaseExtractor):
 
     def detail_url(self, ticket) -> str:
         return f"{self.ORDERS_PAGE_URL}/{ticket.ticket_id}?activeRelationManager=notes"
-
-    def cdp_endpoint(self):
-        """Drive a dedicated headed-Chrome sidecar over CDP when configured
-        (DHIRAAGU_BROWSER_CDP=host:port, e.g. dhiraagu-browser:9222 in Docker).
-        Unset (local dev) => fall back to launching headed Chrome locally."""
-        return os.getenv("DHIRAAGU_BROWSER_CDP") or None
 
     def is_logged_in(self) -> bool:
         """Check if currently logged in to Dhiraagu portal.

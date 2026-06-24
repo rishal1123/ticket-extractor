@@ -103,11 +103,15 @@ class BrowserManager:
     _thread_local = threading.local()
 
     def __init__(self, headless: bool = False, user_agent: str = None, channel: str = None,
-                 disable_images: bool = False, cdp_endpoint: str = None):
+                 disable_images: bool = False, cdp_endpoint: str = None, engine: str = "chromium"):
         self.headless = headless
         self.user_agent = user_agent  # override Chromium's default UA (e.g. to match FlareSolverr)
         self.channel = channel        # e.g. "chrome" to use the real Chrome (passes Cloudflare; Chromium gets flagged)
         self.disable_images = disable_images  # skip image loading to cut memory (non-CF portals)
+        # Browser engine: "chromium" (default) or "firefox". Firefox (Gecko) is used
+        # for Cloudflare-protected Dhiraagu — a different engine that renders reliably
+        # headless on Linux where Chrome's renderer crashes, and still passes Cloudflare.
+        self.engine = engine
         # "host:port" of a remote Chrome's DevTools endpoint. When set, start()
         # CONNECTS to that already-running headed Chrome over CDP (used for the
         # Dhiraagu browser sidecar) instead of launching a local browser.
@@ -171,57 +175,69 @@ class BrowserManager:
 
         driver_pid, before_children = self._snapshot_driver_children()
 
-        # Build the launch args, adding the image-disable flag when requested.
+        is_firefox = self.engine == "firefox"
+        browser_type = self._playwright.firefox if is_firefox else self._playwright.chromium
+
+        # Chromium launch args (Firefox doesn't take Chrome flags — it uses prefs).
         launch_args = list(CHROMIUM_ARGS)
         if self.disable_images:
             launch_args.append(DISABLE_IMAGES_ARG)
 
         if user_data_dir:
             # Persistent context - cookies/localStorage/sessionStorage saved to disk
-            logger.info(f"Starting persistent browser (headless={self.headless}, dir={user_data_dir}, images={'off' if self.disable_images else 'on'})")
+            logger.info(f"Starting persistent {self.engine} browser (headless={self.headless}, dir={user_data_dir}, images={'off' if self.disable_images else 'on'})")
             self._is_persistent = True
             _ctx_kwargs = dict(
                 headless=self.headless,
-                args=launch_args,
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=ignore_https_errors,
-                # Drop Playwright's default --enable-automation flag. It sets the
-                # "controlled by automated software" signals (incl. navigator.webdriver
-                # tells) that Cloudflare Turnstile keys on, which makes the "Verify you
-                # are human" widget render as TEXT ONLY with no clickable checkbox.
-                # Removing it lets the interactive checkbox appear so the challenge can
-                # self-clear or be ticked by hand via noVNC.
-                ignore_default_args=["--enable-automation"],
             )
+            if is_firefox:
+                # Firefox is configured via prefs, not command-line flags. Mask the
+                # obvious automation tell so Cloudflare treats it as a real browser.
+                _ctx_kwargs["firefox_user_prefs"] = {
+                    "dom.webdriver.enabled": False,
+                    "useAutomationExtension": False,
+                }
+                if self.disable_images:
+                    _ctx_kwargs["firefox_user_prefs"]["permissions.default.image"] = 2
+            else:
+                _ctx_kwargs["args"] = launch_args
+                # Drop Playwright's default --enable-automation flag — its automation
+                # signals (incl. navigator.webdriver) make Cloudflare Turnstile render
+                # as text-only with no clickable checkbox.
+                _ctx_kwargs["ignore_default_args"] = ["--enable-automation"]
+                if self.channel:
+                    _ctx_kwargs["channel"] = self.channel
             if self.user_agent:
                 _ctx_kwargs["user_agent"] = self.user_agent
-            if self.channel:
-                _ctx_kwargs["channel"] = self.channel
-            self._context = self._playwright.chromium.launch_persistent_context(
-                user_data_dir, **_ctx_kwargs
-            )
+            self._context = browser_type.launch_persistent_context(user_data_dir, **_ctx_kwargs)
             self._browser = None  # No separate Browser object with persistent context
             # Persistent context may already have a page open
             self.page = self._context.pages[0] if self._context.pages else self._context.new_page()
         else:
             # Regular context (for ZnunyClient or non-persistent use)
-            logger.info(f"Starting browser (headless={self.headless})")
+            logger.info(f"Starting {self.engine} browser (headless={self.headless})")
             self._is_persistent = False
-            self._browser = self._playwright.chromium.launch(
-                headless=self.headless,
-                args=launch_args,
-            )
+            _launch_kwargs = dict(headless=self.headless)
+            if not is_firefox:
+                _launch_kwargs["args"] = launch_args
+            self._browser = browser_type.launch(**_launch_kwargs)
             self._context = self._browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=ignore_https_errors,
             )
             self.page = self._context.new_page()
 
-        # Apply stealth evasions to all pages (before any navigation runs).
-        try:
-            self._context.add_init_script(STEALTH_INIT_JS)
-        except Exception as e:
-            logger.debug(f"Could not add stealth init script: {e}")
+        # Apply stealth evasions to all pages (before any navigation runs). Chromium
+        # only — the script masks Chrome-specific tells (window.chrome, plugins); on
+        # Firefox a fake window.chrome would itself be a tell, and webdriver is already
+        # handled via firefox_user_prefs.
+        if not is_firefox:
+            try:
+                self._context.add_init_script(STEALTH_INIT_JS)
+            except Exception as e:
+                logger.debug(f"Could not add stealth init script: {e}")
 
         # Detect actual Chromium PID (not the shared Playwright driver PID)
         self._detect_browser_pid(driver_pid, before_children)

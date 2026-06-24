@@ -53,6 +53,10 @@ class BaseExtractor(ABC):
     # manual browser). Set both for Cloudflare-protected portals (Dhiraagu).
     BROWSER_CHANNEL = None
     FORCE_HEADED = False
+    # Browser engine: "chromium" (default) or "firefox". Cloudflare-protected
+    # Dhiraagu uses "firefox" — Gecko renders reliably headed on Linux where Chrome's
+    # renderer crashes, and still passes Cloudflare.
+    BROWSER_ENGINE = "chromium"
     # Skip image loading/decoding to cut browser memory (and bandwidth). Safe for
     # portals we only read text/DOM from. Left False for Cloudflare-protected headed
     # portals (Dhiraagu), where the challenge page should render normally.
@@ -327,6 +331,7 @@ class BaseExtractor(ABC):
             user_agent=self.browser_user_agent(),
             channel=self.BROWSER_CHANNEL,
             disable_images=self.DISABLE_IMAGES,
+            engine=self.BROWSER_ENGINE,
         )
         session_dir = self._get_session_dir()
         browser.start(user_data_dir=session_dir)
