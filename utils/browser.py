@@ -61,7 +61,24 @@ CHROMIUM_ARGS = [
     "--disable-background-timer-throttling",
     # Hide the automation flag so Cloudflare's bot checks don't trivially flag us.
     "--disable-blink-features=AutomationControlled",
+    # --- Memory reduction (each persistent ISP browser otherwise sits near ~1GB) ---
+    # Disable Site Isolation so per-site / per-iframe renderer processes collapse
+    # into one — the single biggest memory saver for a one-tab scraper. (Chromium
+    # merges multiple --disable-features switches, so this coexists with Playwright's.)
+    "--disable-features=IsolateOrigins,site-per-process",
+    # One renderer is enough for a single tab; caps process fan-out.
+    "--renderer-process-limit=2",
+    # Keep on-disk caches tiny — we don't need warm caches between cycles.
+    "--disk-cache-size=33554432",
+    "--media-cache-size=33554432",
+    # No software rasterizer (we already pass --disable-gpu and barely paint).
+    "--disable-software-rasterizer",
 ]
+
+# Extra arg to stop loading/decoding images — a big memory + bandwidth saver for
+# portals we only scrape text/DOM from. NOT applied to Cloudflare-protected headed
+# portals (Dhiraagu), where the challenge needs to render normally.
+DISABLE_IMAGES_ARG = "--blink-settings=imagesEnabled=false"
 
 # Init script applied to every context: mask the most obvious automation tells
 # (navigator.webdriver, missing window.chrome / plugins / languages) so the
@@ -84,10 +101,12 @@ class BrowserManager:
     # Each thread gets one Playwright runtime, multiple browsers share it
     _thread_local = threading.local()
 
-    def __init__(self, headless: bool = False, user_agent: str = None, channel: str = None):
+    def __init__(self, headless: bool = False, user_agent: str = None, channel: str = None,
+                 disable_images: bool = False):
         self.headless = headless
         self.user_agent = user_agent  # override Chromium's default UA (e.g. to match FlareSolverr)
         self.channel = channel        # e.g. "chrome" to use the real Chrome (passes Cloudflare; Chromium gets flagged)
+        self.disable_images = disable_images  # skip image loading to cut memory (non-CF portals)
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -139,13 +158,18 @@ class BrowserManager:
         self._playwright = self._get_thread_playwright()
         driver_pid, before_children = self._snapshot_driver_children()
 
+        # Build the launch args, adding the image-disable flag when requested.
+        launch_args = list(CHROMIUM_ARGS)
+        if self.disable_images:
+            launch_args.append(DISABLE_IMAGES_ARG)
+
         if user_data_dir:
             # Persistent context - cookies/localStorage/sessionStorage saved to disk
-            logger.info(f"Starting persistent browser (headless={self.headless}, dir={user_data_dir})")
+            logger.info(f"Starting persistent browser (headless={self.headless}, dir={user_data_dir}, images={'off' if self.disable_images else 'on'})")
             self._is_persistent = True
             _ctx_kwargs = dict(
                 headless=self.headless,
-                args=CHROMIUM_ARGS,
+                args=launch_args,
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=ignore_https_errors,
                 # Drop Playwright's default --enable-automation flag. It sets the
@@ -172,7 +196,7 @@ class BrowserManager:
             self._is_persistent = False
             self._browser = self._playwright.chromium.launch(
                 headless=self.headless,
-                args=CHROMIUM_ARGS,
+                args=launch_args,
             )
             self._context = self._browser.new_context(
                 viewport={"width": 1920, "height": 1080},

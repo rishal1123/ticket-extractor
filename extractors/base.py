@@ -53,6 +53,10 @@ class BaseExtractor(ABC):
     # manual browser). Set both for Cloudflare-protected portals (Dhiraagu).
     BROWSER_CHANNEL = None
     FORCE_HEADED = False
+    # Skip image loading/decoding to cut browser memory (and bandwidth). Safe for
+    # portals we only read text/DOM from. Left False for Cloudflare-protected headed
+    # portals (Dhiraagu), where the challenge page should render normally.
+    DISABLE_IMAGES = False
     # Memory limit per browser - override in subclass for heavier portals
     MEMORY_LIMIT_MB = DEFAULT_MEMORY_LIMIT_MB
 
@@ -291,6 +295,7 @@ class BaseExtractor(ABC):
             headless=effective_headless,
             user_agent=self.browser_user_agent(),
             channel=self.BROWSER_CHANNEL,
+            disable_images=self.DISABLE_IMAGES,
         )
         session_dir = self._get_session_dir()
         browser.start(user_data_dir=session_dir)
