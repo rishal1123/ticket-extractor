@@ -83,7 +83,8 @@ exec "$CHROME" \
     --remote-allow-origins=* \
     --no-sandbox \
     --disable-dev-shm-usage \
-    --disable-gpu \
+    --use-gl=angle \
+    --use-angle=swiftshader \
     --enable-unsafe-swiftshader \
     --disable-features=IsolateOrigins,site-per-process \
     --disable-blink-features=AutomationControlled \
