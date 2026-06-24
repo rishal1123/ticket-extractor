@@ -85,6 +85,7 @@ exec "$CHROME" \
     --disable-dev-shm-usage \
     --disable-gpu \
     --enable-unsafe-swiftshader \
+    --disable-features=IsolateOrigins,site-per-process \
     --disable-blink-features=AutomationControlled \
     --window-size=1920,1080 \
     --no-first-run \
