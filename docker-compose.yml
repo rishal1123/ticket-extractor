@@ -12,9 +12,6 @@ services:
     hostname: ticket-extractor
     ports:
       - "8003:8000"
-      # noVNC: open http://<host>:6080/vnc.html to watch/drive the headed Chrome
-      # and solve a Cloudflare challenge by hand (Dhiraagu). Secure with VNC_PASSWORD.
-      - "6080:6080"
     volumes:
       - extractor_data:/app/data
     environment:
@@ -24,13 +21,17 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/tickets.db
       - FLARESOLVERR_URL=http://flaresolverr:8191
-      # Password for the noVNC session. If unset, noVNC is OPEN with no auth —
-      # set this (e.g. in a .env file or Portainer) when 6080 is reachable.
-      - VNC_PASSWORD=${VNC_PASSWORD:-}
+      # Drive Dhiraagu's Cloudflare-bound headed Chrome in the dedicated sidecar
+      # over CDP. The app connects here instead of launching a local headed Chrome;
+      # when this is set, the app skips its own Xvfb/noVNC entirely. Unset = local.
+      - DHIRAAGU_BROWSER_CDP=dhiraagu-browser:9222
     # FlareSolverr is optional now (Dhiraagu uses real headed Chrome, not
-    # FlareSolverr), so don't block app startup on it — just start it alongside.
+    # FlareSolverr); the browser sidecar hosts Dhiraagu's Chrome. Don't block app
+    # startup on either — just start them alongside.
     depends_on:
       flaresolverr:
+        condition: service_started
+      dhiraagu-browser:
         condition: service_started
     restart: unless-stopped
     shm_size: '2gb'
@@ -40,6 +41,41 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Dedicated headed-Chrome sidecar for Dhiraagu's Cloudflare. Runs ONE real
+  # Chrome under Xvfb+fluxbox, exposes CDP on :9222 (driven by the app) and noVNC
+  # on :6080 (a human solves the challenge in the SAME window). Same image, just a
+  # different entrypoint. MUST run on this host so Cloudflare sees the same egress
+  # IP as before (cf_clearance is IP-bound).
+  dhiraagu-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dhiraagu-browser
+    hostname: dhiraagu-browser
+    entrypoint: ["/app/browser-entrypoint.sh"]
+    ports:
+      # noVNC: open http://<host>:6080/vnc.html to watch/drive the headed Chrome
+      # and solve a Cloudflare challenge by hand. Secure with VNC_PASSWORD.
+      - "6080:6080"
+    # CDP (:9222) is NOT published to the host — only the app needs it, over the
+    # internal Docker network. Don't expose DevTools to the outside.
+    expose:
+      - "9222"
+    volumes:
+      - dhiraagu_profile:/profile
+    environment:
+      - TZ=Indian/Maldives
+      # Password for the noVNC session. If unset, noVNC is OPEN with no auth —
+      # set this (e.g. in a .env file or Portainer) when 6080 is reachable.
+      - VNC_PASSWORD=${VNC_PASSWORD:-}
+    restart: unless-stopped
+    shm_size: '2gb'
     logging:
       driver: "json-file"
       options:
@@ -72,3 +108,5 @@ services:
 volumes:
   extractor_data:
     name: ticket-extractor-data
+  dhiraagu_profile:
+    name: dhiraagu-browser-profile

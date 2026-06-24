@@ -263,12 +263,21 @@ class BaseExtractor(ABC):
         so injected FlareSolverr cookies are accepted (clearance is UA-bound)."""
         return None
 
+    def cdp_endpoint(self) -> Optional[str]:
+        """"host:port" of a remote headed Chrome to drive over CDP, or None to
+        launch a local browser. Overridden by Cloudflare portals (Dhiraagu) to use
+        a dedicated browser sidecar when configured (env DHIRAAGU_BROWSER_CDP)."""
+        return None
+
     def _get_or_create_browser(self) -> BrowserManager:
         """Get or create a dedicated browser for this portal.
 
-        Uses Playwright persistent context so login sessions survive browser resets.
+        Either connects to a remote headed Chrome over CDP (when cdp_endpoint() is
+        set — the Dhiraagu sidecar) or launches a local Playwright persistent context
+        whose session survives browser resets.
         """
         portal = self.config.name
+        cdp = self.cdp_endpoint()
         with BaseExtractor._portal_browsers_lock:
             existing = BaseExtractor._portal_browsers.get(portal)
 
@@ -289,6 +298,16 @@ class BaseExtractor(ABC):
                     except Exception:
                         pass
                     BaseExtractor._portal_browsers.pop(portal, None)
+
+        if cdp:
+            # Remote browser sidecar: connect over CDP. The remote Chrome owns the
+            # profile, display and lifecycle — no local session dir, no headed flags.
+            browser = BrowserManager(cdp_endpoint=cdp)
+            browser.start()
+            with BaseExtractor._portal_browsers_lock:
+                BaseExtractor._portal_browsers[portal] = browser
+            self.logger.info(f"[{portal}] Connected to remote browser over CDP ({cdp})")
+            return browser
 
         effective_headless = False if self.FORCE_HEADED else self.headless
         browser = BrowserManager(

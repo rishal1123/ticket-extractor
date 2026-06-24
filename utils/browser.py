@@ -1,4 +1,5 @@
 import asyncio
+import socket
 import threading
 
 import psutil
@@ -102,11 +103,16 @@ class BrowserManager:
     _thread_local = threading.local()
 
     def __init__(self, headless: bool = False, user_agent: str = None, channel: str = None,
-                 disable_images: bool = False):
+                 disable_images: bool = False, cdp_endpoint: str = None):
         self.headless = headless
         self.user_agent = user_agent  # override Chromium's default UA (e.g. to match FlareSolverr)
         self.channel = channel        # e.g. "chrome" to use the real Chrome (passes Cloudflare; Chromium gets flagged)
         self.disable_images = disable_images  # skip image loading to cut memory (non-CF portals)
+        # "host:port" of a remote Chrome's DevTools endpoint. When set, start()
+        # CONNECTS to that already-running headed Chrome over CDP (used for the
+        # Dhiraagu browser sidecar) instead of launching a local browser.
+        self.cdp_endpoint = cdp_endpoint
+        self._connected_cdp = False
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -156,6 +162,13 @@ class BrowserManager:
     def start(self, ignore_https_errors: bool = False, user_data_dir: str = None) -> Page:
         """Start browser. If user_data_dir is given, uses persistent context for session reuse."""
         self._playwright = self._get_thread_playwright()
+
+        # Remote browser sidecar: connect to an already-running headed Chrome over
+        # CDP instead of launching one locally. The remote Chrome owns the profile,
+        # the display and its own lifecycle — we just attach and drive it.
+        if self.cdp_endpoint:
+            return self._start_cdp(ignore_https_errors)
+
         driver_pid, before_children = self._snapshot_driver_children()
 
         # Build the launch args, adding the image-disable flag when requested.
@@ -217,8 +230,67 @@ class BrowserManager:
         logger.info("Browser started successfully")
         return self.page
 
+    def _start_cdp(self, ignore_https_errors: bool) -> Page:
+        """Connect to a remote headed Chrome over CDP (the Dhiraagu sidecar).
+
+        The remote Chrome was launched with --user-data-dir, so its default context
+        is effectively persistent. We attach to that existing context/page rather
+        than creating our own, so the operator's noVNC view and our automation share
+        the same window.
+        """
+        host, _, port = self.cdp_endpoint.partition(":")
+        port = port or "9222"
+        # Connect by IP, not hostname: Chrome's DevTools HTTP endpoint rejects
+        # requests whose Host header isn't an IP literal / localhost, so a service
+        # name like "dhiraagu-browser:9222" would 403. Resolving to the IP keeps the
+        # Host header an IP and the /json/version handshake succeeds.
+        try:
+            ip = socket.gethostbyname(host)
+        except Exception:
+            ip = host
+        url = f"http://{ip}:{port}"
+        logger.info(f"Connecting to remote Chrome over CDP at {url} (endpoint {self.cdp_endpoint})")
+
+        self._connected_cdp = True
+        self._is_persistent = False
+        self._browser_pid = None  # remote process; memory is bounded in the sidecar
+        self._browser = self._playwright.chromium.connect_over_cdp(url)
+        # Reuse the remote browser's existing (persistent) default context + page.
+        self._context = (
+            self._browser.contexts[0]
+            if self._browser.contexts
+            else self._browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                ignore_https_errors=ignore_https_errors,
+            )
+        )
+        self.page = self._context.pages[0] if self._context.pages else self._context.new_page()
+
+        try:
+            self._context.add_init_script(STEALTH_INIT_JS)
+        except Exception as e:
+            logger.debug(f"Could not add stealth init script over CDP: {e}")
+
+        self.page.set_default_timeout(10000)
+        logger.info("Connected to remote Chrome over CDP")
+        return self.page
+
     def stop(self):
         logger.info("Stopping browser")
+        if self._connected_cdp:
+            # Remote sidecar Chrome: only DISCONNECT — never close the remote
+            # browser or its persistent context (the sidecar owns its lifecycle).
+            if self._browser:
+                try:
+                    self._browser.close()  # for connect_over_cdp this just disconnects
+                except Exception as e:
+                    logger.warning(f"Error disconnecting from remote Chrome: {e}")
+            self.page = None
+            self._context = None
+            self._browser = None
+            self._browser_pid = None
+            self._connected_cdp = False
+            return
         if self._is_persistent:
             # Persistent context: closing it saves session data and kills browser
             if self._context:

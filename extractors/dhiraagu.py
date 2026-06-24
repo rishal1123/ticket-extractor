@@ -1,3 +1,4 @@
+import os
 import time
 
 from .base import BaseExtractor
@@ -60,6 +61,12 @@ class DhiraaguExtractor(BaseExtractor):
 
     def detail_url(self, ticket) -> str:
         return f"{self.ORDERS_PAGE_URL}/{ticket.ticket_id}?activeRelationManager=notes"
+
+    def cdp_endpoint(self):
+        """Drive a dedicated headed-Chrome sidecar over CDP when configured
+        (DHIRAAGU_BROWSER_CDP=host:port, e.g. dhiraagu-browser:9222 in Docker).
+        Unset (local dev) => fall back to launching headed Chrome locally."""
+        return os.getenv("DHIRAAGU_BROWSER_CDP") or None
 
     def is_logged_in(self) -> bool:
         """Check if currently logged in to Dhiraagu portal.

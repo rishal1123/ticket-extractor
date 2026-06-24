@@ -47,6 +47,12 @@ echo "Starting application..."
 # fails with "Missing X server or $DISPLAY" and Dhiraagu breaks on every restart
 # after the first. So we clean stale locks first and VERIFY Xvfb is actually up
 # before exporting DISPLAY (don't leave DISPLAY set pointing at nothing).
+# When Dhiraagu runs in the dedicated browser sidecar (DHIRAAGU_BROWSER_CDP set),
+# the app drives it over CDP and needs NO local display — skip Xvfb/fluxbox/noVNC.
+# (The other portals run headless and never needed a display.)
+if [ -n "${DHIRAAGU_BROWSER_CDP:-}" ]; then
+    echo "Dhiraagu uses the remote browser sidecar (${DHIRAAGU_BROWSER_CDP}) — skipping local Xvfb/fluxbox/noVNC."
+else
 DISPLAY_NUM=99
 if command -v Xvfb >/dev/null 2>&1; then
     echo "Starting Xvfb virtual display on :${DISPLAY_NUM}..."
@@ -117,5 +123,6 @@ if [ -n "${DISPLAY:-}" ] && command -v x11vnc >/dev/null 2>&1; then
         echo "WARN: noVNC web client (/usr/share/novnc) or websockify missing — VNC available on raw port 5900 only."
     fi
 fi
+fi  # end DHIRAAGU_BROWSER_CDP display guard
 
 exec python app.py
