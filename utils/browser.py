@@ -193,11 +193,19 @@ class BrowserManager:
                 ignore_https_errors=ignore_https_errors,
             )
             if is_firefox:
-                # Firefox is configured via prefs, not command-line flags. Mask the
-                # obvious automation tell so Cloudflare treats it as a real browser.
+                # Firefox is configured via prefs, not command-line flags.
                 _ctx_kwargs["firefox_user_prefs"] = {
+                    # Mask the obvious automation tell so Cloudflare treats it as real.
                     "dom.webdriver.enabled": False,
                     "useAutomationExtension": False,
+                    # Stop Enhanced Tracking Protection / cookie partitioning from
+                    # interfering with Cloudflare's cf_clearance handshake — otherwise
+                    # the challenge LOOPS: you solve Turnstile but clearance isn't
+                    # recorded, so the page reloads back to the same challenge.
+                    "network.cookie.cookieBehavior": 0,          # accept all cookies
+                    "privacy.trackingprotection.enabled": False,
+                    "privacy.partition.network_state": False,    # no per-site partitioning
+                    "privacy.firstparty.isolate": False,
                 }
                 if self.disable_images:
                     _ctx_kwargs["firefox_user_prefs"]["permissions.default.image"] = 2
