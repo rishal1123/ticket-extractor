@@ -149,21 +149,52 @@ class DhiraaguExtractor(BaseExtractor):
             self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
             time.sleep(2)
 
+            # Show 100 rows per page (Filament default is 10) so we paginate far less.
+            self._set_records_per_page(100)
+
+            # --- LISTING PHASE ---
+            # Walk every page collecting each row's data WITHOUT visiting detail pages,
+            # so per-page / pagination state is never reset. Known tickets are recorded
+            # as present; new ones are queued (with their detail URL) for enrichment.
+            new_orders = []
             page_num = 1
-
             while True:
-                self.logger.info(f"Processing orders on page {page_num}...")
-
-                # Process each row on the current page by clicking on links
-                page_tickets = self._process_orders_on_page()
-                tickets.extend(page_tickets)
-                self.logger.info(f"Extracted {len(page_tickets)} tickets from page {page_num}")
-
-                # Check for next page
+                page_orders = self._collect_page_orders()
+                self.logger.info(f"Page {page_num}: {len(page_orders)} rows")
+                for order_data in page_orders:
+                    ticket_id = order_data['service_num']
+                    if self.is_known_ticket(ticket_id):
+                        tickets.append(self.presence_ticket(ticket_id))
+                    else:
+                        new_orders.append(order_data)
                 if not self._go_to_next_page():
                     break
                 page_num += 1
                 time.sleep(2)
+
+            self.logger.info(
+                f"Listing done: {len(tickets)} known present, {len(new_orders)} new to enrich"
+            )
+
+            # --- DETAIL PHASE ---
+            # Enrich each NEW ticket from its own detail page via direct URL — no row
+            # clicking, so the listing/pagination above is never disturbed.
+            for order_data in new_orders:
+                try:
+                    href = order_data.get('detail_href')
+                    if href:
+                        self.navigate_to(href)
+                        time.sleep(2)
+                        ticket = self._extract_from_detail_page(order_data)
+                    else:
+                        ticket = self._build_ticket_from_order(order_data)
+                    if ticket:
+                        tickets.append(ticket)
+                except Exception as e:
+                    self.logger.warning(f"Error enriching {order_data.get('service_num')}: {e}")
+                    fallback = self._build_ticket_from_order(order_data)
+                    if fallback:
+                        tickets.append(fallback)
 
             self.logger.info(f"Total tickets extracted: {len(tickets)}")
 
@@ -172,103 +203,76 @@ class DhiraaguExtractor(BaseExtractor):
 
         return tickets
 
-    def _process_orders_on_page(self) -> list[Ticket]:
-        """Process each order on the current page by clicking on links."""
-        tickets = []
-
+    def _collect_page_orders(self) -> list[dict]:
+        """Read every row's data on the current page (no navigation). Returns a list
+        of order_data dicts, each including 'detail_href' (absolute URL) for later
+        detail enrichment. Reading-only keeps the table's per-page/page state stable."""
+        orders = []
         try:
             time.sleep(1)
-
-            # Get the count of rows first
             rows = self.find_elements(self.TABLE_ROW_SELECTOR)
-            row_count = len(rows)
-            self.logger.info(f"Found {row_count} rows on current page")
-
-            # Process each row by index (re-find elements after each navigation)
-            for row_idx in range(row_count):
+            for row in rows:
                 try:
-                    # Re-find rows after returning from detail page
-                    rows = self.find_elements(self.TABLE_ROW_SELECTOR)
-                    if row_idx >= len(rows):
-                        self.logger.warning(f"Row index {row_idx} out of range, skipping")
-                        continue
-
-                    row = rows[row_idx]
                     cells = row.query_selector_all("td")
-
                     if len(cells) < 10:
                         continue
 
-                    # Extract submitted date from table and parse it
                     submitted_date_str = self._get_cell_text_by_element(cells[self.COL_SUBMITTED_DATE]) if len(cells) > self.COL_SUBMITTED_DATE else None
-                    portal_created_at = self._parse_date(submitted_date_str) if submitted_date_str else None
-
-                    # Extract status from table
-                    status = self._get_cell_text_by_element(cells[self.COL_STATUS]) if len(cells) > self.COL_STATUS else None
-
-                    # Collect basic data from the row first
                     order_data = {
                         'order_num': self._get_cell_text_by_element(cells[self.COL_ORDER_NUM]),
                         'service_num': self._get_cell_text_by_element(cells[self.COL_SERVICE_NUM]),
                         'address': self._get_cell_text_by_element(cells[self.COL_ADDRESS]),
                         'service_type': self._get_cell_text_by_element(cells[self.COL_SERVICE_TYPE]),
                         'order_type': self._get_cell_text_by_element(cells[self.COL_ORDER_TYPE]),
-                        'status': status,
-                        'portal_created_at': portal_created_at,
+                        'status': self._get_cell_text_by_element(cells[self.COL_STATUS]) if len(cells) > self.COL_STATUS else None,
+                        'portal_created_at': self._parse_date(submitted_date_str) if submitted_date_str else None,
                         'kpi': self._get_cell_text_by_element(cells[self.COL_KPI]) if len(cells) > self.COL_KPI else None,
                         'customer_name': self._get_cell_text_by_element(cells[self.COL_CUSTOMER_NAME]) if len(cells) > self.COL_CUSTOMER_NAME else None,
                     }
-
                     if not order_data['service_num']:
                         continue
 
-                    ticket_id = order_data['service_num']
-
-                    # Known ticket: register presence only, skip the detail-page
-                    # navigation. Notes are never fetched — updates come from Znuny.
-                    if self.is_known_ticket(ticket_id):
-                        tickets.append(self.presence_ticket(ticket_id))
-                        continue
-
-                    self.logger.info(f"Processing new order {row_idx + 1}/{row_count}: {ticket_id}")
-
-                    # Find and click the link in this row
-                    link = row.query_selector_all(self.ORDER_LINK_SELECTOR)
-                    if not link:
-                        # Try clicking on the order number cell directly
-                        link = cells[self.COL_ORDER_NUM].query_selector_all("a")
-
+                    # Capture the detail-page link (resolved to an absolute URL) so we
+                    # can visit it directly later instead of clicking the row.
+                    link = row.query_selector(self.ORDER_LINK_SELECTOR)
+                    if not link and len(cells) > self.COL_ORDER_NUM:
+                        link = cells[self.COL_ORDER_NUM].query_selector("a")
+                    order_data['detail_href'] = None
                     if link:
-                        link[0].click()
-                        time.sleep(2)
+                        try:
+                            order_data['detail_href'] = link.evaluate("el => el.href")
+                        except Exception:
+                            pass
 
-                        # Extract details from the detail page
-                        ticket = self._extract_from_detail_page(order_data)
-                        if ticket:
-                            tickets.append(ticket)
-
-                        # Navigate back to the orders list
-                        self.navigate_to(self.ORDERS_PAGE_URL)
-                        time.sleep(2)
-                        self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
-                        time.sleep(1)
-                    else:
-                        self.logger.warning(f"No clickable link found for order {order_data['order_num']}")
-
+                    orders.append(order_data)
                 except Exception as e:
-                    self.logger.warning(f"Error processing row {row_idx}: {e}")
-                    # Try to navigate back to orders page
-                    try:
-                        self.navigate_to(self.ORDERS_PAGE_URL)
-                        time.sleep(2)
-                    except Exception:
-                        pass
+                    self.logger.debug(f"Error reading row: {e}")
                     continue
-
         except Exception as e:
-            self.logger.error(f"Error processing orders on page: {e}")
+            self.logger.error(f"Error collecting page orders: {e}")
+        return orders
 
-        return tickets
+    def _build_ticket_from_order(self, order_data: dict) -> "Ticket | None":
+        """Build a Ticket from table-row data only (fallback when the detail page
+        can't be visited). Notes are not fetched — updates come from Znuny."""
+        try:
+            return Ticket(
+                portal="dhiraagu",
+                ticket_id=order_data['service_num'],
+                address=order_data.get('address'),
+                account=order_data.get('order_num'),
+                customer_name=order_data.get('customer_name'),
+                ticket_type=order_data.get('order_type'),
+                portal_created_at=order_data.get('portal_created_at'),
+                service_type=order_data.get('service_type'),
+                status=order_data.get('status'),
+                kpi=order_data.get('kpi'),
+                notes=None,
+                portal_url=order_data.get('detail_href'),
+            )
+        except Exception as e:
+            self.logger.warning(f"Error building ticket from order: {e}")
+            return None
 
     def _extract_from_detail_page(self, order_data: dict) -> Ticket | None:
         """Extract ticket data from the detail page."""
@@ -467,6 +471,54 @@ class DhiraaguExtractor(BaseExtractor):
             return text if text else None
         except Exception:
             return None
+
+    def _set_records_per_page(self, count: int = 100) -> bool:
+        """Set Filament's 'records per page' selector to a larger value (default 10)
+        so we fetch far more rows per page. Tries the Livewire per-page <select>;
+        falls back to any <select> whose options are pagination sizes (…/50/100)."""
+        page = self.browser.page
+        # Filament v3 uses wire:model.live, v2 uses wire:model; the attr value is
+        # tableRecordsPerPage. Colons/dots in the attr name must be CSS-escaped.
+        candidates = [
+            "select[wire\\:model\\.live='tableRecordsPerPage']",
+            "select[wire\\:model='tableRecordsPerPage']",
+            "select[wire\\:model\\.live*='RecordsPerPage']",
+            "select[wire\\:model*='RecordsPerPage']",
+        ]
+        try:
+            select_el = None
+            for sel in candidates:
+                el = page.query_selector(sel)
+                if el:
+                    select_el = el
+                    break
+            # Fallback: any <select> offering a "100" (or numeric pagination) option.
+            if select_el is None:
+                for el in page.query_selector_all("select"):
+                    vals = [o.get_attribute("value") for o in el.query_selector_all("option")]
+                    vals = [v for v in vals if v and v.isdigit()]
+                    if "100" in vals or (vals and max(map(int, vals)) >= 25):
+                        select_el = el
+                        break
+            if select_el is None:
+                self.logger.warning("Records-per-page selector not found - using portal default (10)")
+                return False
+
+            options = [o.get_attribute("value") for o in select_el.query_selector_all("option")]
+            options = [o for o in options if o and o.isdigit()]
+            if not options:
+                return False
+            target = str(count) if str(count) in options else max(options, key=int)
+
+            select_el.select_option(target)
+            self.logger.info(f"Set records per page to {target}")
+            time.sleep(2)  # Livewire re-renders the table
+            self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
+            time.sleep(1)
+            return True
+        except Exception as e:
+            self.logger.warning(f"Could not set records-per-page (using default): {e}")
+            return False
 
     def _go_to_next_page(self) -> bool:
         """Navigate to next page of tickets. Returns False if no more pages."""
