@@ -445,6 +445,19 @@ async function showTicketDetail(ticketId, callbacks = {}) {
         document.getElementById('checkZnunyBtn').onclick = () => checkZnuny(ticketId, callbacks);
         document.getElementById('syncZnunyBtn').onclick = () => syncZnunyData(ticketId, callbacks);
 
+        // Format Ticket button: only for ISP tickets not yet in Znuny — opens the
+        // standardized formatted block (same as the row button) in a new tab.
+        const formatBtn = document.getElementById('formatTicketBtn');
+        if (formatBtn) {
+            if (!ticket.in_znuny) {
+                formatBtn.href = `/tickets/${ticketId}/format`;
+                formatBtn.style.display = '';
+            } else {
+                formatBtn.style.display = 'none';
+                formatBtn.removeAttribute('href');
+            }
+        }
+
         // Use getOrCreateInstance to avoid multiple modal instances causing backdrop issues
         const modalEl = document.getElementById('ticketModal');
         const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
