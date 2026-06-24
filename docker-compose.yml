@@ -75,11 +75,13 @@ services:
       # set this (e.g. in a .env file or Portainer) when 6080 is reachable.
       - VNC_PASSWORD=${VNC_PASSWORD:-}
     restart: unless-stopped
-    # Dhiraagu's Chrome (single tab, images on for Cloudflare) gets 3GB headroom —
-    # headed Chrome + swiftshader WebGL (for Turnstile) + Xvfb/WM/VNC, so a renderer
-    # isn't OOM-killed (which shows as a crashed-iframe "sad face"). Chrome uses
+    # Dhiraagu's Chrome gets 4GB. Headed Chrome + SwiftShader software-WebGL (which
+    # Turnstile needs) + Xvfb/WM/VNC genuinely needs the headroom: under a tighter
+    # cap the cgroup OOM-killer SIGKILLs the renderer doing the WebGL work, which
+    # shows as a crashed-frame "sad face" with NO crash in the logs (SIGKILL is
+    # silent). The known-working local config had no cap. Chrome uses
     # --disable-dev-shm-usage, so /dev/shm stays empty — keep shm small.
-    mem_limit: 3gb
+    mem_limit: 4gb
     shm_size: '512m'
     logging:
       driver: "json-file"
