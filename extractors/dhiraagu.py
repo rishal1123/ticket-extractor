@@ -149,31 +149,41 @@ class DhiraaguExtractor(BaseExtractor):
             self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
             time.sleep(2)
 
-            # Show 100 rows per page (Filament default is 10) so we paginate far less.
+            # Best-effort: show 100 rows/page (Filament default is 10) to reduce pages.
             self._set_records_per_page(100)
 
-            # --- LISTING PHASE ---
-            # Walk every page collecting each row's data WITHOUT visiting detail pages,
-            # so per-page / pagination state is never reset. Known tickets are recorded
-            # as present; new ones are queued (with their detail URL) for enrichment.
+            # --- LISTING PHASE (URL-based pagination) ---
+            # Walk pages via ?page=N (Livewire/Laravel honor the `page` query param)
+            # collecting every row's data WITHOUT visiting detail pages, so the table
+            # state is never disturbed. Dedupe by service_num and stop when a page
+            # yields no NEW rows — robust whether or not the per-page select took
+            # effect and regardless of the pagination-button markup.
             new_orders = []
+            seen_ids = set()
             page_num = 1
-            while True:
+            MAX_PAGES = 50
+            while page_num <= MAX_PAGES:
+                if page_num > 1:
+                    self.navigate_to(f"{self.ORDERS_PAGE_URL}?page={page_num}")
+                    time.sleep(2)
+                    self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
+                    time.sleep(1)
                 page_orders = self._collect_page_orders()
-                self.logger.info(f"Page {page_num}: {len(page_orders)} rows")
-                for order_data in page_orders:
-                    ticket_id = order_data['service_num']
-                    if self.is_known_ticket(ticket_id):
-                        tickets.append(self.presence_ticket(ticket_id))
+                fresh = [o for o in page_orders if o['service_num'] not in seen_ids]
+                self.logger.info(f"Page {page_num}: {len(page_orders)} rows ({len(fresh)} new)")
+                if not fresh:
+                    break
+                for order_data in fresh:
+                    seen_ids.add(order_data['service_num'])
+                    if self.is_known_ticket(order_data['service_num']):
+                        tickets.append(self.presence_ticket(order_data['service_num']))
                     else:
                         new_orders.append(order_data)
-                if not self._go_to_next_page():
-                    break
                 page_num += 1
-                time.sleep(2)
 
             self.logger.info(
-                f"Listing done: {len(tickets)} known present, {len(new_orders)} new to enrich"
+                f"Listing done: {len(seen_ids)} tickets across {page_num} page(s) — "
+                f"{len(tickets)} known present, {len(new_orders)} new to enrich"
             )
 
             # --- DETAIL PHASE ---
