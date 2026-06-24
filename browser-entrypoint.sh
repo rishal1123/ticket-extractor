@@ -69,12 +69,10 @@ find /profile -maxdepth 1 -name 'Singleton*' -delete 2>/dev/null || true
 echo "Starting socat CDP forwarder 0.0.0.0:9223 -> 127.0.0.1:9222..."
 socat TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222 >/tmp/socat.log 2>&1 &
 
-# Force Mesa software rendering (llvmpipe). There's no GPU, and Mesa's software GL
-# is far more stable than Chrome's bundled SwiftShader (which SIGSEGVs here). With
-# libgl1-mesa-dri installed, --use-gl=angle --use-angle=gl makes Chrome render
-# WebGL/canvas (needed by Cloudflare Turnstile) through Mesa instead of SwiftShader.
-export LIBGL_ALWAYS_SOFTWARE=1
-export GALLIUM_DRIVER=llvmpipe
+# NO-WebGL mode: with --disable-gpu and no GL flags, WebGL is simply unavailable,
+# so there's no software GL renderer (SwiftShader or Mesa) to crash. Cloudflare
+# Turnstile renders its checkbox without WebGL. This sidesteps the renderer
+# SIGSEGV/crash entirely. (Mesa libs remain installed but unused — harmless.)
 
 # Pick the real Google Chrome binary (installed via `playwright install chrome`).
 CHROME="$(command -v google-chrome-stable || command -v google-chrome || echo /opt/google/chrome/chrome)"
@@ -90,8 +88,7 @@ exec "$CHROME" \
     --remote-allow-origins=* \
     --no-sandbox \
     --disable-dev-shm-usage \
-    --use-gl=angle \
-    --use-angle=gl \
+    --disable-gpu \
     --disable-features=IsolateOrigins,site-per-process \
     --disable-blink-features=AutomationControlled \
     --window-size=1920,1080 \
