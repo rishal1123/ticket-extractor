@@ -546,11 +546,109 @@ class MedianetFormatter(BaseFormatter):
 
 
 # --------------------------------------------------------------------------- #
-# Raajje Online (ROL) — stub until a sample is supplied.
+# Raajje Online (ROL) — Kayako helpdesk
 # --------------------------------------------------------------------------- #
-class RolFormatter(_StubFormatter):
+class RolFormatter(BaseFormatter):
     name = "Raajje Online (ROL)"
-    detect_keywords = ("raajje online", "raajjeonline", "rol")
+    detect_keywords = ("raajje online", "raajjeonline", "support.rol.net.mv", "rol.mv", "rol")
+
+    TICKET_URL = "https://support.rol.net.mv/staff/index.php?/Tickets/Ticket/View/{internal_id}/inbox/55/-1/-1"
+
+    def _display_id(self, text: str) -> str:
+        """The ROL reference shown on the ticket, e.g. ROL260195."""
+        m = re.search(r"\bROL\d+\b", text, re.IGNORECASE)
+        return m.group(0).upper() if m else ""
+
+    def _internal_id(self, text: str) -> str:
+        """The Kayako TICKET ID (used to build the ticket URL), e.g. 115427."""
+        return (field_after_label(text, "TICKET ID") or "").strip()
+
+    def _service_label(self, text: str) -> str:
+        return (field_after_label(text, "TYPE") or "").strip() or "New Connection"
+
+    def _posted_fields(self, text: str) -> tuple[str, str, str, str]:
+        """Parse the original customer post block (after 'Posted on:', up to the
+        footer) into (name, phone, address, package). The ROL reference line is
+        dropped; the remaining lines are, in order: name, phone, address building
+        code, [area], package (last)."""
+        lines = _lines(text)
+        start = next((i + 1 for i, ln in enumerate(lines)
+                      if ln.lower().startswith("posted on:")), None)
+        if start is None:
+            return "", "", "", ""
+        block: list[str] = []
+        for ln in lines[start:]:
+            low = ln.lower()
+            if low.startswith(("last edited by:", "ip address:", "email to:", "«", "page ")):
+                break
+            if ln and not re.fullmatch(r"ROL\d+", ln, re.IGNORECASE):
+                block.append(ln)
+        name = block[0] if len(block) > 0 else ""
+        phone = block[1] if len(block) > 1 else ""
+        address = block[2] if len(block) > 2 else ""
+        package = block[-1] if len(block) > 3 else ""
+        return name, phone, address, package
+
+    def address_id_for_validation(self, text: str) -> Optional[str]:
+        return self._posted_fields(text)[2] or None
+
+    def account_id_for_validation(self, text: str) -> Optional[str]:
+        return self._display_id(text) or None
+
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
+        display_id = self._display_id(text)
+        internal_id = self._internal_id(text)
+        name_raw, phone_raw, address, package = self._posted_fields(text)
+        name = dedupe_name(name_raw)
+        phone = local_phone(phone_raw)
+        ticket_url = self.TICKET_URL.format(internal_id=internal_id) if internal_id else ""
+
+        if relocation:
+            title = (
+                f"ROL - Relocation - {address} / {package}/ Ticket ID:{display_id}"
+            )
+            body = "\n".join(
+                [
+                    "ROL - Relocation",
+                    f"Ticket ID : {display_id}",
+                    f"Ticket URL : {ticket_url}",
+                    "Service # : <enter Service #>",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    f"Service Package : {package}",
+                    "",
+                    f"New Address: {address}",
+                    "",
+                    "Old Address: <enter Old Address>",
+                    "Old SVLAN | CVLAN: <enter Old SVLAN | CVLAN>",
+                    "HDC ONT FSAN (Old): <enter HDC ONT FSAN (Old)>",
+                    "",
+                    "Other info:",
+                    "ONT Contract Status: Signed / Not Signed",
+                ]
+            )
+            return f"{title}\n\n{body}"
+
+        service = self._service_label(text)
+        title = (
+            f"ROL - {service} - {address} / {package}/ Ticket ID:{display_id}"
+        )
+        body = "\n".join(
+            [
+                f"ROL - {service}",
+                f"Ticket ID : {display_id}",
+                f"Ticket URL : {ticket_url}",
+                "Service # : <enter Service #>",
+                f"Customer Name: {name}",
+                f"Phone : {phone}",
+                f"Service Package : {package}",
+                f"Address: {address}",
+                "",
+                "Other info:",
+                "ONT Contract Status: Signed / Not Signed",
+            ]
+        )
+        return f"{title}\n\n{body}"
 
 
 # Order matters only as a tie-break fallback; detection uses the best score.
