@@ -218,7 +218,7 @@ class BaseFormatter:
         low = text.lower()
         return sum(1 for kw in self.detect_keywords if kw.lower() in low)
 
-    def format(self, text: str, manual: dict | None = None) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         raise NotImplementedError
 
     def address_for_validation(self, text: str) -> Optional[tuple[str, str]]:
@@ -245,7 +245,7 @@ class BaseFormatter:
 class _StubFormatter(BaseFormatter):
     """Placeholder for an ISP whose format hasn't been supplied yet."""
 
-    def format(self, text: str, manual: dict | None = None) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         return (
             f"[{self.name}] formatter not configured yet.\n\n"
             f"Send a sample (unformatted input + desired output) and this "
@@ -295,7 +295,7 @@ class OoredooFormatter(BaseFormatter):
             val = field_after_label(text, "Atol")
         return val
 
-    def format(self, text: str, manual: dict | None = None) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         account = field_after_label(text, "Account Number") or ""
         bandwidth = field_after_label(text, "Ratepan") or ""
         name = dedupe_name(field_after_label(text, "Name"))
@@ -303,9 +303,34 @@ class OoredooFormatter(BaseFormatter):
         address = field_after_label(text, "Address") or ""
         ticket_id = field_after_label(text, "Ticket ID") or ""
         fsan = field_after_label(text, "HDC ONT FSAN") or ""
+        ticket_url = self.TICKET_URL.format(ticket_id=ticket_id)
+
+        if relocation:
+            title = (
+                f"Ooredoo - Relocation - {address} / Account #: {account} / "
+                f"{bandwidth}/ Ticket ID:{ticket_id}"
+            )
+            body = "\n".join(
+                [
+                    "Ooredoo - Relocation",
+                    f"Ticket ID : {ticket_id}",
+                    f"Ticket URL: {ticket_url}",
+                    f"Account # : {account}",
+                    f"Bandwidth : {bandwidth}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    "",
+                    f"New Address: {address}",
+                    f"HDC ONT FSAN (New):{(' ' + fsan) if fsan else ''}",
+                    "",
+                    "Old Address: <enter Old Address>",
+                    "Old SVLAN | CVLAN : <enter Old SVLAN | CVLAN>",
+                    "HDC ONT FSAN (Old): <enter HDC ONT FSAN (Old)>",
+                ]
+            )
+            return f"{title}\n\n{body}"
 
         service = self._service_label(text)  # e.g. "New Service"
-        ticket_url = self.TICKET_URL.format(ticket_id=ticket_id)
 
         title = (
             f"Ooredoo - {service} - {address} / Account #: {account} / "
@@ -358,7 +383,7 @@ class DhiraaguFormatter(BaseFormatter):
             field_after_label(text, "Apartment"),
         ) or None
 
-    def format(self, text: str, manual: dict | None = None) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         manual = manual or {}
         order_no = field_after_label(text, "Order number") or ""
         service_no = field_after_label(text, "Service number") or ""
@@ -375,9 +400,36 @@ class DhiraaguFormatter(BaseFormatter):
             field_after_label(text, "Apartment"),
         )
 
-        service = self._service_label(text)  # e.g. "New Service"
         url_id = manual_value(manual, "order_url_id", "Order URL ID")
         order_url = self.ORDER_URL.format(order_url_id=url_id)
+
+        if relocation:
+            title = (
+                f"Dhiraagu - Relocation - {address} / Service #: {service_no}/ "
+                f"{package}/ Order ID:{order_no}"
+            )
+            body = "\n".join(
+                [
+                    "Dhiraagu - Relocation",
+                    f"Order ID : {order_no}",
+                    f"Order URL: {order_url}",
+                    f"Service # : {service_no}",
+                    f"Service Profile : {package}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    "",
+                    f"New Address: {address}",
+                    f"New SVLAN / CVLAN: {svlan} / {cvlan}",
+                    "HDC ONT FSAN (New): <enter HDC ONT FSAN (New)>",
+                    "",
+                    "Old Address: <enter Old Address>",
+                    "Previous SVLAN / CVLAN: <enter Previous SVLAN / CVLAN>",
+                    "ONT FSAN (Old): <enter ONT FSAN (Old)>",
+                ]
+            )
+            return f"{title}\n\n{body}"
+
+        service = self._service_label(text)  # e.g. "New Service"
 
         title = (
             f"Dhiraagu - {service} - {address} / Service #: {service_no}/ "
@@ -442,12 +494,35 @@ class MedianetFormatter(BaseFormatter):
     def account_id_for_validation(self, text: str) -> Optional[str]:
         return self._contact(text)[1] or None
 
-    def format(self, text: str, manual: dict | None = None) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         ticket = field_after_label(text, "Service Request") or ""
 
         name, account, phone_raw, address_raw = self._contact(text)
         phone = local_phone(phone_raw)
         address = clean_building_code(address_raw)
+
+        if relocation:
+            title = (
+                f"Medianet - Relocation - {address} / Account #: {account}/ Ticket #:{ticket}"
+            )
+            body = "\n".join(
+                [
+                    "Medianet - Relocation",
+                    f"Ticket ID : {ticket}",
+                    f"Account # : {account}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    "",
+                    f"New Address: {address}",
+                    "HDC ONT FSAN (New): <enter HDC ONT FSAN (New)>",
+                    "",
+                    "Old Address: <enter Old Address>",
+                    "HDC ONT FSAN (Old): <enter HDC ONT FSAN (Old)>",
+                    "",
+                    "ONT Contract Status: Signed",
+                ]
+            )
+            return f"{title}\n\n{body}"
 
         service = self.SERVICE_LABEL
 

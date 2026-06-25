@@ -70,14 +70,17 @@ def manual_from_ticket(ticket) -> dict:
     return manual
 
 
-def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[dict] = None) -> dict:
+def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[dict] = None,
+                       relocation: bool = False) -> dict:
     """Format a raw dump into a standardized block.
 
-    Returns a dict: {ok, isp, text, missing, warnings, error}. ``ok`` is False
-    when there's no dump or the ISP couldn't be formatted.
+    Returns a dict: {ok, isp, text, missing, warnings, relocation_possible,
+    relocation, error}. ``ok`` is False when there's no dump or the ISP couldn't be
+    formatted. When ``relocation`` is True the relocation template is used.
     """
     if not raw_dump or not raw_dump.strip():
         return {"ok": False, "isp": None, "text": "", "missing": [], "warnings": [],
+                "relocation_possible": False, "relocation": False,
                 "error": "No captured portal data for this ticket yet."}
 
     try:
@@ -98,10 +101,12 @@ def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[di
         raw, manual or {},
         address_rules=_load_address_rules(),
         znuny=_get_znuny(),
+        relocation=relocation,
     )
     if not result.detected:
         return {"ok": False, "isp": None, "text": result.text or "", "missing": [],
-                "warnings": [], "error": "Could not detect the ISP from the captured data."}
+                "warnings": [], "relocation_possible": False, "relocation": False,
+                "error": "Could not detect the ISP from the captured data."}
 
     # Rich HTML (bold heading + clickable URLs), same as the standalone formatter,
     # so the Copy button can put rich text on the clipboard.
@@ -118,5 +123,7 @@ def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[di
         "html": html,
         "missing": list(result.missing_labels()),
         "warnings": list(result.warnings),
+        "relocation_possible": result.relocation_possible,
+        "relocation": result.relocation,
         "error": None,
     }

@@ -28,6 +28,10 @@ class FormatResult:
     # expected format for its zone) and the values to highlight in the output.
     warnings: tuple[str, ...] = ()
     flagged: tuple[str, ...] = ()
+    # True when the account already exists in Znuny — the ticket can be reformatted
+    # as a Relocation. ``relocation`` is True when it currently IS so formatted.
+    relocation_possible: bool = False
+    relocation: bool = False
 
     @property
     def detected(self) -> bool:
@@ -55,6 +59,7 @@ class TicketModel:
         manual: Optional[dict] = None,
         address_rules: Optional[dict] = None,
         znuny=None,
+        relocation: bool = False,
     ) -> FormatResult:
         raw = (raw or "").strip()
         manual = manual or {}
@@ -67,8 +72,8 @@ class TicketModel:
             logger.debug("No ISP matched the pasted data (%d chars)", len(raw))
             return FormatResult(isp=None, text="Could not detect the ISP from the pasted data.")
 
-        logger.debug("Detected ISP: %s", fmt.name)
-        text = fmt.format(raw, manual)
+        logger.debug("Detected ISP: %s (relocation=%s)", fmt.name, relocation)
+        text = fmt.format(raw, manual, relocation=relocation)
         missing = tuple(
             key for key, _ in fmt.manual_fields if not manual.get(key, "").strip()
         )
@@ -77,6 +82,7 @@ class TicketModel:
         # Rules shape per ISP: {"atoll": [...], "zones": {zone: [patterns]}}.
         warnings: list[str] = []
         flagged: list[str] = []
+        relocation_possible = False
         isp_rules = (address_rules or {}).get(fmt.name) or {}
 
         # Atoll check (e.g. Ooredoo Atoll must be "Kaafu").
@@ -123,6 +129,7 @@ class TicketModel:
 
             account_id = (fmt.account_id_for_validation(raw) or "").strip()
             if account_id and znuny.account_exists(account_id):
+                relocation_possible = True
                 msg = f"Possible relocation: account {account_id} already exists in Znuny"
                 logger.info("Znuny account check for %s: %s", fmt.name, msg)
                 warnings.append(msg)
@@ -136,4 +143,6 @@ class TicketModel:
             missing_keys=missing,
             warnings=tuple(warnings),
             flagged=tuple(flagged),
+            relocation_possible=relocation_possible,
+            relocation=relocation,
         )

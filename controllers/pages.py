@@ -47,22 +47,28 @@ async def tickets_page(request: Request):
 
 
 @router.get("/tickets/{ticket_id}/format", response_class=HTMLResponse)
-async def ticket_format_page(request: Request, ticket_id: int):
+async def ticket_format_page(request: Request, ticket_id: int, relocation: bool = False):
     """Standalone page (opened in a new tab) showing the standardized, formatted
-    ticket block for an ISP ticket, generated from its captured portal dump."""
+    ticket block for an ISP ticket, generated from its captured portal dump.
+
+    ``?relocation=1`` renders the Relocation variant (offered when the account
+    already exists in Znuny)."""
     db = Database()
     ticket = db.get_ticket_by_id(ticket_id)
     if not ticket:
         result = {"ok": False, "isp": None, "text": "", "missing": [], "warnings": [],
+                  "relocation_possible": False, "relocation": False,
                   "error": "Ticket not found."}
         meta = {"ticket_id": ticket_id, "portal": ""}
     else:
-        result = format_ticket_dump(ticket.raw_dump, ticket.portal, manual_from_ticket(ticket))
+        result = format_ticket_dump(
+            ticket.raw_dump, ticket.portal, manual_from_ticket(ticket), relocation=relocation
+        )
         meta = {"ticket_id": ticket.ticket_id, "portal": ticket.portal,
                 "customer_name": ticket.customer_name or ""}
     return templates.TemplateResponse(
         "ticket_format.html",
-        {"request": request, "result": result, "meta": meta}
+        {"request": request, "result": result, "meta": meta, "db_id": ticket_id}
     )
 
 

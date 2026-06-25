@@ -26,12 +26,30 @@
             <small class="text-muted">
                 {{ meta.portal|capitalize }} · {{ meta.ticket_id }}{% if meta.customer_name %} · {{ meta.customer_name }}{% endif %}
                 {% if result.isp %} · <span class="badge bg-primary">{{ result.isp }}</span>{% endif %}
+                {% if result.relocation %} · <span class="badge bg-warning text-dark">Relocation</span>{% endif %}
             </small>
         </div>
-        <button class="btn btn-success btn-sm" id="copyBtn" {% if not result.ok %}disabled{% endif %}>
-            <i class="bi bi-clipboard me-1"></i>Copy
-        </button>
+        <div class="d-flex gap-2">
+            {% if result.relocation %}
+                <a class="btn btn-outline-secondary btn-sm" href="/tickets/{{ db_id }}/format">
+                    <i class="bi bi-arrow-left me-1"></i>New Service
+                </a>
+            {% elif result.relocation_possible %}
+                <a class="btn btn-warning btn-sm" href="/tickets/{{ db_id }}/format?relocation=1">
+                    <i class="bi bi-box-arrow-right me-1"></i>Convert to Relocation
+                </a>
+            {% endif %}
+            <button class="btn btn-success btn-sm" id="copyBtn" {% if not result.ok %}disabled{% endif %}>
+                <i class="bi bi-clipboard me-1"></i>Copy
+            </button>
+        </div>
     </div>
+    {% if result.relocation_possible and not result.relocation %}
+        <div class="alert alert-warning py-2">
+            <i class="bi bi-signpost-split me-1"></i>This account already exists in Znuny — this may be a
+            <strong>relocation</strong>. Use <em>Convert to Relocation</em> to switch the format.
+        </div>
+    {% endif %}
 
     {% if not result.ok %}
         <div class="alert alert-warning">
