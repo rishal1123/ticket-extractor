@@ -596,26 +596,27 @@ class RolFormatter(BaseFormatter):
         return self._display_id(text) or None
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
-        display_id = self._display_id(text)
-        internal_id = self._internal_id(text)
-        name_raw, phone_raw, address, package = self._posted_fields(text)
+        account = self._display_id(text)        # ROL###### reference -> Account #
+        ticket_id = self._internal_id(text)     # Kayako TICKET ID -> Ticket ID + URL
+        name_raw, phone_raw, address, bandwidth = self._posted_fields(text)
         name = dedupe_name(name_raw)
         phone = local_phone(phone_raw)
-        ticket_url = self.TICKET_URL.format(internal_id=internal_id) if internal_id else ""
+        ticket_url = self.TICKET_URL.format(internal_id=ticket_id) if ticket_id else ""
 
         if relocation:
             title = (
-                f"ROL - Relocation - {address} / {package}/ Ticket ID:{display_id}"
+                f"ROL - Relocation - {address} / Account #: {account} / "
+                f"{bandwidth}/ Ticket ID:{ticket_id}"
             )
             body = "\n".join(
                 [
                     "ROL - Relocation",
-                    f"Ticket ID : {display_id}",
+                    f"Ticket ID : {ticket_id}",
                     f"Ticket URL : {ticket_url}",
-                    "Service # : <enter Service #>",
+                    f"Account # : {account}",
+                    f"Bandwidth : {bandwidth}",
                     f"Customer Name: {name}",
                     f"Phone : {phone}",
-                    f"Service Package : {package}",
                     "",
                     f"New Address: {address}",
                     "",
@@ -631,17 +632,18 @@ class RolFormatter(BaseFormatter):
 
         service = self._service_label(text)
         title = (
-            f"ROL - {service} - {address} / {package}/ Ticket ID:{display_id}"
+            f"ROL - {service} - {address} / Account #: {account} / "
+            f"{bandwidth}/ Ticket ID:{ticket_id}"
         )
         body = "\n".join(
             [
                 f"ROL - {service}",
-                f"Ticket ID : {display_id}",
+                f"Ticket ID : {ticket_id}",
                 f"Ticket URL : {ticket_url}",
-                "Service # : <enter Service #>",
+                f"Account # : {account}",
+                f"Bandwidth : {bandwidth}",
                 f"Customer Name: {name}",
                 f"Phone : {phone}",
-                f"Service Package : {package}",
                 f"Address: {address}",
                 "",
                 "Other info:",
