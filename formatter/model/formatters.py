@@ -566,16 +566,16 @@ class RolFormatter(BaseFormatter):
     def _service_label(self, text: str) -> str:
         return (field_after_label(text, "TYPE") or "").strip() or "New Connection"
 
-    def _posted_fields(self, text: str) -> tuple[str, str, str, str]:
+    def _posted_fields(self, text: str) -> tuple[str, str, str, str, str]:
         """Parse the original customer post block (after 'Posted on:', up to the
-        footer) into (name, phone, address, package). The ROL reference line is
-        dropped; the remaining lines are, in order: name, phone, address building
-        code, [area], package (last)."""
+        footer) into (name, phone, building, area, package). The ROL reference line
+        is dropped; the remaining lines are, in order: name, phone, building code,
+        [area], package (last)."""
         lines = _lines(text)
         start = next((i + 1 for i, ln in enumerate(lines)
                       if ln.lower().startswith("posted on:")), None)
         if start is None:
-            return "", "", "", ""
+            return "", "", "", "", ""
         block: list[str] = []
         for ln in lines[start:]:
             low = ln.lower()
@@ -585,11 +585,15 @@ class RolFormatter(BaseFormatter):
                 block.append(ln)
         name = block[0] if len(block) > 0 else ""
         phone = block[1] if len(block) > 1 else ""
-        address = block[2] if len(block) > 2 else ""
+        building = block[2] if len(block) > 2 else ""
         package = block[-1] if len(block) > 3 else ""
-        return name, phone, address, package
+        # The area (e.g. "Hulhumale Phase 2") sits between building and package when
+        # the block has an extra line.
+        area = block[3] if len(block) >= 5 else ""
+        return name, phone, building, area, package
 
     def address_id_for_validation(self, text: str) -> Optional[str]:
+        # Just the building code — the area is for display, not the Znuny CustomerID.
         return self._posted_fields(text)[2] or None
 
     def account_id_for_validation(self, text: str) -> Optional[str]:
@@ -598,9 +602,11 @@ class RolFormatter(BaseFormatter):
     def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         account = self._display_id(text)        # ROL###### reference -> Account #
         ticket_id = self._internal_id(text)     # Kayako TICKET ID -> Ticket ID + URL
-        name_raw, phone_raw, address, bandwidth = self._posted_fields(text)
+        name_raw, phone_raw, building, area, bandwidth = self._posted_fields(text)
         name = dedupe_name(name_raw)
         phone = local_phone(phone_raw)
+        # Display the building code with the area appended, e.g. "UD-06-15-05, Hulhumale Phase 2".
+        address = f"{building}, {area}" if area else building
         ticket_url = self.TICKET_URL.format(internal_id=ticket_id) if ticket_id else ""
 
         if relocation:
