@@ -21,16 +21,18 @@ echo "Checking database (init + migrations)..."
 python -c "from database import Database; Database(); print('Database ready')"
 
 # One-time migration: clear stale Dhiraagu raw_dumps captured before the
-# Filament form-field fix. The old inner_text() capture stored labels with no
-# values, so the formatter left every field blank (only the URL filled). New
-# code re-captures a clean dump, but only for tickets whose raw_dump is empty —
-# so the broken ones must be cleared once. Guarded by an app_settings flag so a
-# restart never wipes freshly re-captured dumps.
+# detail-page URL fix. Captures hit /orders/hdc/{service_num} (wrong key — the
+# page is keyed by the order number), getting a blank page, so the formatter
+# left every field blank (only the URL filled). New code navigates the real
+# portal_url and re-captures a clean dump, but only for tickets whose raw_dump
+# is empty — so the broken ones must be cleared. Bumped to v2 to force another
+# clear for any dump re-captured from the wrong URL under the v1 flag. Guarded
+# by an app_settings flag so a restart never wipes freshly re-captured dumps.
 echo "Checking one-time Dhiraagu raw_dump migration..."
 python - <<'PY'
 from config import Config
 import sqlite3
-FLAG = "migration_clear_dhiraagu_dumps_v1"
+FLAG = "migration_clear_dhiraagu_dumps_v2"
 conn = sqlite3.connect(Config.DATABASE_PATH)
 try:
     cur = conn.cursor()
