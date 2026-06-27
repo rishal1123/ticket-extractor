@@ -21,18 +21,21 @@ echo "Checking database (init + migrations)..."
 python -c "from database import Database; Database(); print('Database ready')"
 
 # One-time migration: clear stale Dhiraagu raw_dumps captured before the
-# detail-page URL fix. Captures hit /orders/hdc/{service_num} (wrong key — the
-# page is keyed by the order number), getting a blank page, so the formatter
-# left every field blank (only the URL filled). New code navigates the real
-# portal_url and re-captures a clean dump, but only for tickets whose raw_dump
-# is empty — so the broken ones must be cleared. Bumped to v2 to force another
-# clear for any dump re-captured from the wrong URL under the v1 flag. Guarded
-# by an app_settings flag so a restart never wipes freshly re-captured dumps.
+# Filament form-field capture fix. The order detail page is a FORM — its field
+# values live in <input>/<select> controls, which page.inner_text("body") does
+# NOT return (it yields only text nodes = the LABELS). So v2-era dumps were
+# label-only ("Order number *\nService number *\n..."), and the formatter paired
+# each label with the next label ("Customer Name: Contact number *"). The new
+# DhiraaguExtractor.capture_raw_dump() reads each control's value (selects use
+# their selected option text) and emits label+value lines. Re-capture only fills
+# tickets whose raw_dump is empty, so the broken v2 dumps must be cleared. Bumped
+# to v3 to force that clear. Guarded by an app_settings flag so a restart never
+# wipes freshly re-captured dumps.
 echo "Checking one-time Dhiraagu raw_dump migration..."
 python - <<'PY'
 from config import Config
 import sqlite3
-FLAG = "migration_clear_dhiraagu_dumps_v2"
+FLAG = "migration_clear_dhiraagu_dumps_v3"
 conn = sqlite3.connect(Config.DATABASE_PATH)
 try:
     cur = conn.cursor()
@@ -44,7 +47,7 @@ try:
         cleared = cur.rowcount
         cur.execute(
             "INSERT OR REPLACE INTO app_settings (key, value, description) VALUES (?, ?, ?)",
-            (FLAG, "1", "Cleared Dhiraagu raw_dumps for the Filament form-field capture fix"),
+            (FLAG, "1", "Cleared Dhiraagu raw_dumps for the Filament form-field value capture fix (v3)"),
         )
         conn.commit()
         print(f"Cleared raw_dump on {cleared} Dhiraagu ticket(s) for re-capture")

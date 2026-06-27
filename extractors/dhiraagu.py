@@ -5,6 +5,39 @@ from models.ticket import Ticket
 from config import Config
 
 
+# JS run on the order detail page to read every Filament form control's
+# label + current value. The page is a FORM: field values live in
+# <input>/<select> elements, whose values page.inner_text() does NOT return
+# (it only yields text nodes = the labels). Selects report their selected
+# option's display text. Returns DOM-ordered {label, value} pairs.
+_DETAIL_FIELDS_JS = r"""
+() => {
+  const out = [];
+  document.querySelectorAll("[id^='data.']").forEach(el => {
+    const tag = el.tagName;
+    if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+    let label = '';
+    const id = el.id;
+    let lab = id ? document.querySelector(`label[for='${CSS.escape(id)}']`) : null;
+    if (!lab) {
+      const wrap = el.closest('[class*="field-wrp"], .filament-forms-field-wrapper');
+      if (wrap) lab = wrap.querySelector('label');
+    }
+    if (lab) label = lab.innerText.trim();
+    let value = '';
+    if (tag === 'SELECT') {
+      const opt = el.options[el.selectedIndex];
+      value = opt ? opt.text.trim() : '';
+    } else {
+      value = el.value || '';
+    }
+    if (label) out.push({label, value: value.trim()});
+  });
+  return out;
+}
+"""
+
+
 class DhiraaguExtractor(BaseExtractor):
     """Extractor for Dhiraagu portal (AFAS system - Filament PHP)."""
 
@@ -75,6 +108,50 @@ class DhiraaguExtractor(BaseExtractor):
         if order_no:
             return f"{self.ORDERS_PAGE_URL}/{order_no}?activeRelationManager=notes"
         return None
+
+    def capture_raw_dump(self, ticket) -> "str | None":
+        """Capture a value-aware dump of the order detail page for the formatter.
+
+        Dhiraagu's detail page is a Filament FORM: the field values
+        (customer name, building, svlan, …) live in <input>/<select> controls,
+        which ``page.inner_text("body")`` does NOT return — it only yields text
+        nodes, i.e. the field LABELS. The base capture would therefore feed the
+        formatter label-only text, and ``field_after_label`` would pair each
+        label with the next label ("Customer Name: Contact number *").
+
+        Fix: emit each labeled ``data.*`` control as ``label`` + ``value`` lines
+        (selects use their selected option text), then append the page body text
+        so the Notes history is still captured. Best-effort: returns None on any
+        problem. Assumes an active, logged-in browser for this portal.
+        """
+        url = self.detail_url(ticket)
+        if not url or not self.browser or not self.browser.page:
+            return None
+        try:
+            self.navigate_to(url)
+            time.sleep(2)
+            page = self.browser.page
+            try:
+                page.wait_for_selector("[id^='data.']", timeout=5000)
+            except Exception:
+                self.logger.debug("Detail form fields not found within timeout for raw dump")
+            lines = []
+            try:
+                for pair in page.evaluate(_DETAIL_FIELDS_JS):
+                    label = (pair.get("label") or "").strip()
+                    if not label:
+                        continue
+                    lines.append(label)
+                    lines.append((pair.get("value") or "").strip())
+            except Exception as e:
+                self.logger.debug(f"Could not read detail form values for raw dump: {e}")
+            body = (page.inner_text("body") or "").strip()
+            field_block = "\n".join(lines)
+            dump = (field_block + ("\n" + body if body else "")).strip()
+            return dump or None
+        except Exception as e:
+            self.logger.warning(f"capture_raw_dump failed for {ticket.ticket_id}: {e}")
+            return None
 
     def is_logged_in(self) -> bool:
         """Check if currently logged in to Dhiraagu portal.
