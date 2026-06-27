@@ -20,6 +20,36 @@ fi
 echo "Checking database (init + migrations)..."
 python -c "from database import Database; Database(); print('Database ready')"
 
+# One-time migration: clear stale Dhiraagu raw_dumps captured before the
+# Filament form-field fix. The old inner_text() capture stored labels with no
+# values, so the formatter left every field blank (only the URL filled). New
+# code re-captures a clean dump, but only for tickets whose raw_dump is empty —
+# so the broken ones must be cleared once. Guarded by an app_settings flag so a
+# restart never wipes freshly re-captured dumps.
+echo "Checking one-time Dhiraagu raw_dump migration..."
+python - <<'PY'
+from config import Config
+import sqlite3
+FLAG = "migration_clear_dhiraagu_dumps_v1"
+conn = sqlite3.connect(Config.DATABASE_PATH)
+try:
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM app_settings WHERE key = ?", (FLAG,))
+    if cur.fetchone():
+        print("Dhiraagu raw_dump migration already applied; skipping")
+    else:
+        cur.execute("UPDATE tickets SET raw_dump = NULL WHERE portal = 'dhiraagu'")
+        cleared = cur.rowcount
+        cur.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, description) VALUES (?, ?, ?)",
+            (FLAG, "1", "Cleared Dhiraagu raw_dumps for the Filament form-field capture fix"),
+        )
+        conn.commit()
+        print(f"Cleared raw_dump on {cleared} Dhiraagu ticket(s) for re-capture")
+finally:
+    conn.close()
+PY
+
 # Remove stale Chrome profile locks (SingletonLock/SingletonCookie/SingletonSocket)
 # left in the persistent browser sessions by a previous container. These live on
 # the named volume, so on a container RECREATE the new container has a different

@@ -371,6 +371,69 @@ class DhiraaguExtractor(BaseExtractor):
 
         return data
 
+    # data.* field-id suffix -> exact label the ticket formatter expects. Suffixes
+    # not listed here are humanized (snake_case -> Title Case), which already lines
+    # up with the rest of the formatter's labels (Svlan, Cvlan, Service package,
+    # HDC ONT FSAN, Customer name, Contact number, Floor, Apartment, ...).
+    _DUMP_FIELD_LABELS = {"building": "Building/Tower"}
+
+    def capture_raw_dump(self, ticket) -> str | None:
+        """Build the formatter dump from the detail-page form field VALUES.
+
+        Dhiraagu's detail page is a Filament form: field values live in
+        ``<input value="...">`` attributes, which ``inner_text("body")`` does NOT
+        include. The base implementation would therefore emit labels with no
+        values, so the formatter (which reads "label then next line = value") fills
+        only the URL and leaves every other field blank. Instead, read the form
+        field values directly and emit a clean label/value dump.
+        """
+        url = self.detail_url(ticket)
+        if not url or not self.browser or not self.browser.page:
+            return None
+        try:
+            self.navigate_to(url)
+            time.sleep(2)
+            try:
+                self.browser.page.wait_for_selector("[id^='data.']", timeout=5000)
+            except Exception:
+                self.logger.debug("Dhiraagu detail form fields not found within timeout")
+
+            # Read every Filament form field's value (inputs/selects/textareas).
+            fields = self.browser.page.eval_on_selector_all(
+                "[id^='data.']",
+                """els => els.map(el => ({
+                    id: el.id,
+                    value: (el.value != null && el.value !== '')
+                        ? el.value : (el.textContent || '').trim()
+                }))""",
+            ) or []
+
+            values: dict[str, str] = {}
+            for f in fields:
+                suffix = (f.get("id") or "").split("data.", 1)[-1]
+                if not suffix:
+                    continue
+                label = self._DUMP_FIELD_LABELS.get(suffix, suffix.replace("_", " ").title())
+                val = (f.get("value") or "").strip()
+                # Keep the first non-empty value seen for a label.
+                if val and not values.get(label):
+                    values[label] = val
+
+            # Ensure the row-known fields are present even if the form omits them.
+            for label, fallback in (
+                ("Order type", ticket.ticket_type),
+                ("Order number", ticket.account),
+                ("Service number", ticket.ticket_id),
+            ):
+                if not values.get(label) and (fallback or "").strip():
+                    values[label] = fallback.strip()
+
+            dump = "\n\n".join(f"{label}\n\n{val}" for label, val in values.items() if val)
+            return dump.strip() or None
+        except Exception as e:
+            self.logger.warning(f"capture_raw_dump failed for {ticket.ticket_id}: {e}")
+            return None
+
     def _parse_date(self, date_str: str):
         """Parse date string to datetime."""
         from datetime import datetime
