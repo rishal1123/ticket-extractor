@@ -431,12 +431,67 @@ class SchedulerService:
                      f"Cleared portal refs: {portals_cleared or 'none'}")
         return killed_pids
 
-    def _scheduled_browser_restart(self):
-        """Restart all browsers every 1 hour to prevent memory leaks and stale sessions."""
-        logger.info("Scheduled browser restart (every 1 hour) - nuking all browsers")
+    # Restart browsers only when extraction has been stale this long (minutes).
+    STALE_RESTART_MINUTES = 15
+
+    def _check_browser_staleness(self):
+        """Restart browsers only if extraction has been stale for >=15 minutes.
+
+        This is the ONLY thing that proactively restarts browsers. A healthy
+        extraction worker logs every portal each cycle (default 5 min), so a
+        hung browser blocks the cycle and lets every portal's last extraction
+        age past the threshold. We do NOT restart on a fixed timer, on memory
+        leaks, or for any other reason here.
+        """
         try:
             db = Database()
-            db.log_system("info", "scheduler", "Scheduled 1-hour browser restart initiated")
+
+            # No extraction is expected in these states, so an old timestamp is
+            # not "stale" — never restart because of them.
+            if not self._has_db_credentials():
+                return
+            if not self._is_within_operating_hours():
+                return
+            if not self._is_isp_extraction_enabled():
+                return
+
+            from extractors.base import BaseExtractor
+            paused = set(BaseExtractor.manual_cf_paused_portals())
+
+            last_per_portal = db.get_last_extraction_per_portal()
+            # Consider only portals we actually expect to be extracting now.
+            candidates = {
+                p: info for p, info in last_per_portal.items()
+                if p.lower() not in {q.lower() for q in paused}
+            }
+            if not candidates:
+                return  # nothing extracting yet (startup) or all paused
+
+            now = now_maldives()
+            # The worker runs all portals sequentially, so the freshest log
+            # reflects the pipeline as a whole. If even that is old, it's hung.
+            freshest_age_min = None
+            for info in candidates.values():
+                ts = self._parse_extracted_at(info.get("extracted_at"))
+                if ts is None:
+                    continue
+                age_min = (now - ts).total_seconds() / 60.0
+                if freshest_age_min is None or age_min < freshest_age_min:
+                    freshest_age_min = age_min
+
+            if freshest_age_min is None:
+                return  # couldn't parse any timestamp; don't restart blindly
+            if freshest_age_min < self.STALE_RESTART_MINUTES:
+                return  # extraction is fresh — nothing to do
+
+            logger.warning(
+                f"Extraction stale for {freshest_age_min:.0f} min "
+                f"(>= {self.STALE_RESTART_MINUTES}) - nuking all browsers"
+            )
+            db.log_system(
+                "warning", "scheduler",
+                f"Extraction stale {freshest_age_min:.0f} min - restarting browsers"
+            )
 
             killed = self._nuke_all_browsers()
 
@@ -449,10 +504,27 @@ class SchedulerService:
             self._znuny_sync_event.set()
 
             msg = f"Killed: {', '.join(killed)}" if killed else "No active browsers found"
-            logger.info(f"Scheduled browser restart complete - {msg}")
+            logger.info(f"Stale browser restart complete - {msg}")
             db.log_system("info", "scheduler", f"Browser restart complete - {msg}")
         except Exception as e:
-            logger.error(f"Scheduled browser restart failed: {e}")
+            logger.error(f"Browser staleness check failed: {e}")
+
+    @staticmethod
+    def _parse_extracted_at(value) -> Optional[datetime]:
+        """Parse an extraction_logs.extracted_at value into an MVT-aware datetime."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            try:
+                dt = datetime.fromisoformat(str(value).strip())
+            except ValueError:
+                return None
+        # Stored as MVT (now_maldives); assume MVT if no tzinfo present.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=MVT)
+        return dt
 
     def _check_and_restart_workers(self):
         """Check if worker threads are alive and restart dead ones."""
@@ -552,7 +624,8 @@ class SchedulerService:
         schedule.every(self._extraction_interval).minutes.do(self._extraction_job)
         schedule.every(self._znuny_sync_interval).minutes.do(self._znuny_sync_job)
         schedule.every(5).minutes.do(self._worker_health_check)
-        schedule.every(1).hours.do(self._scheduled_browser_restart)
+        # Restart browsers ONLY when extraction has been stale for >=15 min.
+        schedule.every(5).minutes.do(self._check_browser_staleness)
         # Every 1 min: link active ISP tickets to Znuny + refresh their last comment
         schedule.every(1).minutes.do(self._quick_isp_check)
         # Freeze the completed day's per-staff snapshot once at midnight (today is
