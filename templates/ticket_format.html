@@ -71,6 +71,18 @@
 </div>
 
 <script>
+// Make any URL in the displayed block clickable (opens in a new tab). The copy
+// button still reads innerText, so the underlying plain text is unchanged.
+(function linkifyBlock() {
+    const block = document.getElementById('block');
+    if (!block) return;
+    const esc = block.textContent.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    block.innerHTML = esc.replace(
+        /https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)]/g,
+        m => `<a href="${m}" target="_blank" rel="noopener noreferrer">${m}</a>`
+    );
+})();
+
 const btn = document.getElementById('copyBtn');
 
 function copiedFeedback() {
