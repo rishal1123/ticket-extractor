@@ -354,6 +354,29 @@ class ZnunyService:
                         created_by=article.created_by,
                         body=article.body,
                     )
+                    # Extract site visits. Most site-visit tickets (closed, non-OAN,
+                    # or never linked to an ISP ticket) only ever enter through this
+                    # creator-sweep path, so extraction must happen here too — not
+                    # just in the OAN-open / ISP-linked sync paths.
+                    site_visit = parse_site_visit_article(article, znuny_ticket_id)
+                    if site_visit:
+                        self.db.upsert_site_visit(
+                            znuny_ticket_id=site_visit.znuny_ticket_id,
+                            article_id=site_visit.article_number,
+                            site_type=site_visit.site_type,
+                            service_provider=site_visit.service_provider,
+                            scheduled_time=site_visit.scheduled_time,
+                            assigned_to=site_visit.assigned_to,
+                            visit_date=site_visit.visit_date,
+                            article_created_at=site_visit.article_created_at,
+                            znuny_url=details.znuny_url,
+                            address=site_visit.address,
+                            customer_name=site_visit.customer_name,
+                        )
+                        results["site_visits_extracted"] += 1
+
+                # Mark pending visits complete when a follow-up article exists.
+                self._complete_site_visits_by_followup(znuny_ticket_id, details.articles)
 
                 if not is_closed:
                     open_swept.add(znuny_ticket_id)
