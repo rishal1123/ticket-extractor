@@ -180,6 +180,34 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+            # Reopen tracking (migration): how many times a completed ticket has
+            # reappeared on the portal, and when it last did. created_at is reset
+            # to the new extraction time on each reopen (see _upsert_ticket_impl).
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN reopen_count INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN last_reopened_at DATETIME")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            # Reopen history table - one row per reopen event (a completed ticket
+            # reappearing on the ISP portal), so reopens can be tracked over time.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_reopens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id INTEGER NOT NULL,
+                    portal TEXT NOT NULL,
+                    portal_ticket_id TEXT NOT NULL,
+                    reopened_at DATETIME NOT NULL,
+                    previous_created_at DATETIME,
+                    previous_completed_at DATETIME,
+                    reopen_count INTEGER,
+                    FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+                )
+            """)
+
             # Znuny articles table - stores article/note history from Znuny
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS znuny_articles (
@@ -408,6 +436,11 @@ class Database:
             # Composite index for znuny_ticket_id lookups
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickets_znuny_ticket_id ON tickets(znuny_ticket_id)")
 
+            # ticket_reopens table
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ticket_reopens_ticket ON ticket_reopens(ticket_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ticket_reopens_reopened_at ON ticket_reopens(reopened_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ticket_reopens_portal ON ticket_reopens(portal)")
+
             # znuny_articles table
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_ticket ON znuny_articles(ticket_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_znuny_articles_created_by ON znuny_articles(created_by)")
@@ -474,7 +507,8 @@ class Database:
 
             # Check if ticket exists
             cursor.execute(
-                "SELECT id, notes FROM tickets WHERE portal = ? AND ticket_id = ?",
+                "SELECT id, notes, status, completed_at, created_at, reopen_count "
+                "FROM tickets WHERE portal = ? AND ticket_id = ?",
                 (ticket.portal, ticket.ticket_id)
             )
             existing = cursor.fetchone()
@@ -483,39 +517,94 @@ class Database:
                 existing_id = existing["id"]
                 existing_notes = existing["notes"]
 
-                # Update existing ticket
-                cursor.execute("""
-                    UPDATE tickets SET
-                        address = ?,
-                        account = ?,
-                        customer_name = ?,
-                        ticket_type = ?,
-                        portal_created_at = ?,
-                        service_type = ?,
-                        status = ?,
-                        kpi = ?,
-                        notes = ?,
-                        portal_url = COALESCE(?, portal_url),
-                        raw_dump = COALESCE(?, raw_dump),
-                        updated_at = ?,
-                        completed_at = ?
-                    WHERE id = ?
-                """, (
-                    ticket.address,
-                    ticket.account,
-                    ticket.customer_name,
-                    ticket.ticket_type,
-                    ticket.portal_created_at,
-                    ticket.service_type,
-                    ticket.status,
-                    ticket.kpi,
-                    ticket.notes,
-                    ticket.portal_url,
-                    ticket.raw_dump,
-                    now_maldives(),
-                    ticket.completed_at,  # Set completed_at if provided
-                    existing_id
-                ))
+                # Reopen detection: the row was completed (disappeared from the
+                # portal) but the ticket is now being extracted again as active.
+                # Reset the extraction timestamp (created_at) to now so time-to-
+                # create restarts from this reappearance, and log the event.
+                was_completed = (
+                    existing["completed_at"] is not None
+                    or (existing["status"] or "") == "Complete"
+                )
+                is_reopen = was_completed and ticket.completed_at is None
+                now = now_maldives()
+
+                if is_reopen:
+                    new_reopen_count = (existing["reopen_count"] or 0) + 1
+                    # Update existing ticket; reset created_at to the new
+                    # extraction time and bump reopen tracking.
+                    cursor.execute("""
+                        UPDATE tickets SET
+                            address = ?,
+                            account = ?,
+                            customer_name = ?,
+                            ticket_type = ?,
+                            portal_created_at = ?,
+                            service_type = ?,
+                            status = ?,
+                            kpi = ?,
+                            notes = ?,
+                            portal_url = COALESCE(?, portal_url),
+                            raw_dump = COALESCE(?, raw_dump),
+                            created_at = ?,
+                            updated_at = ?,
+                            completed_at = NULL,
+                            reopen_count = ?,
+                            last_reopened_at = ?
+                        WHERE id = ?
+                    """, (
+                        ticket.address, ticket.account, ticket.customer_name,
+                        ticket.ticket_type, ticket.portal_created_at, ticket.service_type,
+                        ticket.status, ticket.kpi, ticket.notes, ticket.portal_url,
+                        ticket.raw_dump, now, now, new_reopen_count, now, existing_id
+                    ))
+                    # Record the reopen event for tracking.
+                    cursor.execute("""
+                        INSERT INTO ticket_reopens
+                            (ticket_id, portal, portal_ticket_id, reopened_at,
+                             previous_created_at, previous_completed_at, reopen_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        existing_id, ticket.portal, ticket.ticket_id, now,
+                        existing["created_at"], existing["completed_at"], new_reopen_count
+                    ))
+                    logger.info(
+                        f"Ticket reopened: {ticket.portal}/{ticket.ticket_id} "
+                        f"(reopen #{new_reopen_count}); extraction time reset"
+                    )
+                else:
+                    # Update existing ticket
+                    cursor.execute("""
+                        UPDATE tickets SET
+                            address = ?,
+                            account = ?,
+                            customer_name = ?,
+                            ticket_type = ?,
+                            portal_created_at = ?,
+                            service_type = ?,
+                            status = ?,
+                            kpi = ?,
+                            notes = ?,
+                            portal_url = COALESCE(?, portal_url),
+                            raw_dump = COALESCE(?, raw_dump),
+                            updated_at = ?,
+                            completed_at = ?
+                        WHERE id = ?
+                    """, (
+                        ticket.address,
+                        ticket.account,
+                        ticket.customer_name,
+                        ticket.ticket_type,
+                        ticket.portal_created_at,
+                        ticket.service_type,
+                        ticket.status,
+                        ticket.kpi,
+                        ticket.notes,
+                        ticket.portal_url,
+                        ticket.raw_dump,
+                        now,
+                        ticket.completed_at,  # Set completed_at if provided
+                        existing_id
+                    ))
 
                 # Track note changes
                 if ticket.notes and ticket.notes != existing_notes:
@@ -1002,11 +1091,18 @@ class Database:
             }
 
     def get_active_ticket_ids(self, portal: str) -> set[str]:
-        """Get all ticket IDs for a portal that are not marked as complete."""
+        """Get all ticket IDs for a portal that are still active (not completed).
+
+        Keyed on completed_at (not status) so that any completed ticket — whether
+        'Complete' or later flagged 'Rejected on Portal' (which keeps completed_at
+        set) — counts as inactive. That way, if such a ticket reappears on the
+        portal it is treated as new in run() and routed through upsert_ticket,
+        which detects the reopen and resets the extraction time.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT ticket_id FROM tickets WHERE portal = ? AND status != 'Complete'",
+                "SELECT ticket_id FROM tickets WHERE portal = ? AND completed_at IS NULL",
                 (portal,)
             )
             return {row["ticket_id"] for row in cursor.fetchall()}
@@ -1089,6 +1185,49 @@ class Database:
             if count > 0:
                 logger.info(f"Marked {count} tickets as complete for {portal}")
             return count
+
+    def get_reopened_tickets(self, portal: str = None, days: int = None,
+                             limit: int = 200, offset: int = 0) -> dict:
+        """List reopen events (a completed ISP ticket reappearing on the portal),
+        joined with current ticket info. Returns {total, items}.
+
+        Args:
+            portal: optional portal filter
+            days: optional window (only reopens within the last N days)
+            limit/offset: pagination
+        """
+        conditions = []
+        params = []
+        if portal:
+            conditions.append("r.portal = ?")
+            params.append(portal)
+        if days:
+            cutoff = (now_maldives() - timedelta(days=days)).isoformat()
+            conditions.append("r.reopened_at >= ?")
+            params.append(cutoff)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT COUNT(*) AS c FROM ticket_reopens r {where}", params)
+            total = cursor.fetchone()["c"]
+
+            cursor.execute(f"""
+                SELECT r.id, r.ticket_id, r.portal, r.portal_ticket_id,
+                       r.reopened_at, r.previous_created_at, r.previous_completed_at,
+                       r.reopen_count,
+                       t.customer_name, t.address, t.account, t.ticket_type,
+                       t.status, t.in_znuny, t.znuny_ticket_id, t.znuny_url,
+                       t.portal_url, t.completed_at AS current_completed_at
+                FROM ticket_reopens r
+                LEFT JOIN tickets t ON t.id = r.ticket_id
+                {where}
+                ORDER BY r.reopened_at DESC
+                LIMIT ? OFFSET ?
+            """, params + [limit, offset])
+            items = [dict(row) for row in cursor.fetchall()]
+
+        return {"total": total, "items": items}
 
     def log_extraction(self, portal: str, status: str, tickets_found: int = 0,
                        tickets_new: int = 0, tickets_updated: int = 0,
@@ -2490,7 +2629,9 @@ class Database:
             raw_dump=row["raw_dump"] if "raw_dump" in keys else None,
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
-            completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
+            completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            reopen_count=row["reopen_count"] if "reopen_count" in keys and row["reopen_count"] is not None else 0,
+            last_reopened_at=datetime.fromisoformat(row["last_reopened_at"]) if "last_reopened_at" in keys and row["last_reopened_at"] else None
         )
 
     # ==================== System Logs ====================

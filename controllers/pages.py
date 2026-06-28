@@ -108,6 +108,15 @@ async def znuny_tickets_page(request: Request):
     )
 
 
+@router.get("/reopened", response_class=HTMLResponse)
+async def reopened_page(request: Request):
+    """Render the reopened tickets tracking page."""
+    return templates.TemplateResponse(
+        "reopened.html",
+        {"request": request, "active_page": "reopened"}
+    )
+
+
 @router.get("/reports", response_class=HTMLResponse)
 async def reports_page(request: Request):
     """Render the reports page."""

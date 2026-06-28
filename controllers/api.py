@@ -321,6 +321,21 @@ async def get_articles(
     return JSONResponse(content=result)
 
 
+@router.get("/reopened-tickets")
+@handle_errors("get reopened tickets")
+async def get_reopened_tickets(
+    portal: Optional[str] = None,
+    days: Optional[int] = None,
+    limit: int = Query(default=100, le=500),
+    offset: int = 0,
+    db: Database = Depends(get_db)
+):
+    """List reopen events: ISP tickets that were completed and then reappeared on
+    the portal. Each reopen resets the ticket's extraction time (created_at)."""
+    result = db.get_reopened_tickets(portal=portal, days=days, limit=limit, offset=offset)
+    return JSONResponse(content=result)
+
+
 @router.get("/tickets/{ticket_id}/site-visits")
 @handle_errors("get site visits")
 async def get_ticket_site_visits(ticket_id: int, db: Database = Depends(get_db)):

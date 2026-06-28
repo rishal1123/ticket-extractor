@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}Reopened Tickets - Ticket Extractor{% endblock %}
+{% block nav_icon %}arrow-repeat{% endblock %}
+{% block nav_title %}Reopened Tickets{% endblock %}
+{% block nav_title_short %}Reopened{% endblock %}
+
+{% block extra_css %}
+.stat-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+.reopen-row { cursor: pointer; transition: background-color 0.2s; }
+.reopen-row:hover { background-color: #fff3e0 !important; }
+.reopen-count-badge {
+    background-color: rgba(231, 76, 60, 0.15);
+    color: #e74c3c;
+    font-family: monospace;
+}
+.quick-filter-btn { border-radius: 6px; font-size: 0.8rem; }
+.quick-filter-btn.active {
+    background-color: #fd7e14;
+    border-color: #fd7e14;
+    color: white;
+}
+@media (max-width: 768px) {
+    .stat-icon { width: 40px; height: 40px; font-size: 1rem; }
+}
+{% endblock %}
+
+{% block content %}
+<!-- Summary Cards -->
+<div class="row mb-3 g-2">
+    <div class="col-6 col-md-4">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon me-2 me-md-3" style="background-color: rgba(253, 126, 20, 0.1); color: #fd7e14;">
+                    <i class="bi bi-arrow-repeat"></i>
+                </div>
+                <div>
+                    <div class="stat-value" id="totalReopens">0</div>
+                    <div class="text-muted small">Reopen Events</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-warning bg-opacity-10 text-warning me-2 me-md-3">
+                    <i class="bi bi-ticket-detailed"></i>
+                </div>
+                <div>
+                    <div class="stat-value" id="affectedTickets">0</div>
+                    <div class="text-muted small">Tickets Affected</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="stat-card card h-100">
+            <div class="card-body d-flex align-items-center p-2 p-md-3">
+                <div class="stat-icon bg-danger bg-opacity-10 text-danger me-2 me-md-3">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                </div>
+                <div>
+                    <div class="stat-value" id="maxReopens">0</div>
+                    <div class="text-muted small">Most Reopens (one ticket)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="row align-items-center g-2">
+            <div class="col-auto">
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn active" data-filter="today" onclick="setDaysFilter('today')">Today</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="week" onclick="setDaysFilter('week')">7 Days</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="month" onclick="setDaysFilter('month')">30 Days</button>
+                    <button type="button" class="btn btn-outline-secondary quick-filter-btn" data-filter="all" onclick="setDaysFilter('all')">All</button>
+                </div>
+            </div>
+            <div class="col-auto">
+                <select class="form-select form-select-sm" id="portalFilter" onchange="loadData()">
+                    <option value="">All Portals</option>
+                </select>
+            </div>
+            <div class="col-auto ms-auto">
+                <button class="btn btn-outline-secondary btn-sm" onclick="loadData()">
+                    <i class="bi bi-arrow-clockwise me-1"></i><span class="d-none d-sm-inline">Refresh</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reopens Table -->
+<div class="card">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-list-ul me-2"></i>Reopen Events</h6>
+        <span class="badge bg-warning text-dark" id="reopensCount">0</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Reopened At</th>
+                        <th>Portal</th>
+                        <th>Ticket ID</th>
+                        <th class="d-none d-md-table-cell">Customer</th>
+                        <th class="d-none d-lg-table-cell">Type</th>
+                        <th class="text-center">Reopen #</th>
+                        <th class="d-none d-md-table-cell">Prev. Completed</th>
+                        <th class="text-center d-none d-sm-table-cell">In Znuny</th>
+                        <th class="text-center">Links</th>
+                    </tr>
+                </thead>
+                <tbody id="reopensTableBody">
+                    <tr><td colspan="9" class="text-center text-muted py-4">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="card-footer py-2" id="pagination"></div>
+</div>
+{% endblock %}
+
+{% block script %}
+let currentDaysFilter = 'today';
+let currentPage = 1;
+const pageSize = 50;
+const DAYS_MAP = { today: 1, week: 7, month: 30, all: null };
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadPortals();
+    loadData();
+    setInterval(() => { if (!document.hidden) loadData(); }, 30000);
+});
+
+function setDaysFilter(filter) {
+    currentDaysFilter = filter;
+    currentPage = 1;
+    document.querySelectorAll('.quick-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    loadData();
+}
+
+async function loadPortals() {
+    try {
+        const res = await fetch('/api/portals');
+        const data = await res.json();
+        const select = document.getElementById('portalFilter');
+        const portals = data.portals || data || [];
+        portals.forEach(p => {
+            const name = p.name || p;
+            select.innerHTML += `<option value="${name}">${escapeHtml((p.label || name))}</option>`;
+        });
+    } catch (e) { console.error('Error loading portals:', e); }
+}
+
+function buildUrl() {
+    const days = DAYS_MAP[currentDaysFilter];
+    const portal = document.getElementById('portalFilter').value;
+    let url = `/api/reopened-tickets?limit=${pageSize}&offset=${(currentPage - 1) * pageSize}`;
+    if (days) url += `&days=${days}`;
+    if (portal) url += `&portal=${encodeURIComponent(portal)}`;
+    return url;
+}
+
+async function loadData() {
+    try {
+        const res = await fetch(buildUrl());
+        const data = await res.json();
+        const items = data.items || [];
+
+        document.getElementById('reopensCount').textContent = data.total || 0;
+        document.getElementById('totalReopens').textContent = data.total || 0;
+
+        // Affected tickets + max reopen count from the current page's items.
+        const uniqueTickets = new Set(items.map(i => i.ticket_id));
+        document.getElementById('affectedTickets').textContent = uniqueTickets.size;
+        const maxReopen = items.reduce((m, i) => Math.max(m, i.reopen_count || 0), 0);
+        document.getElementById('maxReopens').textContent = maxReopen;
+
+        const tbody = document.getElementById('reopensTableBody');
+        if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No reopened tickets in this period</td></tr>';
+            document.getElementById('pagination').innerHTML = '';
+            return;
+        }
+
+        tbody.innerHTML = items.map(i => {
+            const portalBadge = `<span class="badge badge-portal badge-${(i.portal || '').toLowerCase()}">${escapeHtml(i.portal || '--')}</span>`;
+            const znunyBadge = i.in_znuny
+                ? '<span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-lg"></i></span>'
+                : '<span class="badge bg-secondary bg-opacity-10 text-secondary">No</span>';
+            let links = '';
+            if (i.portal_url) links += `<a href="${i.portal_url}" target="_blank" class="btn btn-sm btn-outline-secondary py-0 px-1 me-1" title="Open in portal"><i class="bi bi-box-arrow-up-right"></i></a>`;
+            if (i.znuny_url) links += `<a href="${i.znuny_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-1" title="Open in Znuny"><i class="bi bi-box"></i></a>`;
+            if (!links) links = '<small class="text-muted">--</small>';
+
+            const onclick = i.ticket_id ? `onclick="showTicketDetail(${i.ticket_id})"` : '';
+            return `
+                <tr class="reopen-row" ${onclick}>
+                    <td><small>${formatMaldivesDateTime(i.reopened_at)}</small></td>
+                    <td>${portalBadge}</td>
+                    <td><strong>${escapeHtml(i.portal_ticket_id || '--')}</strong></td>
+                    <td class="d-none d-md-table-cell">${escapeHtml(i.customer_name || '--')}</td>
+                    <td class="d-none d-lg-table-cell"><small>${escapeHtml(i.ticket_type || '--')}</small></td>
+                    <td class="text-center"><span class="badge reopen-count-badge">${i.reopen_count || 1}x</span></td>
+                    <td class="d-none d-md-table-cell"><small>${i.previous_completed_at ? formatMaldivesDateTime(i.previous_completed_at) : '--'}</small></td>
+                    <td class="text-center d-none d-sm-table-cell">${znunyBadge}</td>
+                    <td class="text-center" onclick="event.stopPropagation()">${links}</td>
+                </tr>
+            `;
+        }).join('');
+
+        renderPaginationLocal(data.total || 0);
+    } catch (e) {
+        console.error('Error loading reopened tickets:', e);
+    }
+}
+
+function renderPaginationLocal(total) {
+    const totalPages = Math.ceil(total / pageSize);
+    const el = document.getElementById('pagination');
+    if (totalPages <= 1) { el.innerHTML = ''; return; }
+
+    let html = '<nav><ul class="pagination pagination-sm mb-0 justify-content-center">';
+    html += `<li class="page-item ${currentPage === 1 ? 'disabled' : ''}"><a class="page-link" href="#" onclick="goToPage(${currentPage - 1}); return false;">Prev</a></li>`;
+    for (let i = 1; i <= Math.min(7, totalPages); i++) {
+        html += `<li class="page-item ${currentPage === i ? 'active' : ''}"><a class="page-link" href="#" onclick="goToPage(${i}); return false;">${i}</a></li>`;
+    }
+    html += `<li class="page-item ${currentPage === totalPages ? 'disabled' : ''}"><a class="page-link" href="#" onclick="goToPage(${currentPage + 1}); return false;">Next</a></li>`;
+    html += '</ul></nav>';
+    el.innerHTML = html;
+}
+
+function goToPage(page) {
+    currentPage = page;
+    loadData();
+}
+{% endblock %}
