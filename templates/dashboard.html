@@ -658,7 +658,7 @@ async function loadZnunySyncStatus() {
 async function loadTickets() {
     showLoading(true);
     try {
-        const response = await fetch(`/api/tickets?limit=${pageSize}&offset=${currentPage * pageSize}`);
+        const response = await fetch(`/api/tickets?limit=${pageSize}&offset=${currentPage * pageSize}&sort=not_in_znuny`);
         const data = await response.json();
 
         renderTickets(data.tickets);

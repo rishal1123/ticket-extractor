@@ -693,9 +693,15 @@ class Database:
         date_from: str = None,
         date_to: str = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        sort: str = None
     ) -> tuple[list[Ticket], int]:
-        """Get tickets with SQL-level filtering. Returns (tickets, total_count)."""
+        """Get tickets with SQL-level filtering. Returns (tickets, total_count).
+
+        sort (whitelisted):
+          - None / 'created_desc': newest extraction first (default)
+          - 'not_in_znuny': tickets not yet in Znuny first, then newest extraction
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -752,11 +758,17 @@ class Database:
             cursor.execute(count_query, params)
             total = cursor.fetchone()[0]
 
+            # Resolve sort order from a whitelist (no user SQL interpolation)
+            order_by = {
+                "not_in_znuny": "in_znuny ASC, created_at DESC",
+                "created_desc": "created_at DESC",
+            }.get(sort or "created_desc", "created_at DESC")
+
             # Get paginated results
             query = f"""
                 SELECT * FROM tickets
                 WHERE {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY {order_by}
                 LIMIT ? OFFSET ?
             """
             cursor.execute(query, params + [limit, offset])
@@ -1124,6 +1136,37 @@ class Database:
                 [now_maldives(), portal, *ticket_ids]
             )
             return cursor.rowcount
+
+    def get_ticket_ids_missing_customer(self, portal: str) -> set[str]:
+        """Active (not completed) ticket_ids for a portal that have no customer_name.
+
+        Used by the Dhiraagu extractor to self-heal known tickets whose customer
+        name was never captured (it lives only on the detail-page form field).
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT ticket_id FROM tickets WHERE portal = ? AND completed_at IS NULL "
+                "AND (customer_name IS NULL OR customer_name = '')",
+                (portal,)
+            )
+            return {row["ticket_id"] for row in cursor.fetchall()}
+
+    def update_ticket_customer(self, portal: str, ticket_id: str, customer_name: str) -> bool:
+        """Fill in a missing customer_name for one ticket. Returns True if a row
+        was updated. Only writes when the stored name is still empty so it never
+        clobbers an existing value. Refreshes updated_at."""
+        if not customer_name:
+            return False
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE tickets SET customer_name = ?, updated_at = ? "
+                "WHERE portal = ? AND ticket_id = ? "
+                "AND (customer_name IS NULL OR customer_name = '')",
+                (customer_name, now_maldives(), portal, ticket_id)
+            )
+            return cursor.rowcount > 0
 
     def get_portal_urls_for_tickets(self, portal: str, ticket_ids: list[str]) -> dict[str, str]:
         """Get portal_url for given ticket IDs. Returns {ticket_id: portal_url}."""

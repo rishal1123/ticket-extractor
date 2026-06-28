@@ -209,6 +209,7 @@ async def get_tickets(
     date_to: Optional[str] = None,
     limit: int = Query(default=50, le=1000),
     offset: int = 0,
+    sort: Optional[str] = Query(None, description="Sort order: 'not_in_znuny' (not in Znuny first, then newest extraction) or 'created_desc' (default)"),
     db: Database = Depends(get_db)
 ):
     """Get tickets with optional filters (SQL-level filtering)."""
@@ -225,7 +226,8 @@ async def get_tickets(
         date_from=date_from,
         date_to=date_to,
         limit=limit,
-        offset=offset
+        offset=offset,
+        sort=sort
     )
 
     # Enrich each ticket with the linked Znuny ticket's state (open/closed)

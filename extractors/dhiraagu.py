@@ -249,6 +249,16 @@ class DhiraaguExtractor(BaseExtractor):
             # state is never disturbed. Dedupe by service_num and stop when a page
             # yields no NEW rows — robust whether or not the per-page select took
             # effect and regardless of the pagination-button markup.
+            # Known tickets missing a customer name (it lives only on the detail
+            # page) are enriched lazily, a few per cycle, without disturbing the
+            # normal presence-only path. See the backfill pass below.
+            try:
+                missing_customer_ids = self.db.get_ticket_ids_missing_customer("dhiraagu")
+            except Exception:
+                missing_customer_ids = set()
+            backfill_targets = []
+            BACKFILL_LIMIT = 10
+
             new_orders = []
             seen_ids = set()
             page_num = 1
@@ -268,6 +278,9 @@ class DhiraaguExtractor(BaseExtractor):
                     seen_ids.add(order_data['service_num'])
                     if self.is_known_ticket(order_data['service_num']):
                         tickets.append(self.presence_ticket(order_data['service_num']))
+                        if (order_data['service_num'] in missing_customer_ids
+                                and len(backfill_targets) < BACKFILL_LIMIT):
+                            backfill_targets.append(order_data)
                     else:
                         new_orders.append(order_data)
                 page_num += 1
@@ -298,6 +311,28 @@ class DhiraaguExtractor(BaseExtractor):
                         tickets.append(fallback)
 
             self.logger.info(f"Total tickets extracted: {len(tickets)}")
+
+            # --- CUSTOMER BACKFILL ---
+            # Known tickets whose customer_name was never captured: visit the detail
+            # page once and write just the name (rate-limited; presence path unchanged).
+            if backfill_targets:
+                filled = 0
+                for od in backfill_targets:
+                    href = od.get('detail_href')
+                    if not href:
+                        continue
+                    try:
+                        self.navigate_to(href)
+                        time.sleep(2)
+                        customer = self._extract_detail_page_data().get('customer_name')
+                        if customer and self.db.update_ticket_customer(
+                            "dhiraagu", od['service_num'], customer
+                        ):
+                            filled += 1
+                    except Exception as e:
+                        self.logger.debug(f"Customer backfill failed for {od.get('service_num')}: {e}")
+                if filled:
+                    self.logger.info(f"Backfilled customer name for {filled} known Dhiraagu ticket(s)")
 
         except Exception as e:
             self.logger.error(f"Error extracting tickets: {e}")
@@ -414,6 +449,27 @@ class DhiraaguExtractor(BaseExtractor):
             self.logger.warning(f"Error extracting from detail page: {e}")
             return None
 
+    def _live_value(self, selector: str) -> "str | None":
+        """Read a Filament form control's LIVE value — the DOM ``.value`` property.
+
+        The detail page is a Livewire form: it hydrates field values via JS, so the
+        static HTML ``value`` attribute (``get_attribute('value')``) comes back empty
+        for inputs like customer_name. ``input_value()`` (falling back to ``el.value``)
+        returns the actual current value. Returns None if missing/empty.
+        """
+        try:
+            el = self.browser.page.query_selector(selector)
+            if not el:
+                return None
+            try:
+                val = el.input_value()
+            except Exception:
+                val = el.evaluate("e => e.value") or el.get_attribute("value")
+            val = (val or "").strip()
+            return val or None
+        except Exception:
+            return None
+
     def _extract_detail_page_data(self) -> dict:
         """Extract data from form fields on the detail page."""
         data = {}
@@ -423,39 +479,20 @@ class DhiraaguExtractor(BaseExtractor):
         except Exception:
             self.logger.debug("Detail page form fields not found within timeout")
         try:
-            # Customer name
-            customer_name_input = self.browser.page.query_selector("[id='data.customer_name']")
-            if customer_name_input:
-                data['customer_name'] = customer_name_input.get_attribute('value')
-
-            # Contact number
-            contact_input = self.browser.page.query_selector("[id='data.contact_number']")
-            if contact_input:
-                data['contact_number'] = contact_input.get_attribute('value')
-
-            # Building
-            building_input = self.browser.page.query_selector("[id='data.building']")
-            if building_input:
-                data['building'] = building_input.get_attribute('value')
-
-            # Floor
-            floor_input = self.browser.page.query_selector("[id='data.floor']")
-            if floor_input:
-                data['floor'] = floor_input.get_attribute('value')
-
-            # Apartment
-            apartment_input = self.browser.page.query_selector("[id='data.apartment']")
-            if apartment_input:
-                data['apartment'] = apartment_input.get_attribute('value')
+            # Read live (.value) — NOT get_attribute('value'), which is empty for
+            # Livewire-hydrated controls.
+            data['customer_name'] = self._live_value("[id='data.customer_name']")
+            data['contact_number'] = self._live_value("[id='data.contact_number']")
+            data['building'] = self._live_value("[id='data.building']")
+            data['floor'] = self._live_value("[id='data.floor']")
+            data['apartment'] = self._live_value("[id='data.apartment']")
 
             # Try to extract portal creation date (created_at field)
-            created_at_input = self.browser.page.query_selector("[id='data.created_at']")
-            if not created_at_input:
-                created_at_input = self.browser.page.query_selector("[id*='created_at'], [name*='created_at']")
-            if created_at_input:
-                created_str = created_at_input.get_attribute('value') or (created_at_input.text_content() or "")
-                if created_str:
-                    data['portal_created_at'] = self._parse_date(created_str)
+            created_str = self._live_value("[id='data.created_at']")
+            if not created_str:
+                created_str = self._live_value("[id*='created_at'], [name*='created_at']")
+            if created_str:
+                data['portal_created_at'] = self._parse_date(created_str)
 
         except Exception as e:
             self.logger.warning(f"Error extracting detail page data: {e}")
