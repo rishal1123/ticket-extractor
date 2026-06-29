@@ -376,7 +376,33 @@ class DhiraaguFormatter(BaseFormatter):
         otype = field_after_label(text, "Order type") or ""
         return self.SERVICE_LABELS.get(otype.strip().lower(), otype.strip() or "New Service")
 
+    def _is_tv(self, text: str) -> bool:
+        """DhiraaguTV orders use a slightly different block (see _tv_address /
+        format). Detected when the 'Service profile' field starts with 'DhiraaguTV'."""
+        profile = field_after_label(text, "Service profile") or ""
+        return profile.strip().lower().startswith("dhiraagutv")
+
+    def _tv_profile(self, text: str) -> str:
+        """The TV service profile without its bandwidth suffix:
+        'DhiraaguTV (30|30M)' -> 'DhiraaguTV'."""
+        profile = field_after_label(text, "Service profile") or ""
+        return re.sub(r"\s*\(.*\)\s*$", "", profile).strip()
+
+    def _tv_address(self, text: str) -> str:
+        """TV address: split the trailing letter off the building, then glue
+        floor+apartment together. Building 'V3A' -> 'V3-A', Floor '3' + Apt '06'
+        -> '306' => 'V3-A-306'."""
+        building = (field_after_label(text, "Building/Tower") or "").strip()
+        floor = (field_after_label(text, "Floor") or "").strip()
+        apartment = (field_after_label(text, "Apartment") or "").strip()
+        m = re.match(r"^(.*?)([A-Za-z]+)$", building)
+        if m and m.group(1):
+            building = f"{m.group(1)}-{m.group(2)}"
+        return build_address(building, f"{floor}{apartment}")
+
     def address_id_for_validation(self, text: str) -> Optional[str]:
+        if self._is_tv(text):
+            return self._tv_address(text) or None
         return build_address(
             field_after_label(text, "Building/Tower"),
             field_after_label(text, "Floor"),
@@ -430,6 +456,29 @@ class DhiraaguFormatter(BaseFormatter):
             return f"{title}\n\n{body}"
 
         service = self._service_label(text)  # e.g. "New Service"
+
+        if self._is_tv(text):
+            tv_address = self._tv_address(text)
+            tv_profile = self._tv_profile(text)
+            title = (
+                f"Dhiraagu - {service} - {tv_address} / Service #: {service_no}/ "
+                f"{tv_profile}/ Order ID:{order_no}"
+            )
+            body = "\n".join(
+                [
+                    f"Dhiraagu - {service}",
+                    f"Order ID :{order_no}",
+                    f"Order URL: {order_url}",
+                    f"Service # : {service_no}",
+                    f"Address: {tv_address}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    f"Service Profile : {tv_profile}",
+                    f"SVLAN | CVLAN: {svlan} | {cvlan}",
+                    "ONT FSAN:",
+                ]
+            )
+            return f"{title}\n\n{body}"
 
         title = (
             f"Dhiraagu - {service} - {address} / Service #: {service_no}/ "
