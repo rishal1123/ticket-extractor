@@ -22,6 +22,12 @@
     color: #e74c3c;
     font-family: monospace;
 }
+.change-badge {
+    background-color: rgba(253, 126, 20, 0.12);
+    color: #c25e00;
+    font-weight: 500;
+    cursor: help;
+}
 .quick-filter-btn { border-radius: 6px; font-size: 0.8rem; }
 .quick-filter-btn.active {
     background-color: #fd7e14;
@@ -119,6 +125,7 @@
                         <th>Ticket ID</th>
                         <th class="d-none d-md-table-cell">Customer</th>
                         <th class="d-none d-lg-table-cell">Type</th>
+                        <th class="d-none d-md-table-cell">Changes</th>
                         <th class="text-center">Reopen #</th>
                         <th class="d-none d-md-table-cell">Prev. Completed</th>
                         <th class="text-center d-none d-sm-table-cell">In Znuny</th>
@@ -126,7 +133,7 @@
                     </tr>
                 </thead>
                 <tbody id="reopensTableBody">
-                    <tr><td colspan="9" class="text-center text-muted py-4">Loading...</td></tr>
+                    <tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -195,7 +202,7 @@ async function loadData() {
 
         const tbody = document.getElementById('reopensTableBody');
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No reopened tickets in this period</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No reopened tickets in this period</td></tr>';
             document.getElementById('pagination').innerHTML = '';
             return;
         }
@@ -218,6 +225,7 @@ async function loadData() {
                     <td><strong>${escapeHtml(i.portal_ticket_id || '--')}</strong></td>
                     <td class="d-none d-md-table-cell">${escapeHtml(i.customer_name || '--')}</td>
                     <td class="d-none d-lg-table-cell"><small>${escapeHtml(i.ticket_type || '--')}</small></td>
+                    <td class="d-none d-md-table-cell">${renderChanges(i.changed_fields)}</td>
                     <td class="text-center"><span class="badge reopen-count-badge">${i.reopen_count || 1}x</span></td>
                     <td class="d-none d-md-table-cell"><small>${i.previous_completed_at ? formatMaldivesDateTime(i.previous_completed_at) : '--'}</small></td>
                     <td class="text-center d-none d-sm-table-cell">${znunyBadge}</td>
@@ -230,6 +238,26 @@ async function loadData() {
     } catch (e) {
         console.error('Error loading reopened tickets:', e);
     }
+}
+
+const CHANGE_LABELS = {
+    customer_name: 'Customer',
+    address: 'Address',
+    ticket_type: 'Type',
+    account: 'Account',
+    service_type: 'Service',
+};
+
+function renderChanges(changed) {
+    if (!changed || typeof changed !== 'object') return '<small class="text-muted">--</small>';
+    const fields = Object.keys(changed);
+    if (fields.length === 0) return '<small class="text-muted">--</small>';
+    return fields.map(f => {
+        const c = changed[f] || {};
+        const label = CHANGE_LABELS[f] || f;
+        const title = `${escapeHtml(c.from || '(empty)')} → ${escapeHtml(c.to || '')}`;
+        return `<span class="badge change-badge me-1 mb-1" title="${title}"><i class="bi bi-pencil-square me-1"></i>${escapeHtml(label)}</span>`;
+    }).join('');
 }
 
 function renderPaginationLocal(total) {

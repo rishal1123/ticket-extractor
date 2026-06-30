@@ -1,5 +1,6 @@
 import sqlite3
 import threading
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from contextlib import contextmanager
@@ -207,6 +208,13 @@ class Database:
                     FOREIGN KEY (ticket_id) REFERENCES tickets(id)
                 )
             """)
+            # changed_fields (migration): JSON summary of which detail fields
+            # (customer_name, address, ticket_type, account, service_type) changed
+            # on this reopen vs the previous extraction. NULL/empty = no changes.
+            try:
+                cursor.execute("ALTER TABLE ticket_reopens ADD COLUMN changed_fields TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
             # Znuny articles table - stores article/note history from Znuny
             cursor.execute("""
@@ -507,7 +515,8 @@ class Database:
 
             # Check if ticket exists
             cursor.execute(
-                "SELECT id, notes, status, completed_at, created_at, reopen_count "
+                "SELECT id, notes, status, completed_at, created_at, reopen_count, "
+                "customer_name, address, account, ticket_type, service_type "
                 "FROM tickets WHERE portal = ? AND ticket_id = ?",
                 (ticket.portal, ticket.ticket_id)
             )
@@ -530,16 +539,40 @@ class Database:
 
                 if is_reopen:
                     new_reopen_count = (existing["reopen_count"] or 0) + 1
+
+                    # Detect whether the re-extracted detail fields differ from
+                    # what we had stored before the ticket was completed. Only
+                    # count a change when the new value is non-empty (a blank
+                    # re-extraction must not be reported as "cleared", and must
+                    # not wipe good data below). Customer name, address, etc. can
+                    # legitimately change between an original ticket and its reopen.
+                    tracked = (
+                        ("customer_name", ticket.customer_name),
+                        ("address", ticket.address),
+                        ("ticket_type", ticket.ticket_type),
+                        ("account", ticket.account),
+                        ("service_type", ticket.service_type),
+                    )
+                    changes = {}
+                    for field, new_val in tracked:
+                        new_norm = (new_val or "").strip()
+                        old_norm = (existing[field] or "").strip()
+                        if new_norm and new_norm != old_norm:
+                            changes[field] = {"from": old_norm or None, "to": new_norm}
+                    changed_fields_json = json.dumps(changes) if changes else None
+
                     # Update existing ticket; reset created_at to the new
-                    # extraction time and bump reopen tracking.
+                    # extraction time and bump reopen tracking. Detail fields use
+                    # COALESCE(NULLIF(?, ''), col) so a thin re-extraction never
+                    # blanks a previously-captured value.
                     cursor.execute("""
                         UPDATE tickets SET
-                            address = ?,
-                            account = ?,
-                            customer_name = ?,
-                            ticket_type = ?,
+                            address = COALESCE(NULLIF(?, ''), address),
+                            account = COALESCE(NULLIF(?, ''), account),
+                            customer_name = COALESCE(NULLIF(?, ''), customer_name),
+                            ticket_type = COALESCE(NULLIF(?, ''), ticket_type),
                             portal_created_at = ?,
-                            service_type = ?,
+                            service_type = COALESCE(NULLIF(?, ''), service_type),
                             status = ?,
                             kpi = ?,
                             notes = ?,
@@ -557,20 +590,33 @@ class Database:
                         ticket.status, ticket.kpi, ticket.notes, ticket.portal_url,
                         ticket.raw_dump, now, now, new_reopen_count, now, existing_id
                     ))
-                    # Record the reopen event for tracking.
+                    # Record the reopen event for tracking (incl. what changed).
                     cursor.execute("""
                         INSERT INTO ticket_reopens
                             (ticket_id, portal, portal_ticket_id, reopened_at,
-                             previous_created_at, previous_completed_at, reopen_count)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                             previous_created_at, previous_completed_at, reopen_count,
+                             changed_fields)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         existing_id, ticket.portal, ticket.ticket_id, now,
-                        existing["created_at"], existing["completed_at"], new_reopen_count
+                        existing["created_at"], existing["completed_at"], new_reopen_count,
+                        changed_fields_json
                     ))
-                    logger.info(
-                        f"Ticket reopened: {ticket.portal}/{ticket.ticket_id} "
-                        f"(reopen #{new_reopen_count}); extraction time reset"
-                    )
+                    if changes:
+                        summary = ", ".join(
+                            f"{f}: {c['from']!r}→{c['to']!r}" for f, c in changes.items()
+                        )
+                        logger.info(
+                            f"Ticket reopened: {ticket.portal}/{ticket.ticket_id} "
+                            f"(reopen #{new_reopen_count}); extraction time reset; "
+                            f"details changed — {summary}"
+                        )
+                    else:
+                        logger.info(
+                            f"Ticket reopened: {ticket.portal}/{ticket.ticket_id} "
+                            f"(reopen #{new_reopen_count}); extraction time reset; "
+                            f"no detail changes"
+                        )
                 else:
                     # Update existing ticket
                     cursor.execute("""
@@ -1258,7 +1304,7 @@ class Database:
             cursor.execute(f"""
                 SELECT r.id, r.ticket_id, r.portal, r.portal_ticket_id,
                        r.reopened_at, r.previous_created_at, r.previous_completed_at,
-                       r.reopen_count,
+                       r.reopen_count, r.changed_fields,
                        t.customer_name, t.address, t.account, t.ticket_type,
                        t.status, t.in_znuny, t.znuny_ticket_id, t.znuny_url,
                        t.portal_url, t.completed_at AS current_completed_at
@@ -1268,7 +1314,15 @@ class Database:
                 ORDER BY r.reopened_at DESC
                 LIMIT ? OFFSET ?
             """, params + [limit, offset])
-            items = [dict(row) for row in cursor.fetchall()]
+            items = []
+            for row in cursor.fetchall():
+                item = dict(row)
+                raw = item.get("changed_fields")
+                try:
+                    item["changed_fields"] = json.loads(raw) if raw else {}
+                except (ValueError, TypeError):
+                    item["changed_fields"] = {}
+                items.append(item)
 
         return {"total": total, "items": items}
 
