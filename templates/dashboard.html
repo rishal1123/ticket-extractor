@@ -98,6 +98,19 @@
 <!-- Stats Cards -->
 <div class="row mb-4 g-3" id="statsRow">
     <div class="col-6 col-md-4 col-lg-2">
+        <a href="/tickets" class="text-decoration-none">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #0d6efd;" title="View all tickets (active across all ISPs)">
+                <div class="card-body text-center py-3">
+                    <div class="stat-value" style="color: #0d6efd;" id="totalIspOpenCount">0</div>
+                    <div class="fw-semibold mb-1" style="color: #0d6efd;">Total ISP Open</div>
+                    <div class="extraction-info">
+                        <small class="text-muted">Across Dhiraagu, Ooredoo, ROL, Medianet</small>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #e65100;" onclick="openPortal('dhiraagu')" title="Open Dhiraagu Portal">
             <div class="card-body text-center py-3">
                 <div class="stat-value" style="color: #e65100;" id="dhiraaguCount">0</div>
@@ -552,6 +565,7 @@ async function loadStats() {
         const stats = await response.json();
 
         document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
+        document.getElementById('totalIspOpenCount').textContent = stats.total || 0;
 
         const portals = stats.by_portal || {};
         document.getElementById('dhiraaguCount').textContent = portals['dhiraagu'] || 0;
