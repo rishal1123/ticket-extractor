@@ -911,6 +911,17 @@
                 </div>
             </div>
         </div>
+
+        <!-- Database Backup -->
+        <div class="col-12 col-md-6">
+            <div class="config-section">
+                <h6><i class="bi bi-database-down me-1"></i>Database Backup</h6>
+                <p class="text-muted small mb-2">Download a snapshot of the live SQLite database. Contains portal credentials — keep the file secure.</p>
+                <button class="btn btn-outline-secondary btn-sm" id="downloadDbBtn" onclick="downloadDatabaseBackup()">
+                    <i class="bi bi-download me-1"></i>Download Database
+                </button>
+            </div>
+        </div>
     </div>
 
     <div class="alert alert-warning mt-3 mb-0">
@@ -954,6 +965,47 @@ function adminLogout() {
     sessionStorage.removeItem('adminLoggedIn');
     clearInterval(refreshInterval);
     window.location.href = '/login';
+}
+
+async function downloadDatabaseBackup() {
+    const password = prompt('Enter admin password to download the database backup:');
+    if (!password) return;
+
+    const btn = document.getElementById('downloadDbBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split spinning me-1"></i>Preparing...';
+
+    try {
+        const response = await fetch('/api/admin/download-db', {
+            headers: { 'X-Admin-Password': password }
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            alert(data.detail || data.message || 'Download failed - check the password and try again.');
+            return;
+        }
+
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        const filename = match ? match[1] : 'tickets_backup.db';
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('Error downloading database:', error);
+        alert('Error downloading database: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-download me-1"></i>Download Database';
+    }
 }
 
 async function changeAdminPassword() {

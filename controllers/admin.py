@@ -2,11 +2,15 @@
 Admin Controller - Handles admin panel routes.
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends
-from fastapi.responses import JSONResponse
+import os
+import tempfile
+
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, Header
+from fastapi.responses import JSONResponse, FileResponse
+from starlette.background import BackgroundTask
 from typing import Optional
 
-from database import Database
+from database import Database, now_maldives
 from services import ExtractionService, StatsService, ZnunyService
 from services.scheduler_service import get_scheduler
 from config import Config
@@ -225,6 +229,30 @@ async def change_admin_password(request: Request, db: Database = Depends(get_db)
     db.set_setting("admin_password", new_password, "Password for admin panel access")
     logger.info("Admin password changed")
     return JSONResponse(content=success_response("Password changed successfully"))
+
+
+@router.get("/download-db")
+@handle_errors("download database")
+async def download_db(x_admin_password: str = Header(default=""), db: Database = Depends(get_db)):
+    """Download a snapshot of the SQLite database (contains portal credentials —
+    admin password required via header, not query string, so it isn't logged/cached
+    in browser history)."""
+    stored_password = db.get_setting("admin_password", "admin123")
+    if x_admin_password != stored_password:
+        raise HTTPException(status_code=403, detail="Invalid admin password")
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    os.close(tmp_fd)
+    db.create_backup(tmp_path)
+
+    filename = f"tickets_backup_{now_maldives().strftime('%Y%m%d_%H%M%S')}.db"
+    logger.info(f"Database backup downloaded as {filename}")
+    return FileResponse(
+        tmp_path,
+        filename=filename,
+        media_type="application/octet-stream",
+        background=BackgroundTask(os.remove, tmp_path)
+    )
 
 
 # Settings router (separate prefix for /api/settings routes)

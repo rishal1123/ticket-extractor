@@ -3893,6 +3893,22 @@ class Database:
 
             return {"total": total, "articles": articles}
 
+    # ==================== Backup ====================
+
+    def create_backup(self, dest_path: str):
+        """Snapshot the live database to dest_path via SQLite's online backup API
+        (transactionally consistent even while the app is writing to it, unlike a
+        plain file copy)."""
+        source = sqlite3.connect(self.db_path)
+        try:
+            dest = sqlite3.connect(dest_path)
+            try:
+                source.backup(dest)
+            finally:
+                dest.close()
+        finally:
+            source.close()
+
     def get_report_portal_stats(self, date_from: str = None, date_to: str = None) -> dict:
         """Get ticket statistics by portal for reporting."""
         with self._get_connection() as conn:
