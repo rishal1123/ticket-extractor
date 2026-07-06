@@ -430,6 +430,13 @@ class BaseExtractor(ABC):
                         new_captures.append((ticket_id, ticket))
                     elif is_updated:
                         result["tickets_updated"] += 1
+                        # Not known at run start but already existed in the DB means
+                        # this was a reopen (upsert_ticket wiped its raw_dump) — the
+                        # detail page was just re-fetched above, so capture a fresh
+                        # dump now instead of waiting on the backfill pass, so the
+                        # ticket formatter reflects the reopened ticket's current
+                        # address/details rather than the ones from before it closed.
+                        new_captures.append((ticket_id, ticket))
 
                 if present_known_ids:
                     touched = self.db.touch_tickets_seen(self.config.name, present_known_ids)

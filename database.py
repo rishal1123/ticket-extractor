@@ -569,6 +569,12 @@ class Database:
                     # so leaving it in place would pair a stale znuny_created_at
                     # with the new created_at and produce a negative/nonsensical
                     # time-to-create (rendered as "-" by the dashboard).
+                    # raw_dump is unconditionally wiped (not COALESCEd — ticket.raw_dump
+                    # is always None at this point, so COALESCE would have silently kept
+                    # the pre-reopen dump forever): base.run() re-captures it this same
+                    # cycle since a reopen is routed through the full detail extraction,
+                    # so the ticket formatter reflects the reopened ticket's current
+                    # address/details instead of the ones from before it closed.
                     cursor.execute("""
                         UPDATE tickets SET
                             address = COALESCE(NULLIF(?, ''), address),
@@ -581,7 +587,7 @@ class Database:
                             kpi = ?,
                             notes = ?,
                             portal_url = COALESCE(?, portal_url),
-                            raw_dump = COALESCE(?, raw_dump),
+                            raw_dump = NULL,
                             created_at = ?,
                             updated_at = ?,
                             completed_at = NULL,
@@ -599,7 +605,7 @@ class Database:
                         ticket.address, ticket.account, ticket.customer_name,
                         ticket.ticket_type, ticket.portal_created_at, ticket.service_type,
                         ticket.status, ticket.kpi, ticket.notes, ticket.portal_url,
-                        ticket.raw_dump, now, now, new_reopen_count, now, existing_id
+                        now, now, new_reopen_count, now, existing_id
                     ))
                     # Record the reopen event for tracking (incl. what changed).
                     cursor.execute("""
