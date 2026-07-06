@@ -209,7 +209,15 @@ async def get_tickets(
     date_to: Optional[str] = None,
     limit: int = Query(default=50, le=1000),
     offset: int = 0,
-    sort: Optional[str] = Query(None, description="Sort order: 'not_in_znuny' (not in Znuny first, then newest extraction) or 'created_desc' (default)"),
+    sort: Optional[str] = Query(
+        None,
+        description=(
+            "Sort order (whitelisted). 'not_in_znuny' (default on the dashboard) or "
+            "'created_desc'/'created_asc' (extraction time), or '<column>_asc'/'<column>_desc' "
+            "for column in: portal, ticket_id, customer, address, type, status, znuny, "
+            "time_to_create, created_by. Defaults to 'created_desc'."
+        )
+    ),
     db: Database = Depends(get_db)
 ):
     """Get tickets with optional filters (SQL-level filtering)."""

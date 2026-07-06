@@ -821,10 +821,37 @@ class Database:
             cursor.execute(count_query, params)
             total = cursor.fetchone()[0]
 
-            # Resolve sort order from a whitelist (no user SQL interpolation)
+            # Resolve sort order from a whitelist (no user SQL interpolation).
+            # Column sorts append "created_at DESC" as a stable tiebreaker; NULLs in
+            # the time-to-create expression are pushed to the end in both directions
+            # via a sentinel value (tickets not yet in Znuny have no time-to-create).
+            _time_to_create_expr = (
+                "CASE WHEN znuny_created_at IS NOT NULL AND created_at IS NOT NULL "
+                "THEN (julianday(substr(znuny_created_at, 1, 19)) - julianday(substr(created_at, 1, 19))) "
+                "ELSE {null_sentinel} END"
+            )
             order_by = {
                 "not_in_znuny": "in_znuny ASC, created_at DESC",
                 "created_desc": "created_at DESC",
+                "created_asc": "created_at ASC",
+                "portal_asc": "portal ASC, created_at DESC",
+                "portal_desc": "portal DESC, created_at DESC",
+                "ticket_id_asc": "ticket_id ASC",
+                "ticket_id_desc": "ticket_id DESC",
+                "customer_asc": "customer_name ASC, created_at DESC",
+                "customer_desc": "customer_name DESC, created_at DESC",
+                "address_asc": "address ASC, created_at DESC",
+                "address_desc": "address DESC, created_at DESC",
+                "type_asc": "ticket_type ASC, created_at DESC",
+                "type_desc": "ticket_type DESC, created_at DESC",
+                "status_asc": "status ASC, created_at DESC",
+                "status_desc": "status DESC, created_at DESC",
+                "znuny_asc": "in_znuny ASC, created_at DESC",
+                "znuny_desc": "in_znuny DESC, created_at DESC",
+                "time_to_create_asc": f"{_time_to_create_expr.format(null_sentinel=999999)} ASC",
+                "time_to_create_desc": f"{_time_to_create_expr.format(null_sentinel=-999999)} DESC",
+                "created_by_asc": "znuny_created_by ASC, created_at DESC",
+                "created_by_desc": "znuny_created_by DESC, created_at DESC",
             }.get(sort or "created_desc", "created_at DESC")
 
             # Get paginated results

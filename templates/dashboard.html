@@ -92,6 +92,23 @@
     0%, 100% { box-shadow: none; }
     50% { box-shadow: 0 0 8px rgba(220, 53, 69, 0.3); }
 }
+.sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.sortable-th:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+.sort-icon {
+    display: inline-block;
+    margin-left: 4px;
+    opacity: 0.3;
+    font-size: 0.7em;
+}
+.sort-icon.active {
+    opacity: 1;
+}
 {% endblock %}
 
 {% block content %}
@@ -241,16 +258,16 @@
         <table class="table table-hover mb-0">
             <thead>
                 <tr>
-                    <th>Portal</th>
-                    <th>Ticket ID</th>
-                    <th>Customer</th>
-                    <th class="d-none d-md-table-cell">Address</th>
-                    <th class="d-none d-lg-table-cell">Type</th>
-                    <th class="d-none d-sm-table-cell">Status</th>
-                    <th class="d-none d-md-table-cell">Extracted</th>
-                    <th>Znuny</th>
-                    <th>Time to Create</th>
-                    <th class="d-none d-sm-table-cell">Created By</th>
+                    <th class="sortable-th" onclick="setTicketSort('portal')">Portal<span class="sort-icon" id="sortIcon-portal"></span></th>
+                    <th class="sortable-th" onclick="setTicketSort('ticket_id')">Ticket ID<span class="sort-icon" id="sortIcon-ticket_id"></span></th>
+                    <th class="sortable-th" onclick="setTicketSort('customer')">Customer<span class="sort-icon" id="sortIcon-customer"></span></th>
+                    <th class="sortable-th d-none d-md-table-cell" onclick="setTicketSort('address')">Address<span class="sort-icon" id="sortIcon-address"></span></th>
+                    <th class="sortable-th d-none d-lg-table-cell" onclick="setTicketSort('type')">Type<span class="sort-icon" id="sortIcon-type"></span></th>
+                    <th class="sortable-th d-none d-sm-table-cell" onclick="setTicketSort('status')">Status<span class="sort-icon" id="sortIcon-status"></span></th>
+                    <th class="sortable-th d-none d-md-table-cell" onclick="setTicketSort('created')">Extracted<span class="sort-icon" id="sortIcon-created"></span></th>
+                    <th class="sortable-th" onclick="setTicketSort('znuny')">Znuny<span class="sort-icon" id="sortIcon-znuny"></span></th>
+                    <th class="sortable-th" onclick="setTicketSort('time_to_create')">Time to Create<span class="sort-icon" id="sortIcon-time_to_create"></span></th>
+                    <th class="sortable-th d-none d-sm-table-cell" onclick="setTicketSort('created_by')">Created By<span class="sort-icon" id="sortIcon-created_by"></span></th>
                 </tr>
             </thead>
             <tbody id="ticketsTable">
@@ -372,6 +389,10 @@
 let currentPage = 0;
 const pageSize = 50;
 
+// Ticket table sort state. null column = default (not-in-Znuny first, then newest).
+let ticketSortColumn = null;
+let ticketSortDir = 'desc';
+
 // Delayed analysis section state
 let delayedDateFilter = 'today';
 let delayedTimeFilter = 5;
@@ -411,6 +432,7 @@ const ticketCallbacks = {
 document.addEventListener('DOMContentLoaded', async () => {
     await loadSchedulerData();
     loadStats();
+    updateSortIcons();
     loadTickets();
     loadDelayedTickets();
     loadZnunySyncStatus();
@@ -669,10 +691,39 @@ async function loadZnunySyncStatus() {
 }
 
 
+function setTicketSort(column) {
+    if (ticketSortColumn === column) {
+        ticketSortDir = ticketSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        ticketSortColumn = column;
+        ticketSortDir = 'asc';
+    }
+    currentPage = 0;
+    updateSortIcons();
+    loadTickets();
+}
+
+function updateSortIcons() {
+    document.querySelectorAll('.sort-icon').forEach(el => {
+        el.classList.remove('active');
+        el.innerHTML = '<i class="bi bi-arrow-down-up"></i>';
+    });
+    if (ticketSortColumn) {
+        const icon = document.getElementById('sortIcon-' + ticketSortColumn);
+        if (icon) {
+            icon.classList.add('active');
+            icon.innerHTML = ticketSortDir === 'asc'
+                ? '<i class="bi bi-arrow-up"></i>'
+                : '<i class="bi bi-arrow-down"></i>';
+        }
+    }
+}
+
 async function loadTickets() {
     showLoading(true);
     try {
-        const response = await fetch(`/api/tickets?limit=${pageSize}&offset=${currentPage * pageSize}&sort=not_in_znuny`);
+        const sort = ticketSortColumn ? `${ticketSortColumn}_${ticketSortDir}` : 'not_in_znuny';
+        const response = await fetch(`/api/tickets?limit=${pageSize}&offset=${currentPage * pageSize}&sort=${sort}`);
         const data = await response.json();
 
         renderTickets(data.tickets);
