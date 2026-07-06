@@ -29,6 +29,16 @@ class BaseExtractor(ABC):
     _portal_browsers_lock = threading.Lock()
     # Track consecutive 0-ticket extraction cycles per portal
     _consecutive_zero_counts: dict = {}
+    # Track, per portal, how many consecutive cycles each individual known ticket
+    # has been missing from an otherwise-successful scrape (found_ticket_ids
+    # non-empty). A single missing card can be a transient partial-scrape flake
+    # (seen on Medianet's board: a card briefly not rendered) rather than a real
+    # completion, so a ticket must be missing MISSING_TICKET_DEBOUNCE_CYCLES times
+    # in a row before it's marked complete. Reopening immediately afterward
+    # (because it wasn't really gone) also wipes the ticket's Znuny link each
+    # time, so this debounce avoids that churn too.
+    _consecutive_missing_counts: dict = {}  # portal -> {ticket_id: consecutive_miss_count}
+    MISSING_TICKET_DEBOUNCE_CYCLES = 2
     # Login-failure backoff: with persistent browsers a working portal logs in
     # rarely (session reuse). A portal that keeps FAILING login shouldn't be
     # hammered every cycle — after N consecutive failed cycles it's put in a
@@ -448,10 +458,34 @@ class BaseExtractor(ABC):
                     # Tickets found - reset consecutive zero counter
                     BaseExtractor._consecutive_zero_counts[portal_name] = 0
                     missing_ticket_ids = existing_ticket_ids - found_ticket_ids
+
+                    # Debounce per-ticket misses: a ticket must be missing for
+                    # MISSING_TICKET_DEBOUNCE_CYCLES consecutive cycles before being
+                    # marked complete. A ticket that's found again immediately clears
+                    # its miss counter.
+                    portal_missing_counts = BaseExtractor._consecutive_missing_counts.setdefault(portal_name, {})
+                    for tid in found_ticket_ids:
+                        portal_missing_counts.pop(tid, None)
+
+                    confirmed_missing_ids = set()
                     if missing_ticket_ids:
+                        for tid in missing_ticket_ids:
+                            miss_count = portal_missing_counts.get(tid, 0) + 1
+                            portal_missing_counts[tid] = miss_count
+                            if miss_count >= self.MISSING_TICKET_DEBOUNCE_CYCLES:
+                                confirmed_missing_ids.add(tid)
+
+                        pending_count = len(missing_ticket_ids) - len(confirmed_missing_ids)
+                        if pending_count:
+                            self.logger.info(
+                                f"{pending_count} ticket(s) missing this cycle but not yet "
+                                f"confirmed complete (debounce {self.MISSING_TICKET_DEBOUNCE_CYCLES} cycles)"
+                            )
+
+                    if confirmed_missing_ids:
                         # Fetch final notes before marking complete
                         try:
-                            completion_notes = self.fetch_completion_notes(missing_ticket_ids)
+                            completion_notes = self.fetch_completion_notes(confirmed_missing_ids)
                             if completion_notes:
                                 self.db.update_ticket_notes_bulk(self.config.name, completion_notes)
                                 self.logger.info(f"Updated notes for {len(completion_notes)} tickets before completion")
@@ -459,9 +493,11 @@ class BaseExtractor(ABC):
                             self.logger.warning(f"Error fetching completion notes (non-critical): {e}")
 
                         completed_count = self.db.mark_tickets_complete(
-                            self.config.name, list(missing_ticket_ids)
+                            self.config.name, list(confirmed_missing_ids)
                         )
                         result["tickets_completed"] = completed_count
+                        for tid in confirmed_missing_ids:
+                            portal_missing_counts.pop(tid, None)
                         self.logger.info(f"Marked {completed_count} tickets as complete (disappeared from portal)")
                 elif existing_ticket_ids:
                     # 0 tickets found but active tickets exist

@@ -55,6 +55,54 @@ finally:
     conn.close()
 PY
 
+# One-time migration: unlink stale Znuny data left on already-reopened tickets.
+# Before this fix, a ticket reopen reset created_at to the new extraction time but
+# left the PRIOR (pre-close) znuny_created_at/znuny_ticket_id/etc. in place, pairing
+# a stale znuny_created_at with the new created_at — producing a negative "time to
+# create" that the dashboard renders as "-". Reopen now clears these fields itself,
+# so this is a one-time repair for tickets that were already stuck in that state
+# from a PAST reopen (their znuny_created_at predates their last_reopened_at).
+# Clearing the link makes the next Znuny sync cycle re-search and re-link them
+# correctly. Guarded by an app_settings flag so a restart never re-clears fresh
+# links established after this migration runs.
+echo "Checking one-time stale-reopen Znuny link migration..."
+python - <<'PY'
+from config import Config
+import sqlite3
+FLAG = "migration_clear_stale_reopen_znuny_v1"
+conn = sqlite3.connect(Config.DATABASE_PATH)
+try:
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM app_settings WHERE key = ?", (FLAG,))
+    if cur.fetchone():
+        print("Stale-reopen Znuny link migration already applied; skipping")
+    else:
+        cur.execute("""
+            UPDATE tickets SET
+                in_znuny = 0,
+                znuny_ticket_id = NULL,
+                znuny_created_at = NULL,
+                znuny_created_by = NULL,
+                znuny_address = NULL,
+                znuny_url = NULL,
+                znuny_search_count = 0
+            WHERE completed_at IS NULL
+              AND reopen_count > 0
+              AND znuny_created_at IS NOT NULL
+              AND last_reopened_at IS NOT NULL
+              AND znuny_created_at < last_reopened_at
+        """)
+        cleared = cur.rowcount
+        cur.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, description) VALUES (?, ?, ?)",
+            (FLAG, "1", "Cleared stale pre-reopen Znuny links so affected tickets re-link and get a correct time-to-create"),
+        )
+        conn.commit()
+        print(f"Cleared stale Znuny link on {cleared} reopened ticket(s) for re-sync")
+finally:
+    conn.close()
+PY
+
 # Remove stale Chrome profile locks (SingletonLock/SingletonCookie/SingletonSocket)
 # left in the persistent browser sessions by a previous container. These live on
 # the named volume, so on a container RECREATE the new container has a different
