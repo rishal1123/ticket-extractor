@@ -276,6 +276,27 @@ async def update_operating_hours(request: Request, db: Database = Depends(get_db
     return JSONResponse(content=success_response("Operating hours saved"))
 
 
+@settings_router.get("/container-restart")
+@handle_errors("get container restart settings")
+async def get_container_restart(db: Database = Depends(get_db)):
+    """Get daily container restart settings."""
+    settings = db.get_container_restart_settings()
+    return JSONResponse(content={"success": True, "settings": settings})
+
+
+@settings_router.post("/container-restart")
+@handle_errors("update container restart settings")
+async def update_container_restart(request: Request, db: Database = Depends(get_db)):
+    """Update daily container restart settings."""
+    data = await request.json()
+    db.set_container_restart_settings(
+        enabled=bool(data.get("enabled", False)),
+        hour=int(data.get("hour", 8))
+    )
+    logger.info(f"Container restart settings updated: enabled={data.get('enabled')}, hour={data.get('hour')}:00")
+    return JSONResponse(content=success_response("Container restart settings saved"))
+
+
 @settings_router.get("/memory-limits")
 @handle_errors("get memory limits")
 async def get_memory_limits(db: Database = Depends(get_db)):

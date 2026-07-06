@@ -790,6 +790,38 @@
             </div>
         </div>
 
+        <!-- Container Restart -->
+        <div class="col-12">
+            <div class="config-section">
+                <h6><i class="bi bi-arrow-repeat me-1"></i>Daily Container Restart</h6>
+                <p class="text-muted small mb-3">Restart the app container once a day at a fixed hour (MVT) — a clean slate for the browser sessions and process memory. Requires the Docker <code>restart: unless-stopped</code> policy (already set in docker-compose.yml) to bring the container back up after it exits.</p>
+                <div class="row g-3 align-items-center">
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="container_restart_enabled">
+                            <label class="form-check-label" for="container_restart_enabled">
+                                <strong>Enable Daily Restart</strong>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small fw-bold">Restart Time</label>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-clock-history"></i></span>
+                            <input type="number" class="form-control text-center" id="container_restart_hour" min="0" max="23" value="8">
+                            <span class="input-group-text">:00</span>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <div class="alert alert-info small mb-0 py-2">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Default 8 = 8:00 AM MVT daily. Extraction/sync are interrupted briefly during the restart.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Browser Memory Limits -->
         <div class="col-12">
             <div class="config-section">
@@ -1671,6 +1703,14 @@ async function loadConfig() {
             document.getElementById('operating_hours_end').value = hoursData.hours.end_hour ?? 22;
         }
 
+        // Load container restart settings
+        const restartResponse = await fetch('/api/settings/container-restart');
+        const restartData = await restartResponse.json();
+        if (restartData.settings) {
+            document.getElementById('container_restart_enabled').checked = restartData.settings.enabled;
+            document.getElementById('container_restart_hour').value = restartData.settings.hour ?? 8;
+        }
+
         // Load browser memory limits
         const memResponse = await fetch('/api/settings/memory-limits');
         const memData = await memResponse.json();
@@ -1763,6 +1803,18 @@ async function saveConfig() {
 
         const hoursData = await hoursResponse.json();
 
+        // Save container restart settings
+        const containerRestart = {
+            enabled: document.getElementById('container_restart_enabled').checked,
+            hour: parseInt(document.getElementById('container_restart_hour').value) || 8
+        };
+        const restartResponse = await fetch('/api/settings/container-restart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(containerRestart)
+        });
+        const restartData = await restartResponse.json();
+
         // Save browser memory limits
         const limits = {};
         ['dhiraagu', 'ooredoo', 'rol', 'medianet'].forEach(p => {
@@ -1796,10 +1848,10 @@ async function saveConfig() {
         });
         const portalsData = await portalsResponse.json();
 
-        if (data.success && threshData.success && hoursData.success && memSaveData.success && ispData.success && portalsData.success) {
+        if (data.success && threshData.success && hoursData.success && restartData.success && memSaveData.success && ispData.success && portalsData.success) {
             alert('Configuration saved successfully!\n\nNote: Some changes may require a server restart.');
         } else {
-            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || memSaveData.message || ispData.message || portalsData.message || 'Unknown error'));
+            alert('Failed to save: ' + (data.message || threshData.message || hoursData.message || restartData.message || memSaveData.message || ispData.message || portalsData.message || 'Unknown error'));
         }
     } catch (error) {
         console.error('Error saving config:', error);

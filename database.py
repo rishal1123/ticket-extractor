@@ -2979,6 +2979,41 @@ class Database:
                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 """, (key, val, now_maldives()))
 
+    # ==================== Container Restart ====================
+
+    def get_container_restart_settings(self) -> dict:
+        """Get daily container restart settings (disabled by default)."""
+        defaults = {
+            "container_restart_enabled": "0",
+            "container_restart_hour": "8"
+        }
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT key, value FROM app_settings WHERE key IN (?, ?)",
+                tuple(defaults.keys())
+            )
+            found = {row["key"]: row["value"] for row in cursor.fetchall()}
+        return {
+            "enabled": found.get("container_restart_enabled", defaults["container_restart_enabled"]) == "1",
+            "hour": int(found.get("container_restart_hour", defaults["container_restart_hour"]))
+        }
+
+    def set_container_restart_settings(self, enabled: bool, hour: int):
+        """Set daily container restart settings. Hour is clamped to 0-23 (MVT)."""
+        hour = max(0, min(23, hour))
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for key, val in [
+                ("container_restart_enabled", "1" if enabled else "0"),
+                ("container_restart_hour", str(hour))
+            ]:
+                cursor.execute("""
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """, (key, val, now_maldives()))
+
     # ==================== Browser Memory Limits ====================
 
     # Per-portal default browser memory limit (MB). The browser is reset when its

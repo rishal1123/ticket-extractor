@@ -10,6 +10,7 @@ Uses persistent worker threads so Playwright browser instances can be
 reused across cycles (Playwright objects are bound to their creator thread).
 """
 
+import os
 import time
 import threading
 from datetime import datetime, timezone, timedelta
@@ -46,6 +47,8 @@ class SchedulerService:
         # Persistent worker threads (keep Playwright alive across cycles)
         self._extraction_thread: Optional[threading.Thread] = None
         self._znuny_sync_thread: Optional[threading.Thread] = None
+        # Guards the daily container restart against firing twice in its trigger hour
+        self._last_container_restart_date = None
 
     @property
     def is_running(self) -> bool:
@@ -376,6 +379,39 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Log cleanup failed: {e}")
 
+    def _check_container_restart(self):
+        """Daily container restart (Admin > Config). Reads settings from the DB on
+        every tick (like operating hours) so a changed hour takes effect without
+        re-registering a schedule job. Fires once per calendar day (MVT) in the
+        configured hour, then exits the process — the `restart: unless-stopped`
+        Docker policy brings the container straight back up.
+        """
+        try:
+            db = Database()
+            settings = db.get_container_restart_settings()
+            if not settings["enabled"]:
+                return
+            now = now_maldives()
+            if now.hour != settings["hour"]:
+                return
+            if self._last_container_restart_date == now.date():
+                return  # already fired today
+            self._last_container_restart_date = now.date()
+
+            logger.warning(f"Daily container restart triggered ({settings['hour']}:00 MVT) - exiting process")
+            db.log_system("warning", "scheduler", f"Daily container restart triggered ({settings['hour']}:00 MVT)")
+
+            # Best-effort cleanup so the browser processes don't linger as zombies
+            # under the container's PID 1 during the brief window before exit.
+            try:
+                self._nuke_all_browsers()
+            except Exception:
+                pass
+
+            os._exit(0)
+        except Exception as e:
+            logger.error(f"Container restart check failed: {e}")
+
     @staticmethod
     def _nuke_all_browsers():
         """Kill ALL chromium and playwright node processes system-wide, then clear all references.
@@ -631,6 +667,9 @@ class SchedulerService:
         # Freeze the completed day's per-staff snapshot once at midnight (today is
         # served live by the page; the creator sweep refreshes prior snapshots).
         schedule.every().day.at("00:30").do(self._generate_staff_snapshots)
+        # Daily container restart (Admin > Config, disabled by default) - checked
+        # every minute so a changed restart hour takes effect immediately.
+        schedule.every(1).minutes.do(self._check_container_restart)
 
         # Run both immediately on start
         self._extraction_job()
@@ -689,6 +728,7 @@ class SchedulerService:
             status["operating_hours"] = hours
             status["within_operating_hours"] = self._is_within_operating_hours()
             status["isp_extraction_enabled"] = db.get_isp_extraction_enabled()
+            status["container_restart"] = db.get_container_restart_settings()
             status["portals_enabled"] = {
                 p.name: db.get_portal_enabled(p.name) for p in Config.get_all_portals()
             }
