@@ -5,6 +5,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from .base import BaseExtractor
 from models.ticket import Ticket
+from formatter.model.formatters import RolFormatter
 
 
 class ROLExtractor(BaseExtractor):
@@ -285,12 +286,10 @@ class ROLExtractor(BaseExtractor):
 
                 if post_text:
                     notes = post_text
-                    # Try to extract address from "Location -" line
-                    for line in post_text.split('\n'):
-                        line_lower = line.lower()
-                        if 'location' in line_lower and '-' in line:
-                            address = line.split('-', 1)[1].strip()
-                            break
+                    # Same building+area combo the ROL ticket formatter displays
+                    # (e.g. "UD-06-15-05, Hulhumale Phase 2"), parsed from the
+                    # "Posted on:" customer post block.
+                    address = RolFormatter().display_address(post_text) or None
             except Exception as e:
                 self.logger.debug(f"Error getting post content: {e}")
 

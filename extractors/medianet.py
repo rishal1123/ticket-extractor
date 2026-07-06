@@ -4,6 +4,7 @@ from datetime import datetime
 
 from .base import BaseExtractor
 from models.ticket import Ticket
+from formatter.model.formatters import clean_building_code
 
 
 class MedianetExtractor(BaseExtractor):
@@ -473,31 +474,24 @@ class MedianetExtractor(BaseExtractor):
                     account_number = match.group(1)
                 contact_name = contact_name_raw.split('(')[0].strip()
 
-            # Address - combine all parts
+            # Address - same building-code-only style the Medianet ticket formatter
+            # displays (badge tag and neighborhood/area dropped, e.g.
+            # "HOMEUD-05-02-06, Neighborhood 4" -> "UD-05-02-06").
             address_badge = self._get_element_text(self.CONTACT_ADDRESS_BADGE_SELECTOR) or ""  # HOME/WORK
             address_name = self._get_element_text(self.CONTACT_ADDRESS_NAME_SELECTOR) or ""
             address_location = self._get_element_text(self.CONTACT_ADDRESS_SELECTOR) or ""
 
-            # Build full address
             address_parts = []
             if address_name:
                 address_parts.append(address_name.rstrip(', '))
             if address_location:
                 address_parts.append(address_location)
+            address_raw = f"{address_badge}{', '.join(address_parts)}" if address_parts else ""
 
-            address = ", ".join(address_parts) if address_parts else None
+            if not address_raw:
+                address_raw = self._get_element_text(self.LOCATION_SELECTOR) or ""
 
-            # Add address type badge if present
-            if address_badge and address:
-                address = f"[{address_badge}] {address}"
-
-            # Location (where field) - use as fallback or additional info
-            location = self._get_element_text(self.LOCATION_SELECTOR)
-            if location:
-                if not address:
-                    address = location
-                elif location not in address:
-                    address = f"{address} | Where: {location}"
+            address = clean_building_code(address_raw) or None
 
             # Team
             team = self._get_element_text(self.TEAM_SELECTOR)

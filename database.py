@@ -564,7 +564,11 @@ class Database:
                     # Update existing ticket; reset created_at to the new
                     # extraction time and bump reopen tracking. Detail fields use
                     # COALESCE(NULLIF(?, ''), col) so a thin re-extraction never
-                    # blanks a previously-captured value.
+                    # blanks a previously-captured value. The Znuny link is also
+                    # cleared: it referred to the ticket's prior (closed) instance,
+                    # so leaving it in place would pair a stale znuny_created_at
+                    # with the new created_at and produce a negative/nonsensical
+                    # time-to-create (rendered as "-" by the dashboard).
                     cursor.execute("""
                         UPDATE tickets SET
                             address = COALESCE(NULLIF(?, ''), address),
@@ -582,7 +586,14 @@ class Database:
                             updated_at = ?,
                             completed_at = NULL,
                             reopen_count = ?,
-                            last_reopened_at = ?
+                            last_reopened_at = ?,
+                            in_znuny = 0,
+                            znuny_ticket_id = NULL,
+                            znuny_created_at = NULL,
+                            znuny_created_by = NULL,
+                            znuny_address = NULL,
+                            znuny_url = NULL,
+                            znuny_search_count = 0
                         WHERE id = ?
                     """, (
                         ticket.address, ticket.account, ticket.customer_name,

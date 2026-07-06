@@ -648,6 +648,12 @@ class RolFormatter(BaseFormatter):
     def account_id_for_validation(self, text: str) -> Optional[str]:
         return self._display_id(text) or None
 
+    def display_address(self, text: str) -> str:
+        """Building code with the area appended, e.g. 'UD-06-15-05, Hulhumale Phase 2'.
+        Shared with the ROL extractor so the stored ticket.address matches this format."""
+        _, _, building, area, _ = self._posted_fields(text)
+        return f"{building}, {area}" if area else building
+
     def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         account = self._display_id(text)        # ROL###### reference -> Account #
         ticket_id = self._internal_id(text)     # Kayako TICKET ID -> Ticket ID + URL

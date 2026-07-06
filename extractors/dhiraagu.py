@@ -3,6 +3,7 @@ import time
 from .base import BaseExtractor
 from models.ticket import Ticket
 from config import Config
+from formatter.model.formatters import build_address
 
 
 # JS run on the order detail page to read every Filament form control's
@@ -523,16 +524,14 @@ class DhiraaguExtractor(BaseExtractor):
         return None
 
     def _build_address(self, detail_data: dict) -> str | None:
-        """Build address string from detail data."""
-        parts = []
-        if detail_data.get('building'):
-            parts.append(detail_data['building'])
-        if detail_data.get('floor'):
-            parts.append(f"Floor {detail_data['floor']}")
-        if detail_data.get('apartment'):
-            parts.append(f"Apt {detail_data['apartment']}")
-
-        return ", ".join(parts) if parts else None
+        """Build address string from detail data, in the same hyphenated
+        building-floor-apartment style the Dhiraagu ticket formatter displays
+        (e.g. building 'UD-05' + floor '12' + apartment '02' -> 'UD-05-12-02')."""
+        return build_address(
+            detail_data.get('building'),
+            detail_data.get('floor'),
+            detail_data.get('apartment'),
+        ) or None
 
     def _extract_notes_from_detail_page(self) -> str | None:
         """Extract notes from the order detail page."""
