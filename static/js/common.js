@@ -77,8 +77,7 @@ function formatRelativeTime(dateStr) {
 
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return diffMins + 'm ago';
-    if (diffHours < 24) return diffHours + 'h ago';
-    return formatMaldivesDateTime(dateStr);
+    return diffHours + 'h ago';
 }
 
 function getDateRange(filter) {
