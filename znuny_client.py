@@ -220,6 +220,17 @@ def parse_site_visit_article(article: ZnunyArticle, znuny_ticket_id: str) -> Sit
     )
 
 
+def _title_has_ticket_id(title: str, ticket_id: str) -> bool:
+    """True if ticket_id appears in title as a complete token, not as a substring
+    of a longer id (e.g. searching for "165" must not match a title containing
+    "1650639" or "51650"). Znuny's own TicketSearch Title=*term* is itself a
+    substring match, so every plain-`in` containment check downstream of it must
+    be tightened to a full match before it's trusted."""
+    if not title or not ticket_id:
+        return False
+    return re.search(rf"\b{re.escape(ticket_id)}\b", title, re.IGNORECASE) is not None
+
+
 def _parse_dt(value: str) -> datetime | None:
     """Parse a Znuny REST timestamp ('YYYY-MM-DD HH:MM:SS').
 
@@ -536,22 +547,24 @@ class ZnunyClient:
         ZnunyClient._shared_last_login_check = 0
 
     def search_by_title(self, search_term: str) -> list[dict]:
-        """Find tickets whose title contains search_term.
+        """Find tickets whose title contains search_term as a complete token
+        (not as a substring of a longer id — e.g. ticket "165" must not match a
+        title containing "1650639").
 
         Checks the cached open-ticket list first (zero requests for tickets that
         are currently open — the common case during sync), then falls back to a
         server-side TicketSearch by title for anything else (closed tickets or
-        other services).
+        other services). The server-side search itself is substring-based
+        (Title=*term*), so its candidates are re-filtered with the same exact
+        check before being trusted.
 
         Returns list of dicts with ticket_number, title, href, state, queue,
         owner, priority.
         """
-        search_lower = search_term.lower()
-
         # 1) Serve from the already-loaded open-ticket cache when possible.
         cached_matches = [
             t for t in self.get_open_tickets()
-            if search_lower in t.get("title", "").lower()
+            if _title_has_ticket_id(t.get("title", ""), search_term)
         ]
         if cached_matches:
             logger.info(f"Znuny search for '{search_term}': {len(cached_matches)} in open cache")
@@ -567,7 +580,7 @@ class ZnunyClient:
         matching = [
             self._ticket_to_summary(t)
             for t in tickets
-            if search_lower in (t.get("Title") or "").lower()
+            if _title_has_ticket_id(t.get("Title") or "", search_term)
         ]
         if matching:
             logger.info(f"Znuny search for '{search_term}': found {len(matching)} via TicketSearch")
@@ -609,7 +622,7 @@ class ZnunyClient:
 
         # Filter by ticket_id if provided
         if ticket_id and results:
-            filtered = [r for r in results if ticket_id in r["title"]]
+            filtered = [r for r in results if _title_has_ticket_id(r["title"], ticket_id)]
             if filtered:
                 logger.info(f"Account search: matched ticket_id {ticket_id} in {len(filtered)} results")
                 return filtered

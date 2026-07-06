@@ -55,27 +55,33 @@ finally:
     conn.close()
 PY
 
-# One-time migration: unlink stale Znuny data left on already-reopened tickets.
-# Before this fix, a ticket reopen reset created_at to the new extraction time but
-# left the PRIOR (pre-close) znuny_created_at/znuny_ticket_id/etc. in place, pairing
-# a stale znuny_created_at with the new created_at — producing a negative "time to
-# create" that the dashboard renders as "-". Reopen now clears these fields itself,
-# so this is a one-time repair for tickets that were already stuck in that state
-# from a PAST reopen (their znuny_created_at predates their last_reopened_at).
-# Clearing the link makes the next Znuny sync cycle re-search and re-link them
-# correctly. Guarded by an app_settings flag so a restart never re-clears fresh
-# links established after this migration runs.
-echo "Checking one-time stale-reopen Znuny link migration..."
+# One-time migration: unlink implausible Znuny matches on active tickets.
+# Two related root causes both produce a znuny_created_at that predates the
+# ticket's created_at by far more than any legitimate "staff was faster than the
+# extractor" race: (1) a ticket reopen used to leave the PRIOR (pre-close) Znuny
+# link in place while resetting created_at, and (2) Znuny's own title search is
+# substring-based (Title=*id*), so a plain-`in` containment check downstream
+# could match a short ticket id against an unrelated, long-since-stale still-open
+# Znuny ticket whose title happens to embed those digits — confirmed against a
+# production capture, where several *never-reopened* tickets were linked to
+# Znuny tickets 1-3 YEARS old. Both are fixed in code (reopen clears the link
+# itself; znuny_client.py now requires a full-token title match), but existing
+# rows need a one-time repair: any active ticket whose znuny_created_at is more
+# than a day before its created_at is unlinked so the next Znuny sync cycle
+# re-searches and re-links it correctly (with the fixed, exact matcher). Guarded
+# by an app_settings flag so a restart never re-clears fresh links established
+# after this migration runs.
+echo "Checking one-time stale/implausible Znuny link migration..."
 python - <<'PY'
 from config import Config
 import sqlite3
-FLAG = "migration_clear_stale_reopen_znuny_v1"
+FLAG = "migration_clear_stale_reopen_znuny_v2"
 conn = sqlite3.connect(Config.DATABASE_PATH)
 try:
     cur = conn.cursor()
     cur.execute("SELECT value FROM app_settings WHERE key = ?", (FLAG,))
     if cur.fetchone():
-        print("Stale-reopen Znuny link migration already applied; skipping")
+        print("Stale Znuny link migration already applied; skipping")
     else:
         cur.execute("""
             UPDATE tickets SET
@@ -87,18 +93,16 @@ try:
                 znuny_url = NULL,
                 znuny_search_count = 0
             WHERE completed_at IS NULL
-              AND reopen_count > 0
               AND znuny_created_at IS NOT NULL
-              AND last_reopened_at IS NOT NULL
-              AND znuny_created_at < last_reopened_at
+              AND znuny_created_at < datetime(created_at, '-1 day')
         """)
         cleared = cur.rowcount
         cur.execute(
             "INSERT OR REPLACE INTO app_settings (key, value, description) VALUES (?, ?, ?)",
-            (FLAG, "1", "Cleared stale pre-reopen Znuny links so affected tickets re-link and get a correct time-to-create"),
+            (FLAG, "1", "Cleared implausible/stale Znuny links (>1 day negative time-to-create) so affected tickets re-link and get a correct time-to-create"),
         )
         conn.commit()
-        print(f"Cleared stale Znuny link on {cleared} reopened ticket(s) for re-sync")
+        print(f"Cleared stale/implausible Znuny link on {cleared} ticket(s) for re-sync")
 finally:
     conn.close()
 PY
