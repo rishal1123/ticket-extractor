@@ -544,7 +544,10 @@ function renderTicketRow(ticket, onClick) {
         <td class="text-truncate d-none d-md-table-cell" style="max-width: 180px;" title="${escapeHtml(ticket.address || '')}">${escapeHtml(ticket.address) || '-'}</td>
         <td class="d-none d-lg-table-cell">${escapeHtml(ticket.ticket_type) || '-'}</td>
         <td class="d-none d-sm-table-cell">${escapeHtml(ticket.status) || '-'}</td>
-        <td class="d-none d-md-table-cell"><small>${formatMaldivesDateTime(ticket.created_at)}</small></td>
+        <td class="d-none d-md-table-cell">
+            <small>${formatMaldivesDateTime(ticket.created_at)}</small><br>
+            <small class="text-muted">${formatRelativeTime(ticket.created_at)}</small>
+        </td>
         <td class="znuny-status">${znunyIcon}${formatBtn}</td>
         <td>${timeToCreate}</td>
         <td class="d-none d-sm-table-cell"><small>${escapeHtml(ticket.znuny_created_by) || '-'}</small></td>
