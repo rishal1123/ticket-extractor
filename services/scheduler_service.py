@@ -47,8 +47,6 @@ class SchedulerService:
         # Persistent worker threads (keep Playwright alive across cycles)
         self._extraction_thread: Optional[threading.Thread] = None
         self._znuny_sync_thread: Optional[threading.Thread] = None
-        # Guards the daily container restart against firing twice in its trigger hour
-        self._last_container_restart_date = None
 
     @property
     def is_running(self) -> bool:
@@ -382,9 +380,19 @@ class SchedulerService:
     def _check_container_restart(self):
         """Daily container restart (Admin > Config). Reads settings from the DB on
         every tick (like operating hours) so a changed hour takes effect without
-        re-registering a schedule job. Fires once per calendar day (MVT) in the
-        configured hour, then exits the process — the `restart: unless-stopped`
+        re-registering a schedule job. Fires once per calendar day (MVT) at or after
+        the configured hour, then exits the process — the `restart: unless-stopped`
         Docker policy brings the container straight back up.
+
+        The "already fired today" guard is persisted in the DB (``container_restart_last_date``),
+        not process memory: an in-memory flag resets to None on every new process, so the
+        replacement container would see the same trigger hour and immediately restart again,
+        looping for the rest of that hour. Reading it back from the DB after the restart makes
+        the guard survive the process it triggers.
+
+        Using `>=` instead of `==` on the hour also means a missed window (e.g. the app was down
+        or the check didn't run during the configured hour) is caught up and fires once as soon
+        as the check next runs that day, rather than waiting until the same hour next day.
         """
         try:
             db = Database()
@@ -392,11 +400,13 @@ class SchedulerService:
             if not settings["enabled"]:
                 return
             now = now_maldives()
-            if now.hour != settings["hour"]:
-                return
-            if self._last_container_restart_date == now.date():
+            today_str = now.date().isoformat()
+            if settings["last_restart_date"] == today_str:
                 return  # already fired today
-            self._last_container_restart_date = now.date()
+            if now.hour < settings["hour"]:
+                return  # scheduled hour hasn't arrived yet today
+
+            db.mark_container_restarted(today_str)
 
             logger.warning(f"Daily container restart triggered ({settings['hour']}:00 MVT) - exiting process")
             db.log_system("warning", "scheduler", f"Daily container restart triggered ({settings['hour']}:00 MVT)")

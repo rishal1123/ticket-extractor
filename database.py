@@ -3015,21 +3015,29 @@ class Database:
     # ==================== Container Restart ====================
 
     def get_container_restart_settings(self) -> dict:
-        """Get daily container restart settings (disabled by default)."""
+        """Get daily container restart settings (disabled by default).
+
+        ``last_restart_date`` is read from the DB (not process memory) so the
+        daily-once guard survives the very process restart it triggers - an
+        in-memory flag resets to None on every new process, which previously
+        caused a restart loop for the rest of the trigger hour.
+        """
         defaults = {
             "container_restart_enabled": "0",
-            "container_restart_hour": "8"
+            "container_restart_hour": "8",
+            "container_restart_last_date": ""
         }
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT key, value FROM app_settings WHERE key IN (?, ?)",
+                "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?)",
                 tuple(defaults.keys())
             )
             found = {row["key"]: row["value"] for row in cursor.fetchall()}
         return {
             "enabled": found.get("container_restart_enabled", defaults["container_restart_enabled"]) == "1",
-            "hour": int(found.get("container_restart_hour", defaults["container_restart_hour"]))
+            "hour": int(found.get("container_restart_hour", defaults["container_restart_hour"])),
+            "last_restart_date": found.get("container_restart_last_date", defaults["container_restart_last_date"]) or None
         }
 
     def set_container_restart_settings(self, enabled: bool, hour: int):
@@ -3046,6 +3054,16 @@ class Database:
                     VALUES (?, ?, ?)
                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 """, (key, val, now_maldives()))
+
+    def mark_container_restarted(self, date_str: str):
+        """Persist the calendar date (MVT, YYYY-MM-DD) the daily container restart last fired on."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES ('container_restart_last_date', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """, (date_str, now_maldives()))
 
     # ==================== Browser Memory Limits ====================
 
