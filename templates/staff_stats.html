@@ -51,6 +51,23 @@
     font-size: 0.8rem;
     color: #6c757d;
 }
+.sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.sortable-th:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+.sort-icon {
+    display: inline-block;
+    margin-left: 4px;
+    opacity: 0.3;
+    font-size: 0.7em;
+}
+.sort-icon.active {
+    opacity: 1;
+}
 @media (max-width: 768px) {
     .stat-icon {
         width: 40px;
@@ -175,9 +192,9 @@
                 <tr>
                     <th style="width: 40px;">#</th>
                     <th>Staff</th>
-                    <th class="text-center" style="width: 120px;" title="Znuny tickets created by this staff">Tickets</th>
-                    <th class="text-center" style="width: 120px;" title="Articles authored by this staff">Articles</th>
-                    <th class="text-center" style="width: 120px;" title="Site visits assigned (completed / total)">Site Visits</th>
+                    <th class="text-center sortable-th" style="width: 120px;" title="Znuny tickets created by this staff" onclick="setStaffSort('tickets')">Tickets<span class="sort-icon" id="sortIcon-tickets"></span></th>
+                    <th class="text-center sortable-th" style="width: 120px;" title="Articles authored by this staff" onclick="setStaffSort('articles')">Articles<span class="sort-icon" id="sortIcon-articles"></span></th>
+                    <th class="text-center sortable-th" style="width: 120px;" title="Site visits assigned (completed / total)" onclick="setStaffSort('visits')">Site Visits<span class="sort-icon" id="sortIcon-visits"></span></th>
                 </tr>
             </thead>
             <tbody id="staffTable">
@@ -195,12 +212,42 @@
 
 {% block script %}
 let currentFilter = 'today';
+let currentStaffData = [];
+let staffSortColumn = null;  // null = default (server-provided) order
+let staffSortDir = 'desc';
 
 document.addEventListener('DOMContentLoaded', function() {
     setDateFilter('today', false);
     loadStaffStats();
     setInterval(() => { if (!document.hidden) loadStaffStats(); }, 30000);
 });
+
+function setStaffSort(column) {
+    if (staffSortColumn === column) {
+        staffSortDir = staffSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        staffSortColumn = column;
+        staffSortDir = 'desc';
+    }
+    updateStaffSortIcons();
+    renderStaffTable(currentStaffData);
+}
+
+function updateStaffSortIcons() {
+    document.querySelectorAll('.sort-icon').forEach(el => {
+        el.classList.remove('active');
+        el.innerHTML = '<i class="bi bi-arrow-down-up"></i>';
+    });
+    if (staffSortColumn) {
+        const icon = document.getElementById('sortIcon-' + staffSortColumn);
+        if (icon) {
+            icon.classList.add('active');
+            icon.innerHTML = staffSortDir === 'asc'
+                ? '<i class="bi bi-arrow-up"></i>'
+                : '<i class="bi bi-arrow-down"></i>';
+        }
+    }
+}
 
 // Format a Date using local getters (Date is already MVT-aligned via getNowMaldives).
 function formatDateInput(date) {
@@ -286,7 +333,8 @@ async function loadStaffStats() {
             infoEl.textContent = 'All-time stats';
         }
 
-        renderStaffTable(stats.staff || []);
+        currentStaffData = stats.staff || [];
+        renderStaffTable(currentStaffData);
     } catch (error) {
         console.error('Error loading staff stats:', error);
     } finally {
@@ -294,8 +342,20 @@ async function loadStaffStats() {
     }
 }
 
+const STAFF_SORT_FIELDS = {
+    tickets: 'tickets_created',
+    articles: 'articles_created',
+    visits: 'site_visits_total'
+};
+
 function renderStaffTable(staff) {
     const tbody = document.getElementById('staffTable');
+
+    if (staffSortColumn && staff && staff.length > 0) {
+        const field = STAFF_SORT_FIELDS[staffSortColumn];
+        const dir = staffSortDir === 'asc' ? 1 : -1;
+        staff = [...staff].sort((a, b) => ((a[field] || 0) - (b[field] || 0)) * dir);
+    }
 
     if (!staff || staff.length === 0) {
         tbody.innerHTML = `
