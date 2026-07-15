@@ -8,11 +8,12 @@ This module provides:
 - Shared response helpers
 """
 
+import secrets
 from functools import wraps
 from typing import Optional, Callable, Any
 from datetime import datetime
 
-from fastapi import HTTPException, Query, Depends
+from fastapi import HTTPException, Query, Depends, Header
 from pydantic import BaseModel, Field
 
 from database import Database
@@ -43,6 +44,30 @@ def reset_db():
     """Reset database instance (for testing)."""
     global _db_instance
     _db_instance = None
+
+
+# =============================================================================
+# External API Key Guard
+# =============================================================================
+
+EXTERNAL_API_KEY_SETTING = "external_api_key"
+
+
+def verify_external_api_key(
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    db: Database = Depends(get_db),
+) -> None:
+    """Guard for endpoints that expose ticket data to external applications.
+
+    Requires an X-API-Key header matching the key configured via
+    POST /api/settings/external-api-key. Fails closed: if no key has been
+    configured yet, the endpoint is unreachable (503) rather than open.
+    """
+    configured_key = db.get_setting(EXTERNAL_API_KEY_SETTING)
+    if not configured_key:
+        raise HTTPException(status_code=503, detail="External API key not configured")
+    if not x_api_key or not secrets.compare_digest(x_api_key, configured_key):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # =============================================================================

@@ -16,7 +16,7 @@ from database import Database
 from services import StatsService, ZnunyService, ConfigService
 from config import Config, APP_VERSION
 from utils.logger import get_logger
-from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams
+from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams, verify_external_api_key
 import threading
 
 # API Router with OpenAPI tags
@@ -134,6 +134,37 @@ async def health_check():
         }
 
     return JSONResponse(content=health)
+
+
+# External integration endpoints
+@router.get(
+    "/external/open-tickets",
+    tags=["External Integration"],
+    summary="Open Tickets Export",
+    description=(
+        "Returns ISP portal tickets currently open in Znuny (linked, not closed/resolved), "
+        "for consumption by another application. Requires an X-API-Key header matching the "
+        "key configured via POST /api/settings/external-api-key."
+    ),
+    responses={
+        401: {"description": "Missing or invalid API key"},
+        503: {"description": "External API key not configured"},
+    }
+)
+@handle_errors("get open tickets export")
+async def get_external_open_tickets(
+    db: Database = Depends(get_db),
+    _auth: None = Depends(verify_external_api_key),
+):
+    from database import now_maldives
+
+    tickets = db.get_open_tickets_export()
+    return JSONResponse(content={
+        "success": True,
+        "generated_at": now_maldives().isoformat(),
+        "count": len(tickets),
+        "tickets": tickets
+    })
 
 
 # Stats endpoints

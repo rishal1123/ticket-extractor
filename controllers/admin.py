@@ -3,6 +3,7 @@ Admin Controller - Handles admin panel routes.
 """
 
 import os
+import secrets
 import tempfile
 
 from fastapi import APIRouter, HTTPException, Query, Request, Depends, Header
@@ -385,6 +386,25 @@ async def update_portal_toggles(request: Request, db: Database = Depends(get_db)
         db.set_portal_enabled(name, bool(enabled))
     logger.info(f"Per-portal extraction toggles updated: {portals}")
     return JSONResponse(content=success_response("Portal settings saved"))
+
+
+@settings_router.get("/external-api-key")
+@handle_errors("get external API key setting")
+async def get_external_api_key(db: Database = Depends(get_db)):
+    """API key required by other applications to call /api/external/open-tickets."""
+    key = db.get_setting("external_api_key")
+    return JSONResponse(content={"success": True, "configured": bool(key), "key": key})
+
+
+@settings_router.post("/external-api-key")
+@handle_errors("update external API key")
+async def update_external_api_key(request: Request, db: Database = Depends(get_db)):
+    """Set (or regenerate, if body is empty/omits "key") the external API key."""
+    data = await request.json() if await request.body() else {}
+    key = (data.get("key") or "").strip() or secrets.token_urlsafe(32)
+    db.set_setting("external_api_key", key, description="API key for /api/external/open-tickets")
+    logger.info("External API key updated")
+    return JSONResponse(content=success_response("External API key saved", {"key": key}))
 
 
 @settings_router.get("")

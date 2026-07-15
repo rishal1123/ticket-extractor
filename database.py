@@ -3394,6 +3394,29 @@ class Database:
 
             return {"total": total, "tickets": tickets}
 
+    def get_open_tickets_export(self) -> list[dict]:
+        """ISP tickets currently open in Znuny (in_znuny=1, not closed/resolved),
+        for consumption by external applications via the /api/external/open-tickets API."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    t.portal, t.ticket_id, t.address, t.account, t.customer_name,
+                    t.ticket_type, t.portal_created_at, t.service_type, t.status, t.kpi,
+                    t.notes, t.created_at, t.updated_at, t.completed_at,
+                    t.znuny_ticket_id, t.znuny_created_at, t.znuny_created_by,
+                    t.znuny_address, t.znuny_url, t.portal_url,
+                    z.state AS znuny_state, z.queue AS znuny_queue,
+                    z.owner AS znuny_owner, z.priority AS znuny_priority
+                FROM tickets t
+                LEFT JOIN znuny_tickets z ON z.isp_ticket_id = t.id
+                WHERE t.in_znuny = 1
+                  AND t.znuny_ticket_id IS NOT NULL
+                  AND (z.state IS NULL OR LOWER(z.state) NOT IN ('closed', 'resolved'))
+                ORDER BY t.znuny_created_at DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_znuny_only_stats(self, date_from: str = None, date_to: str = None) -> dict:
         """Get summary statistics for Znuny tickets (all + linked/unlinked breakdown).
 
