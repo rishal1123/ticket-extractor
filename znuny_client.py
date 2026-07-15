@@ -66,6 +66,10 @@ CHANNEL_VIA = {1: "Email", 2: "Phone", 3: "Internal"}
 # How many ticket ids to request per batched TicketGet call (URL length safety)
 TICKETGET_BATCH_SIZE = 20
 
+# After this many consecutive failed TicketGet attempts for a ticket (e.g. the
+# configured agent lacks queue permission for it), stop retrying it.
+MAX_GET_DETAILS_FAILURES = 5
+
 # HTTP request timeout (seconds)
 HTTP_TIMEOUT = 30.0
 
@@ -292,6 +296,11 @@ class ZnunyClient:
     # REST-specific caches
     _number_to_id_cache: dict[str, str] = {}  # {ticket_number: ticket_id}
     _user_names: dict[str, str] = {}  # {user_id (str): display name} harvested from agent articles
+
+    # Per-ticket TicketGet failure tracking (e.g. persistent access-denied tickets).
+    # After MAX_GET_DETAILS_FAILURES consecutive failures, the ticket is given up on.
+    _get_details_fail_counts: dict[str, int] = {}  # {ticket_number: consecutive failure count}
+    _get_details_gaveup: set = set()  # {ticket_number} no longer fetched
 
     # Thread safety: protects shared cache mutations
     _page_lock = threading.RLock()
@@ -637,6 +646,20 @@ class ZnunyClient:
 
         return results
 
+    def _note_get_details_failure(self, ticket_number: str) -> None:
+        """Track a failed TicketGet attempt; give up on the ticket after
+        MAX_GET_DETAILS_FAILURES consecutive failures (e.g. persistent
+        access-denied because the configured agent lacks queue permission)."""
+        count = ZnunyClient._get_details_fail_counts.get(ticket_number, 0) + 1
+        ZnunyClient._get_details_fail_counts[ticket_number] = count
+        if count >= MAX_GET_DETAILS_FAILURES:
+            ZnunyClient._get_details_gaveup.add(ticket_number)
+            ZnunyClient._get_details_fail_counts.pop(ticket_number, None)
+            logger.warning(
+                f"Ticket {ticket_number}: TicketGet failed {count} times in a row "
+                f"(likely access-denied) — giving up, will no longer be fetched from Znuny"
+            )
+
     def get_ticket_details(self, ticket_number: str, skip_body_fetch: bool = False,
                            bypass_cache: bool = False) -> ZnunyTicketDetails | None:
         """Fetch detailed information about a Znuny ticket.
@@ -658,15 +681,21 @@ class ZnunyClient:
                 logger.debug(f"Using cached details for ticket {ticket_number}")
                 return cached[0]
 
+        if ticket_number in ZnunyClient._get_details_gaveup:
+            return None
+
         with ZnunyClient._page_lock:
             ticket_id = self._resolve_ticket_id(ticket_number)
             if not ticket_id:
                 logger.warning(f"Ticket {ticket_number} could not be resolved to a TicketID")
+                self._note_get_details_failure(ticket_number)
                 return None
             tickets = self._ticket_get([ticket_id], with_articles=True)
             if not tickets:
                 logger.warning(f"Ticket {ticket_number}: TicketGet returned nothing")
+                self._note_get_details_failure(ticket_number)
                 return None
+            ZnunyClient._get_details_fail_counts.pop(ticket_number, None)
             t = tickets[0]
             self._harvest_user_names(t)
             return self._build_details_from_ticket(ticket_number, ticket_id, t, skip_body_fetch)
@@ -689,6 +718,8 @@ class ZnunyClient:
         to_fetch: dict[str, str] = {}
         for summary in open_tickets:
             number = summary["ticket_number"]
+            if number in ZnunyClient._get_details_gaveup:
+                continue
             cached = self._ticket_details_cache.get(number)
             if cached and now - cached[1] < CACHE_TTL_SECONDS:
                 continue
