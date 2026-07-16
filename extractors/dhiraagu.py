@@ -263,6 +263,7 @@ class DhiraaguExtractor(BaseExtractor):
 
             new_orders = []
             seen_ids = set()
+            known_status_map = {}
             page_num = 1
             MAX_PAGES = 50
             while page_num <= MAX_PAGES:
@@ -280,6 +281,7 @@ class DhiraaguExtractor(BaseExtractor):
                     seen_ids.add(order_data['service_num'])
                     if self.is_known_ticket(order_data['service_num']):
                         tickets.append(self.presence_ticket(order_data['service_num']))
+                        known_status_map[order_data['service_num']] = order_data.get('status')
                         if (order_data['service_num'] in missing_customer_ids
                                 and len(backfill_targets) < BACKFILL_LIMIT):
                             backfill_targets.append(order_data)
@@ -291,6 +293,17 @@ class DhiraaguExtractor(BaseExtractor):
                 f"Listing done: {len(seen_ids)} tickets across {page_num} page(s) — "
                 f"{len(tickets)} known present, {len(new_orders)} new to enrich"
             )
+
+            # Known tickets' status (e.g. New -> Suspended) can change on the portal
+            # without the ticket ever leaving/re-entering the list, and it's already
+            # read for free during listing above — refresh it without a detail visit.
+            if known_status_map:
+                try:
+                    updated = self.db.update_tickets_status_bulk("dhiraagu", known_status_map)
+                    if updated:
+                        self.logger.info(f"Refreshed status for {updated} known Dhiraagu ticket(s)")
+                except Exception as e:
+                    self.logger.debug(f"Status refresh failed: {e}")
 
             # --- DETAIL PHASE ---
             # Enrich each NEW ticket from its own detail page via direct URL — no row

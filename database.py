@@ -1258,6 +1258,27 @@ class Database:
             )
             return cursor.rowcount > 0
 
+    def update_tickets_status_bulk(self, portal: str, status_map: dict[str, str]) -> int:
+        """Refresh the status column for known/presence-only tickets.
+
+        Presence-only extraction skips detail-page re-fetches, but the list-row
+        status (e.g. Dhiraagu's New -> Suspended) is already read for every row
+        during listing, so it can be kept current without any extra page visit.
+        Only writes rows whose stored status actually differs. Returns count updated.
+        """
+        status_map = {tid: s for tid, s in status_map.items() if s}
+        if not status_map:
+            return 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now = now_maldives()
+            cursor.executemany(
+                "UPDATE tickets SET status = ?, updated_at = ? "
+                "WHERE portal = ? AND ticket_id = ? AND status IS NOT ?",
+                [(status, now, portal, ticket_id, status) for ticket_id, status in status_map.items()]
+            )
+            return cursor.rowcount
+
     def get_portal_urls_for_tickets(self, portal: str, ticket_ids: list[str]) -> dict[str, str]:
         """Get portal_url for given ticket IDs. Returns {ticket_id: portal_url}."""
         if not ticket_ids:
