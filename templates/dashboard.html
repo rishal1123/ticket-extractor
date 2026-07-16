@@ -588,7 +588,8 @@ async function loadStats() {
         const stats = await response.json();
 
         document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
-        document.getElementById('totalIspOpenCount').textContent = stats.total || 0;
+        const totalSuspended = stats.by_status?.Suspended || 0;
+        document.getElementById('totalIspOpenCount').textContent = (stats.total || 0) - totalSuspended;
 
         const portals = stats.by_portal || {};
         const dhiraaguSuspended = (stats.by_portal_status?.dhiraagu?.Suspended) || 0;
