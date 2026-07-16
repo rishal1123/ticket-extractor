@@ -1444,6 +1444,7 @@ class Database:
             by_portal = {}
             by_status = {}
             by_type = {}
+            by_portal_status = {}
             total = 0
             completed = 0
             not_in_znuny = 0
@@ -1472,6 +1473,8 @@ class Database:
                     by_portal[portal] = by_portal.get(portal, 0) + cnt
                     by_status[status] = by_status.get(status, 0) + cnt
                     by_type[ticket_type] = by_type.get(ticket_type, 0) + cnt
+                    portal_statuses = by_portal_status.setdefault(portal, {})
+                    portal_statuses[status] = portal_statuses.get(status, 0) + cnt
                     if not in_znuny:
                         not_in_znuny += cnt
                     else:
@@ -1514,6 +1517,7 @@ class Database:
                 "by_portal": by_portal,
                 "not_in_znuny": not_in_znuny,
                 "by_status": by_status,
+                "by_portal_status": by_portal_status,
                 "by_type": by_type,
                 "last_extraction": last_extraction,
                 "open_in_znuny": open_in_znuny,

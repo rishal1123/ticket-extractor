@@ -241,8 +241,9 @@ class DhiraaguExtractor(BaseExtractor):
             self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
             time.sleep(2)
 
-            # Best-effort: show 100 rows/page (Filament default is 10) to reduce pages.
-            self._set_records_per_page(100)
+            # Best-effort: show 50 rows/page (Filament default is 10, 50 is the max
+            # option on this portal) to reduce the number of paginated fetches.
+            self._set_records_per_page(50)
 
             # --- LISTING PHASE (URL-based pagination) ---
             # Walk pages via ?page=N (Livewire/Laravel honor the `page` query param)

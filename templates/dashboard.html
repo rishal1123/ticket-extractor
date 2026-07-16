@@ -137,6 +137,7 @@
                 </div>
                 <div class="today-count mt-1">
                     <small class="badge bg-light text-dark border">Today: <span id="todayDhiraagu">0</span></small>
+                    <small class="badge bg-warning text-dark border" id="dhiraaguSuspendedBadge" style="display: none;">Suspended: <span id="dhiraaguSuspended">0</span></small>
                 </div>
             </div>
         </div>
@@ -590,10 +591,15 @@ async function loadStats() {
         document.getElementById('totalIspOpenCount').textContent = stats.total || 0;
 
         const portals = stats.by_portal || {};
-        document.getElementById('dhiraaguCount').textContent = portals['dhiraagu'] || 0;
+        const dhiraaguSuspended = (stats.by_portal_status?.dhiraagu?.Suspended) || 0;
+        document.getElementById('dhiraaguCount').textContent = (portals['dhiraagu'] || 0) - dhiraaguSuspended;
         document.getElementById('ooredooCount').textContent = portals['ooredoo'] || 0;
         document.getElementById('rolCount').textContent = portals['rol'] || 0;
         document.getElementById('medianetCount').textContent = portals['medianet'] || 0;
+
+        const dhiraaguSuspendedBadge = document.getElementById('dhiraaguSuspendedBadge');
+        document.getElementById('dhiraaguSuspended').textContent = dhiraaguSuspended;
+        dhiraaguSuspendedBadge.style.display = dhiraaguSuspended > 0 ? '' : 'none';
 
         const lastExtraction = stats.last_extraction || {};
         updateExtractionInfo('dhiraagu', lastExtraction['dhiraagu']);
