@@ -256,6 +256,50 @@
     <span class="text-muted small ms-auto" id="lastUpdate">--</span>
 </div>
 
+<!-- Ticket Filters -->
+<div class="filter-section mb-3">
+    <div class="row g-2 align-items-end">
+        <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label">Search</label>
+            <input type="text" class="form-control form-control-sm" id="dashSearchInput" placeholder="Ticket ID, customer...">
+        </div>
+        <div class="col-6 col-sm-3 col-md-2">
+            <label class="form-label">Portal</label>
+            <select class="form-select form-select-sm" id="dashPortalFilter">
+                <option value="">All</option>
+                <option value="dhiraagu">Dhiraagu</option>
+                <option value="ooredoo">Ooredoo</option>
+                <option value="rol">ROL</option>
+                <option value="medianet">Medianet</option>
+            </select>
+        </div>
+        <div class="col-6 col-sm-3 col-md-2">
+            <label class="form-label">Status</label>
+            <select class="form-select form-select-sm" id="dashStatusFilter">
+                <option value="">All</option>
+            </select>
+        </div>
+        <div class="col-6 col-sm-3 col-md-2">
+            <label class="form-label">Znuny</label>
+            <select class="form-select form-select-sm" id="dashZnunyFilter">
+                <option value="">All</option>
+                <option value="false">Not in Znuny</option>
+                <option value="true">In Znuny</option>
+            </select>
+        </div>
+        <div class="col-6 col-sm-3 col-md-2">
+            <button class="btn btn-primary btn-sm w-100" onclick="applyDashTicketFilters()">
+                <i class="bi bi-search me-1"></i>Filter
+            </button>
+        </div>
+        <div class="col-6 col-sm-3 col-md-2">
+            <button class="btn btn-outline-secondary btn-sm w-100" onclick="clearDashTicketFilters()">
+                <i class="bi bi-x-circle me-1"></i>Clear
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Tickets Table -->
 <div class="table-container">
     <div class="table-responsive">
@@ -441,7 +485,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadDelayedTickets();
     loadZnunySyncStatus();
     setInterval(() => { if (!document.hidden) refreshAll(); }, 30000);
+
+    document.getElementById('dashSearchInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') applyDashTicketFilters();
+    });
+    document.getElementById('dashPortalFilter').addEventListener('change', applyDashTicketFilters);
+    document.getElementById('dashStatusFilter').addEventListener('change', applyDashTicketFilters);
+    document.getElementById('dashZnunyFilter').addEventListener('change', applyDashTicketFilters);
 });
+
+function applyDashTicketFilters() {
+    currentPage = 0;
+    loadTickets();
+}
+
+function clearDashTicketFilters() {
+    document.getElementById('dashSearchInput').value = '';
+    document.getElementById('dashPortalFilter').value = '';
+    document.getElementById('dashStatusFilter').value = '';
+    document.getElementById('dashZnunyFilter').value = '';
+    applyDashTicketFilters();
+}
 
 // Delayed Tickets Analysis Functions
 function setDelayedDateFilter(filter) {
@@ -585,10 +649,24 @@ function updateDelayedSummary(tickets) {
     document.getElementById('delayedByStaff').textContent = staffSet.size;
 }
 
+function populateDashStatusFilter(byStatus) {
+    const statusFilter = document.getElementById('dashStatusFilter');
+    const current = statusFilter.value;
+    const statuses = Object.keys(byStatus).sort();
+    const options = ['<option value="">All</option>', ...statuses.map(s => `<option value="${s}">${s}</option>`)];
+    const optionsHtml = options.join('');
+    if (statusFilter.innerHTML !== optionsHtml) {
+        statusFilter.innerHTML = optionsHtml;
+        if (statuses.includes(current)) statusFilter.value = current;
+    }
+}
+
 async function loadStats() {
     try {
         const response = await fetch('/api/stats');
         const stats = await response.json();
+
+        populateDashStatusFilter(stats.by_status || {});
 
         document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
         const totalSuspended = stats.by_status?.Suspended || 0;
@@ -735,7 +813,22 @@ async function loadTickets() {
     showLoading(true);
     try {
         const sort = ticketSortColumn ? `${ticketSortColumn}_${ticketSortDir}` : 'not_in_znuny';
-        const response = await fetch(`/api/tickets?limit=${pageSize}&offset=${currentPage * pageSize}&sort=${sort}`);
+        const params = new URLSearchParams();
+        params.append('limit', pageSize);
+        params.append('offset', currentPage * pageSize);
+        params.append('sort', sort);
+
+        const search = document.getElementById('dashSearchInput').value;
+        const portal = document.getElementById('dashPortalFilter').value;
+        const status = document.getElementById('dashStatusFilter').value;
+        const inZnuny = document.getElementById('dashZnunyFilter').value;
+
+        if (search) params.append('search', search);
+        if (portal) params.append('portal', portal);
+        if (status) params.append('status', status);
+        if (inZnuny) params.append('in_znuny', inZnuny);
+
+        const response = await fetch(`/api/tickets?${params.toString()}`);
         const data = await response.json();
 
         renderTickets(data.tickets);
