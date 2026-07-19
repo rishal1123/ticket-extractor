@@ -494,6 +494,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('dashZnunyFilter').addEventListener('change', applyDashTicketFilters);
 });
 
+function hasActiveDashFilters() {
+    return !!(
+        document.getElementById('dashSearchInput').value ||
+        document.getElementById('dashPortalFilter').value ||
+        document.getElementById('dashStatusFilter').value ||
+        document.getElementById('dashZnunyFilter').value
+    );
+}
+
 function applyDashTicketFilters() {
     currentPage = 0;
     loadTickets();
@@ -505,6 +514,7 @@ function clearDashTicketFilters() {
     document.getElementById('dashStatusFilter').value = '';
     document.getElementById('dashZnunyFilter').value = '';
     applyDashTicketFilters();
+    loadStats();
 }
 
 // Delayed Tickets Analysis Functions
@@ -670,7 +680,11 @@ async function loadStats() {
 
         document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
         const totalSuspended = stats.by_status?.Suspended || 0;
-        document.getElementById('totalIspOpenCount').textContent = (stats.total || 0) - totalSuspended;
+        // While a ticket-table filter is active, loadTickets() drives this count
+        // (filtered total) instead — don't clobber it with the unfiltered total.
+        if (!hasActiveDashFilters()) {
+            document.getElementById('totalIspOpenCount').textContent = (stats.total || 0) - totalSuspended;
+        }
         document.getElementById('totalSuspended').textContent = totalSuspended;
         document.getElementById('totalSuspendedBadge').style.display = totalSuspended > 0 ? '' : 'none';
 
@@ -833,6 +847,11 @@ async function loadTickets() {
 
         renderTickets(data.tickets);
         renderPagination(data.total, currentPage, pageSize, 'goToPage');
+
+        // With a filter active, the "Total ISP Open" card reflects the filtered count.
+        if (search || portal || status || inZnuny) {
+            document.getElementById('totalIspOpenCount').textContent = data.total || 0;
+        }
 
     } catch (error) {
         console.error('Error loading tickets:', error);
