@@ -109,6 +109,35 @@
 .sort-icon.active {
     opacity: 1;
 }
+.live-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #198754;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #198754;
+    animation: live-pulse 2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.5); }
+    50% { box-shadow: 0 0 0 5px rgba(25, 135, 84, 0); }
+}
+@keyframes value-flash {
+    0% { background-color: rgba(13, 110, 253, 0.25); }
+    100% { background-color: transparent; }
+}
+.value-flash {
+    animation: value-flash 1.2s ease-out;
+    border-radius: 4px;
+}
 {% endblock %}
 
 {% block content %}
@@ -253,7 +282,10 @@
     <button class="btn btn-outline-secondary btn-sm" onclick="syncAllZnunyDetails()">
         <i class="bi bi-cloud-download me-1"></i>Sync Details
     </button>
-    <span class="text-muted small ms-auto" id="lastUpdate">--</span>
+    <span class="d-flex align-items-center gap-2 ms-auto">
+        <span class="live-indicator" title="Auto-refreshing every 30s"><span class="live-dot"></span>Live</span>
+        <span class="text-muted small" id="lastUpdate">--</span>
+    </span>
 </div>
 
 <!-- Ticket Filters -->
@@ -445,6 +477,20 @@ let ticketSortDir = 'desc';
 let delayedDateFilter = 'today';
 let delayedTimeFilter = 5;
 let allTicketsCache = [];
+
+// Sets a stat number and briefly flashes it if the value actually changed,
+// so live background refreshes are visibly confirmed rather than silent.
+function setStatValue(elId, value) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const newText = String(value);
+    if (el.textContent !== newText) {
+        el.textContent = newText;
+        el.classList.remove('value-flash');
+        void el.offsetWidth; // restart animation
+        el.classList.add('value-flash');
+    }
+}
 
 // Portal URLs from config
 const portalUrls = {
@@ -668,18 +714,18 @@ async function loadStats() {
 
         populateDashStatusFilter(stats.by_status || {});
 
-        document.getElementById('notInZnuny').textContent = stats.not_in_znuny || 0;
+        setStatValue('notInZnuny', stats.not_in_znuny || 0);
         const totalSuspended = stats.by_status?.Suspended || 0;
-        document.getElementById('totalIspOpenCount').textContent = (stats.total || 0) - totalSuspended;
+        setStatValue('totalIspOpenCount', (stats.total || 0) - totalSuspended);
         document.getElementById('totalSuspended').textContent = totalSuspended;
         document.getElementById('totalSuspendedBadge').style.display = totalSuspended > 0 ? '' : 'none';
 
         const portals = stats.by_portal || {};
         const dhiraaguSuspended = (stats.by_portal_status?.dhiraagu?.Suspended) || 0;
-        document.getElementById('dhiraaguCount').textContent = (portals['dhiraagu'] || 0) - dhiraaguSuspended;
-        document.getElementById('ooredooCount').textContent = portals['ooredoo'] || 0;
-        document.getElementById('rolCount').textContent = portals['rol'] || 0;
-        document.getElementById('medianetCount').textContent = portals['medianet'] || 0;
+        setStatValue('dhiraaguCount', (portals['dhiraagu'] || 0) - dhiraaguSuspended);
+        setStatValue('ooredooCount', portals['ooredoo'] || 0);
+        setStatValue('rolCount', portals['rol'] || 0);
+        setStatValue('medianetCount', portals['medianet'] || 0);
 
         const dhiraaguSuspendedBadge = document.getElementById('dhiraaguSuspendedBadge');
         document.getElementById('dhiraaguSuspended').textContent = dhiraaguSuspended;
@@ -693,23 +739,23 @@ async function loadStats() {
 
         // Today's extractions per portal
         const todayExtracted = stats.today_extracted || {};
-        document.getElementById('todayDhiraagu').textContent = todayExtracted['dhiraagu'] || 0;
-        document.getElementById('todayOoredoo').textContent = todayExtracted['ooredoo'] || 0;
-        document.getElementById('todayRol').textContent = todayExtracted['rol'] || 0;
-        document.getElementById('todayMedianet').textContent = todayExtracted['medianet'] || 0;
+        setStatValue('todayDhiraagu', todayExtracted['dhiraagu'] || 0);
+        setStatValue('todayOoredoo', todayExtracted['ooredoo'] || 0);
+        setStatValue('todayRol', todayExtracted['rol'] || 0);
+        setStatValue('todayMedianet', todayExtracted['medianet'] || 0);
 
         // Site visits stats
-        document.getElementById('pendingSiteVisits').textContent = stats.pending_site_visits || 0;
-        document.getElementById('todaySiteVisitsCreated').textContent = stats.today_site_visits_created || 0;
-        document.getElementById('todaySiteVisitsCompleted').textContent = stats.today_site_visits_completed || 0;
+        setStatValue('pendingSiteVisits', stats.pending_site_visits || 0);
+        setStatValue('todaySiteVisitsCreated', stats.today_site_visits_created || 0);
+        setStatValue('todaySiteVisitsCompleted', stats.today_site_visits_completed || 0);
 
         // Today's Znuny activity
-        document.getElementById('todayZnunyCount').textContent = stats.today_znuny_entries || 0;
-        document.getElementById('todayZnunyArticles').textContent = stats.today_articles_created || 0;
+        setStatValue('todayZnunyCount', stats.today_znuny_entries || 0);
+        setStatValue('todayZnunyArticles', stats.today_articles_created || 0);
 
         // Today's ISP totals
-        document.getElementById('todayExtractedTotal').textContent = stats.today_extracted_total || 0;
-        document.getElementById('todayCompletedCount').textContent = stats.today_completed || 0;
+        setStatValue('todayExtractedTotal', stats.today_extracted_total || 0);
+        setStatValue('todayCompletedCount', stats.today_completed || 0);
 
         document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
 
