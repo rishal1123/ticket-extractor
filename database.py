@@ -3421,7 +3421,14 @@ class Database:
 
     def get_open_tickets_export(self) -> list[dict]:
         """ISP tickets currently open in Znuny (in_znuny=1, not closed/resolved),
-        for consumption by external applications via the /api/external/open-tickets API."""
+        for consumption by external applications via the /api/external/open-tickets API.
+
+        Joins on t.znuny_ticket_id = z.znuny_ticket_id (the ticket's own current,
+        unique link), not z.isp_ticket_id = t.id: a ticket can accumulate multiple
+        historical znuny_tickets rows pointing isp_ticket_id back at it (e.g.
+        re-linked after a duplicate Znuny ticket), and joining on isp_ticket_id fans
+        out to those stale rows — duplicating the ticket in the export and possibly
+        reporting a stale/unrelated state instead of its actual current one."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -3434,7 +3441,7 @@ class Database:
                     z.state AS znuny_state, z.queue AS znuny_queue,
                     z.owner AS znuny_owner, z.priority AS znuny_priority
                 FROM tickets t
-                LEFT JOIN znuny_tickets z ON z.isp_ticket_id = t.id
+                LEFT JOIN znuny_tickets z ON z.znuny_ticket_id = t.znuny_ticket_id
                 WHERE t.in_znuny = 1
                   AND t.znuny_ticket_id IS NOT NULL
                   AND (z.state IS NULL OR LOWER(z.state) NOT IN ('closed', 'resolved'))
@@ -3444,9 +3451,22 @@ class Database:
 
     def get_znuny_open_isp_closed(self, limit: int = 200) -> list[dict]:
         """ISP-linked tickets that disappeared from the ISP portal (completed_at set)
-        while their linked Znuny ticket is still open — i.e. the field work looks done
-        but nobody closed the Znuny ticket. Mirror case of the "closed in Znuny but
-        still on the portal" mismatch highlighted on the tickets list."""
+        while their linked Znuny ticket is confirmed still open — i.e. the field work
+        looks done but nobody closed the Znuny ticket. Mirror case of the "closed in
+        Znuny but still on the portal" mismatch highlighted on the tickets list.
+
+        Joins on t.znuny_ticket_id = z.znuny_ticket_id (the ticket's own current,
+        unique link) rather than z.isp_ticket_id = t.id: a ticket can accumulate
+        multiple historical znuny_tickets rows pointing isp_ticket_id back at it
+        (e.g. re-linked after a duplicate Znuny ticket), and joining on isp_ticket_id
+        fans out to those stale rows instead of the one Znuny ticket that's actually
+        current.
+
+        Requires a matching znuny_tickets row (INNER JOIN, not LEFT JOIN): plenty of
+        old tickets carry a znuny_ticket_id that predates znuny_tickets tracking or
+        was never re-synced, so we have no row for them at all. Treating "no data" as
+        "still open" would flood this list with years-old noise instead of tickets
+        that are actually confirmed open right now."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -3457,11 +3477,11 @@ class Database:
                     t.znuny_url, t.portal_url,
                     z.state AS znuny_state, z.queue AS znuny_queue, z.owner AS znuny_owner
                 FROM tickets t
-                LEFT JOIN znuny_tickets z ON z.isp_ticket_id = t.id
+                JOIN znuny_tickets z ON z.znuny_ticket_id = t.znuny_ticket_id
                 WHERE t.in_znuny = 1
                   AND t.znuny_ticket_id IS NOT NULL
                   AND t.completed_at IS NOT NULL
-                  AND (z.state IS NULL OR LOWER(z.state) NOT IN ('closed', 'resolved'))
+                  AND LOWER(z.state) NOT IN ('closed', 'resolved')
                 ORDER BY t.completed_at DESC
                 LIMIT ?
             """, (limit,))
@@ -3471,7 +3491,10 @@ class Database:
         """ISP-linked tickets whose Znuny ticket was closed while the ticket is still
         active on the ISP portal (completed_at not set) — the mirror case of
         get_znuny_open_isp_closed, and the same condition the tickets table highlights
-        client-side, computed here across all active tickets (not just one page)."""
+        client-side, computed here across all active tickets (not just one page).
+
+        See get_znuny_open_isp_closed for why this joins on znuny_ticket_id rather
+        than isp_ticket_id."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -3482,7 +3505,7 @@ class Database:
                     t.znuny_url, t.portal_url,
                     z.state AS znuny_state, z.queue AS znuny_queue, z.owner AS znuny_owner
                 FROM tickets t
-                JOIN znuny_tickets z ON z.isp_ticket_id = t.id
+                JOIN znuny_tickets z ON z.znuny_ticket_id = t.znuny_ticket_id
                 WHERE t.in_znuny = 1
                   AND t.znuny_ticket_id IS NOT NULL
                   AND t.completed_at IS NULL
