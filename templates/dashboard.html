@@ -233,17 +233,6 @@
         </a>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" id="notInZnunyCard" style="background-color: #dc3545; border: none;">
-            <div class="card-body text-center py-3">
-                <div class="stat-value text-white" id="notInZnuny">0</div>
-                <div class="fw-semibold mb-1 text-white" id="notInZnunyLabel">Not in Znuny</div>
-                <div class="extraction-info">
-                    <small class="text-white-50" id="znunySyncInfo">--</small>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-4 col-lg-2">
         <a href="/field-visits" class="text-decoration-none">
             <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #f39c12;" title="View site visits">
                 <div class="card-body text-center py-3">
@@ -273,7 +262,18 @@
         </a>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="background-color: #fd7e14; border: none;" title="ISP ticket completed on the portal but its Znuny ticket is still open">
+        <div class="stat-card card h-100 portal-card-link" id="notInZnunyCard" style="background-color: #dc3545; border: none;" onclick="filterFromCard('false')" title="Click to filter the tickets table">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-white" id="notInZnuny">0</div>
+                <div class="fw-semibold mb-1 text-white" id="notInZnunyLabel">Not in Znuny</div>
+                <div class="extraction-info">
+                    <small class="text-white-50" id="znunySyncInfo">--</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100 portal-card-link" style="background-color: #fd7e14; border: none;" onclick="scrollToSection('znunyOpenIspClosedSection')" title="ISP ticket completed on the portal but its Znuny ticket is still open — click to view">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="ispClosedZnunyOpenCount">0</div>
                 <div class="fw-semibold mb-1 text-white">ISP Closed, Znuny Open</div>
@@ -284,7 +284,7 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="background-color: #dc3545; border: none;" title="Znuny ticket closed but the ISP ticket is still active on the portal">
+        <div class="stat-card card h-100 portal-card-link" style="background-color: #d63384; border: none;" onclick="filterFromCard('znuny_closed_isp_open')" title="Znuny ticket closed but the ISP ticket is still active on the portal — click to filter">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="znunyClosedIspOpenCount">0</div>
                 <div class="fw-semibold mb-1 text-white">Znuny Closed, ISP Open</div>
@@ -339,6 +339,8 @@
                 <option value="">All</option>
                 <option value="false">Not in Znuny</option>
                 <option value="true">In Znuny</option>
+                <option value="isp_closed_znuny_open">ISP Closed, Znuny Open</option>
+                <option value="znuny_closed_isp_open">Znuny Closed, ISP Open</option>
             </select>
         </div>
         <div class="col-6 col-sm-3 col-md-2">
@@ -355,7 +357,7 @@
 </div>
 
 <!-- Tickets Table -->
-<div class="table-container">
+<div class="table-container" id="ticketsTableSection">
     <div class="table-responsive">
         <table class="table table-hover mb-0">
             <thead>
@@ -382,6 +384,36 @@
         <nav>
             <ul class="pagination pagination-sm mb-0" id="pagination"></ul>
         </nav>
+    </div>
+</div>
+
+<!-- Znuny Open but ISP Closed Section -->
+<div class="table-container mt-4" id="znunyOpenIspClosedSection">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0">
+            <i class="bi bi-arrow-repeat text-danger me-2"></i>
+            Open in Znuny, Closed on Portal
+            <small class="text-muted fs-6">(ISP work looks done — Znuny ticket wasn't closed)</small>
+        </h5>
+        <span class="badge bg-danger" id="znunyOpenIspClosedCount">--</span>
+    </div>
+    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+        <table class="table table-hover table-sm mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Portal</th>
+                    <th>Ticket ID</th>
+                    <th class="d-none d-sm-table-cell">Customer</th>
+                    <th class="d-none d-md-table-cell">Completed On Portal</th>
+                    <th>Znuny State</th>
+                    <th class="d-none d-sm-table-cell">Znuny Created By</th>
+                    <th>Znuny</th>
+                </tr>
+            </thead>
+            <tbody id="znunyOpenIspClosedTable">
+                <!-- Filled by JavaScript -->
+            </tbody>
+        </table>
     </div>
 </div>
 
@@ -473,36 +505,6 @@
                 </tr>
             </thead>
             <tbody id="delayedTicketsTable">
-                <!-- Filled by JavaScript -->
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Znuny Open but ISP Closed Section -->
-<div class="table-container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="mb-0">
-            <i class="bi bi-arrow-repeat text-danger me-2"></i>
-            Open in Znuny, Closed on Portal
-            <small class="text-muted fs-6">(ISP work looks done — Znuny ticket wasn't closed)</small>
-        </h5>
-        <span class="badge bg-danger" id="znunyOpenIspClosedCount">--</span>
-    </div>
-    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
-        <table class="table table-hover table-sm mb-0">
-            <thead class="sticky-top bg-white">
-                <tr>
-                    <th>Portal</th>
-                    <th>Ticket ID</th>
-                    <th class="d-none d-sm-table-cell">Customer</th>
-                    <th class="d-none d-md-table-cell">Completed On Portal</th>
-                    <th>Znuny State</th>
-                    <th class="d-none d-sm-table-cell">Znuny Created By</th>
-                    <th>Znuny</th>
-                </tr>
-            </thead>
-            <tbody id="znunyOpenIspClosedTable">
                 <!-- Filled by JavaScript -->
             </tbody>
         </table>
@@ -909,9 +911,48 @@ function updateSortIcons() {
     }
 }
 
+// The Znuny filter's two mismatch options aren't a plain in_znuny=true/false split,
+// so they're served by their own dedicated endpoints (built for the stat cards /
+// mismatch sections) instead of /api/tickets. They return an already-capped flat
+// list, so there's no offset/page-by-page pagination for these.
+const ZNUNY_MISMATCH_ENDPOINTS = {
+    'isp_closed_znuny_open': '/api/tickets/znuny-open-isp-closed',
+    'znuny_closed_isp_open': '/api/tickets/znuny-closed-isp-open',
+};
+
+// Used by the "Not in Znuny" / "Znuny Closed, ISP Open" stat cards (no dedicated
+// section of their own): select the matching Znuny filter and scroll to the
+// tickets table.
+function filterFromCard(znunyFilterValue) {
+    document.getElementById('dashZnunyFilter').value = znunyFilterValue;
+    applyDashTicketFilters();
+    document.getElementById('ticketsTableSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Used by the "ISP Closed, Znuny Open" stat card: it already has its own dedicated
+// "Open in Znuny, Closed on Portal" section further down the page, so jump straight
+// there instead of filtering the main tickets table.
+function scrollToSection(sectionId) {
+    const el = document.getElementById(sectionId);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function loadTickets() {
     showLoading(true);
     try {
+        const inZnuny = document.getElementById('dashZnunyFilter').value;
+        const mismatchEndpoint = ZNUNY_MISMATCH_ENDPOINTS[inZnuny];
+
+        if (mismatchEndpoint) {
+            const response = await fetch(`${mismatchEndpoint}?limit=500`);
+            const data = await response.json();
+            renderTickets(data.tickets, 'No matching tickets');
+            document.getElementById('paginationInfo').textContent =
+                data.total > 0 ? `Showing ${data.total} tickets` : 'No tickets';
+            document.getElementById('pagination').innerHTML = '';
+            return;
+        }
+
         const sort = ticketSortColumn ? `${ticketSortColumn}_${ticketSortDir}` : 'not_in_znuny';
         const params = new URLSearchParams();
         params.append('limit', pageSize);
@@ -921,7 +962,6 @@ async function loadTickets() {
         const search = document.getElementById('dashSearchInput').value;
         const portal = document.getElementById('dashPortalFilter').value;
         const status = document.getElementById('dashStatusFilter').value;
-        const inZnuny = document.getElementById('dashZnunyFilter').value;
 
         if (search) params.append('search', search);
         if (portal) params.append('portal', portal);
@@ -941,7 +981,7 @@ async function loadTickets() {
     }
 }
 
-function renderTickets(tickets) {
+function renderTickets(tickets, emptyMessage) {
     const tbody = document.getElementById('ticketsTable');
     tbody.innerHTML = '';
 
@@ -950,7 +990,7 @@ function renderTickets(tickets) {
             <tr>
                 <td colspan="10" class="text-center text-muted py-5">
                     <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-                    No active tickets
+                    ${emptyMessage || 'No active tickets'}
                 </td>
             </tr>
         `;

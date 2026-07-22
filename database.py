@@ -3472,7 +3472,7 @@ class Database:
             cursor.execute("""
                 SELECT
                     t.id, t.portal, t.ticket_id, t.address, t.account, t.customer_name,
-                    t.ticket_type, t.status, t.completed_at,
+                    t.ticket_type, t.status, t.created_at, t.completed_at, 1 AS in_znuny,
                     t.znuny_ticket_id, t.znuny_created_at, t.znuny_created_by,
                     t.znuny_url, t.portal_url,
                     z.state AS znuny_state, z.queue AS znuny_queue, z.owner AS znuny_owner
@@ -3500,7 +3500,7 @@ class Database:
             cursor.execute("""
                 SELECT
                     t.id, t.portal, t.ticket_id, t.address, t.account, t.customer_name,
-                    t.ticket_type, t.status, t.updated_at,
+                    t.ticket_type, t.status, t.created_at, t.updated_at, 1 AS in_znuny,
                     t.znuny_ticket_id, t.znuny_created_at, t.znuny_created_by,
                     t.znuny_url, t.portal_url,
                     z.state AS znuny_state, z.queue AS znuny_queue, z.owner AS znuny_owner

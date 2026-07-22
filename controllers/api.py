@@ -302,7 +302,7 @@ async def get_znuny_open_isp_closed(
     # Normalize stored "YYYY-MM-DD HH:MM:SS+TZ" strings to isoformat's "T" separator,
     # matching every other endpoint's date strings so the shared JS date parsing works.
     for t in tickets:
-        for key in ("completed_at", "znuny_created_at"):
+        for key in ("created_at", "completed_at", "znuny_created_at"):
             if t.get(key):
                 t[key] = datetime.fromisoformat(t[key]).isoformat()
     return JSONResponse(content={"total": len(tickets), "tickets": tickets})
@@ -325,7 +325,7 @@ async def get_znuny_closed_isp_open(
 ):
     tickets = db.get_znuny_closed_isp_open(limit=limit)
     for t in tickets:
-        for key in ("updated_at", "znuny_created_at"):
+        for key in ("created_at", "updated_at", "znuny_created_at"):
             if t.get(key):
                 t[key] = datetime.fromisoformat(t[key]).isoformat()
     return JSONResponse(content={"total": len(tickets), "tickets": tickets})
