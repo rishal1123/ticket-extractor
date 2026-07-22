@@ -3442,6 +3442,56 @@ class Database:
             """)
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_znuny_open_isp_closed(self, limit: int = 200) -> list[dict]:
+        """ISP-linked tickets that disappeared from the ISP portal (completed_at set)
+        while their linked Znuny ticket is still open — i.e. the field work looks done
+        but nobody closed the Znuny ticket. Mirror case of the "closed in Znuny but
+        still on the portal" mismatch highlighted on the tickets list."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    t.id, t.portal, t.ticket_id, t.address, t.account, t.customer_name,
+                    t.ticket_type, t.status, t.completed_at,
+                    t.znuny_ticket_id, t.znuny_created_at, t.znuny_created_by,
+                    t.znuny_url, t.portal_url,
+                    z.state AS znuny_state, z.queue AS znuny_queue, z.owner AS znuny_owner
+                FROM tickets t
+                LEFT JOIN znuny_tickets z ON z.isp_ticket_id = t.id
+                WHERE t.in_znuny = 1
+                  AND t.znuny_ticket_id IS NOT NULL
+                  AND t.completed_at IS NOT NULL
+                  AND (z.state IS NULL OR LOWER(z.state) NOT IN ('closed', 'resolved'))
+                ORDER BY t.completed_at DESC
+                LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_znuny_closed_isp_open(self, limit: int = 200) -> list[dict]:
+        """ISP-linked tickets whose Znuny ticket was closed while the ticket is still
+        active on the ISP portal (completed_at not set) — the mirror case of
+        get_znuny_open_isp_closed, and the same condition the tickets table highlights
+        client-side, computed here across all active tickets (not just one page)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    t.id, t.portal, t.ticket_id, t.address, t.account, t.customer_name,
+                    t.ticket_type, t.status, t.updated_at,
+                    t.znuny_ticket_id, t.znuny_created_at, t.znuny_created_by,
+                    t.znuny_url, t.portal_url,
+                    z.state AS znuny_state, z.queue AS znuny_queue, z.owner AS znuny_owner
+                FROM tickets t
+                JOIN znuny_tickets z ON z.isp_ticket_id = t.id
+                WHERE t.in_znuny = 1
+                  AND t.znuny_ticket_id IS NOT NULL
+                  AND t.completed_at IS NULL
+                  AND LOWER(z.state) IN ('closed', 'resolved')
+                ORDER BY t.updated_at DESC
+                LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_znuny_only_stats(self, date_from: str = None, date_to: str = None) -> dict:
         """Get summary statistics for Znuny tickets (all + linked/unlinked breakdown).
 

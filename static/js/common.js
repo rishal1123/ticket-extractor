@@ -515,12 +515,22 @@ async function syncZnunyData(ticketId, callbacks = {}) {
 // Render tickets table row
 function renderTicketRow(ticket, onClick) {
     const row = document.createElement('tr');
-    row.className = 'ticket-row' + (ticket.completed_at ? ' completed' : '');
+    // Flag tickets whose linked Znuny ticket was closed while the ticket is still
+    // active on the ISP portal — a sign the portal side needs a second look.
+    const znunyState = (ticket.znuny_state || '').toLowerCase();
+    const znunyClosedMismatch = !ticket.completed_at && ticket.in_znuny
+        && ['closed', 'resolved'].includes(znunyState);
+    row.className = 'ticket-row'
+        + (ticket.completed_at ? ' completed' : '')
+        + (znunyClosedMismatch ? ' znuny-mismatch' : '');
     row.onclick = onClick;
 
     const znunyIcon = ticket.in_znuny
         ? '<i class="bi bi-check-circle-fill znuny-yes"></i>'
         : '<i class="bi bi-x-circle-fill znuny-no"></i>';
+    const mismatchBadge = znunyClosedMismatch
+        ? '<i class="bi bi-exclamation-triangle-fill text-danger ms-1" title="Closed in Znuny but still active on the ISP portal"></i>'
+        : '';
 
     // Not-in-Znuny ISP tickets: a "Format" button opens the standardized,
     // formatter-generated ticket block in a new tab (stops the row click).
@@ -547,7 +557,7 @@ function renderTicketRow(ticket, onClick) {
             <small>${formatMaldivesDateTime(ticket.created_at)}</small><br>
             <small class="text-muted">${formatRelativeTime(ticket.created_at)}</small>
         </td>
-        <td class="znuny-status">${znunyIcon}${formatBtn}</td>
+        <td class="znuny-status">${znunyIcon}${mismatchBadge}${formatBtn}</td>
         <td>${timeToCreate}</td>
         <td class="d-none d-sm-table-cell"><small>${escapeHtml(ticket.znuny_created_by) || '-'}</small></td>
     `;

@@ -272,6 +272,28 @@
             </div>
         </a>
     </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="background-color: #fd7e14; border: none;" title="ISP ticket completed on the portal but its Znuny ticket is still open">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-white" id="ispClosedZnunyOpenCount">0</div>
+                <div class="fw-semibold mb-1 text-white">ISP Closed, Znuny Open</div>
+                <div class="extraction-info">
+                    <small class="text-white-50">Znuny needs closing</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="background-color: #dc3545; border: none;" title="Znuny ticket closed but the ISP ticket is still active on the portal">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-white" id="znunyClosedIspOpenCount">0</div>
+                <div class="fw-semibold mb-1 text-white">Znuny Closed, ISP Open</div>
+                <div class="extraction-info">
+                    <small class="text-white-50">Portal needs a check</small>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Action Buttons -->
@@ -456,6 +478,36 @@
         </table>
     </div>
 </div>
+
+<!-- Znuny Open but ISP Closed Section -->
+<div class="table-container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0">
+            <i class="bi bi-arrow-repeat text-danger me-2"></i>
+            Open in Znuny, Closed on Portal
+            <small class="text-muted fs-6">(ISP work looks done — Znuny ticket wasn't closed)</small>
+        </h5>
+        <span class="badge bg-danger" id="znunyOpenIspClosedCount">--</span>
+    </div>
+    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+        <table class="table table-hover table-sm mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Portal</th>
+                    <th>Ticket ID</th>
+                    <th class="d-none d-sm-table-cell">Customer</th>
+                    <th class="d-none d-md-table-cell">Completed On Portal</th>
+                    <th>Znuny State</th>
+                    <th class="d-none d-sm-table-cell">Znuny Created By</th>
+                    <th>Znuny</th>
+                </tr>
+            </thead>
+            <tbody id="znunyOpenIspClosedTable">
+                <!-- Filled by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_html %}
@@ -530,6 +582,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadTickets();
     loadDelayedTickets();
     loadZnunySyncStatus();
+    loadZnunyOpenIspClosed();
+    loadZnunyClosedIspOpen();
     setInterval(() => { if (!document.hidden) refreshAll(); }, 30000);
 
     document.getElementById('dashSearchInput').addEventListener('keypress', (e) => {
@@ -962,6 +1016,75 @@ function refreshAll() {
     loadTickets();
     loadDelayedTickets();
     loadZnunySyncStatus();
+    loadZnunyOpenIspClosed();
+    loadZnunyClosedIspOpen();
+}
+
+// Open in Znuny, closed on portal: ISP-linked tickets that disappeared from the
+// portal (completed) while the linked Znuny ticket is still open.
+async function loadZnunyOpenIspClosed() {
+    try {
+        const response = await fetch('/api/tickets/znuny-open-isp-closed');
+        const data = await response.json();
+        renderZnunyOpenIspClosed(data.tickets || []);
+    } catch (error) {
+        console.error('Error loading znuny-open-isp-closed tickets:', error);
+    }
+}
+
+function renderZnunyOpenIspClosed(tickets) {
+    const tbody = document.getElementById('znunyOpenIspClosedTable');
+    const countBadge = document.getElementById('znunyOpenIspClosedCount');
+    tbody.innerHTML = '';
+    countBadge.textContent = tickets.length + (tickets.length === 1 ? ' ticket' : ' tickets');
+    countBadge.className = 'badge ' + (tickets.length > 0 ? 'bg-danger' : 'bg-success');
+    setStatValue('ispClosedZnunyOpenCount', tickets.length);
+
+    if (tickets.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center text-muted py-4">
+                    <i class="bi bi-check-circle text-success fs-3 d-block mb-2"></i>
+                    No open Znuny tickets left behind by a closed portal ticket
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    for (const ticket of tickets) {
+        const row = document.createElement('tr');
+        row.className = 'ticket-row';
+        row.onclick = () => showTicketDetail(ticket.id, ticketCallbacks);
+
+        const znunyLink = ticket.znuny_url
+            ? `<a href="${ticket.znuny_url}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary py-0 px-1" title="Open in Znuny" onclick="event.stopPropagation();"><i class="bi bi-box-arrow-up-right"></i></a>`
+            : '--';
+
+        row.innerHTML = `
+            <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
+            <td><strong>${ticket.ticket_id}</strong></td>
+            <td class="text-truncate d-none d-sm-table-cell" style="max-width: 120px;" title="${escapeHtml(ticket.customer_name || '')}">${escapeHtml(ticket.customer_name) || '-'}</td>
+            <td class="d-none d-md-table-cell"><small>${formatMaldivesDateTime(ticket.completed_at)}</small></td>
+            <td><span class="badge bg-warning text-dark">${escapeHtml(ticket.znuny_state) || 'open'}</span></td>
+            <td class="d-none d-sm-table-cell"><small>${escapeHtml(ticket.znuny_created_by) || '-'}</small></td>
+            <td>${znunyLink}</td>
+        `;
+        tbody.appendChild(row);
+    }
+}
+
+// Znuny closed, ISP open: ISP-linked tickets whose Znuny ticket was closed while the
+// ticket is still active on the portal (the same case highlighted on the tickets
+// table), aggregated for the stat card.
+async function loadZnunyClosedIspOpen() {
+    try {
+        const response = await fetch('/api/tickets/znuny-closed-isp-open');
+        const data = await response.json();
+        setStatValue('znunyClosedIspOpenCount', (data.tickets || []).length);
+    } catch (error) {
+        console.error('Error loading znuny-closed-isp-open tickets:', error);
+    }
 }
 
 

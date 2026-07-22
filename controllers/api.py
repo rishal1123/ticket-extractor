@@ -11,6 +11,7 @@ This module provides RESTful API endpoints for:
 from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
+from datetime import datetime
 
 from database import Database
 from services import StatsService, ZnunyService, ConfigService
@@ -78,7 +79,6 @@ async def health_check():
     Returns system status, database connectivity, and service health.
     """
     import os
-    from datetime import datetime
 
     health = {
         "status": "healthy",
@@ -281,6 +281,54 @@ async def get_tickets(
         "total": total,
         "tickets": dicts
     })
+
+
+@router.get(
+    "/tickets/znuny-open-isp-closed",
+    tags=["Tickets"],
+    summary="ISP-Linked Tickets Open in Znuny but Closed on Portal",
+    description=(
+        "ISP-linked tickets that disappeared from the ISP portal (completed) while "
+        "their linked Znuny ticket is still open — the mirror of the 'closed in Znuny "
+        "but still open on the portal' mismatch highlighted on the tickets table."
+    ),
+)
+@handle_errors("get znuny-open-isp-closed tickets")
+async def get_znuny_open_isp_closed(
+    limit: int = Query(default=200, le=1000),
+    db: Database = Depends(get_db)
+):
+    tickets = db.get_znuny_open_isp_closed(limit=limit)
+    # Normalize stored "YYYY-MM-DD HH:MM:SS+TZ" strings to isoformat's "T" separator,
+    # matching every other endpoint's date strings so the shared JS date parsing works.
+    for t in tickets:
+        for key in ("completed_at", "znuny_created_at"):
+            if t.get(key):
+                t[key] = datetime.fromisoformat(t[key]).isoformat()
+    return JSONResponse(content={"total": len(tickets), "tickets": tickets})
+
+
+@router.get(
+    "/tickets/znuny-closed-isp-open",
+    tags=["Tickets"],
+    summary="ISP-Linked Tickets Closed in Znuny but Open on Portal",
+    description=(
+        "ISP-linked tickets whose Znuny ticket was closed while the ticket is still "
+        "active on the ISP portal — the same mismatch highlighted on the tickets "
+        "table, aggregated here across all active tickets."
+    ),
+)
+@handle_errors("get znuny-closed-isp-open tickets")
+async def get_znuny_closed_isp_open(
+    limit: int = Query(default=200, le=1000),
+    db: Database = Depends(get_db)
+):
+    tickets = db.get_znuny_closed_isp_open(limit=limit)
+    for t in tickets:
+        for key in ("updated_at", "znuny_created_at"):
+            if t.get(key):
+                t[key] = datetime.fromisoformat(t[key]).isoformat()
+    return JSONResponse(content={"total": len(tickets), "tickets": tickets})
 
 
 @router.get("/tickets/{ticket_id}")
