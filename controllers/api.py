@@ -269,13 +269,15 @@ async def get_tickets(
         sort=sort
     )
 
-    # Enrich each ticket with the linked Znuny ticket's state (open/closed)
+    # Enrich each ticket with the linked Znuny ticket's state (open/closed) + queue
     dicts = [_ticket_to_dict(t) for t in tickets]
     states = db.get_znuny_states_for([t.znuny_ticket_id for t in tickets if t.znuny_ticket_id])
     for d in dicts:
         zid = d.get("znuny_ticket_id")
-        if zid:
-            d["znuny_state"] = states.get(zid)
+        info = states.get(zid) if zid else None
+        if info:
+            d["znuny_state"] = info.get("state")
+            d["znuny_queue"] = info.get("queue")
 
     return JSONResponse(content={
         "total": total,

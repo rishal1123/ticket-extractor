@@ -3228,9 +3228,10 @@ class Database:
             return None
 
     def get_znuny_states_for(self, znuny_ticket_ids: list) -> dict:
-        """Batch-fetch Znuny state for many ticket numbers. Returns
-        {znuny_ticket_id: state}. Used to enrich the ISP tickets list with the
-        linked Znuny ticket's open/closed state."""
+        """Batch-fetch Znuny state + queue for many ticket numbers. Returns
+        {znuny_ticket_id: {"state": ..., "queue": ...}}. Used to enrich the ISP
+        tickets list with the linked Znuny ticket's open/closed state (the queue
+        lets callers filter out Junk-queue tickets from the closed-mismatch check)."""
         ids = [str(i) for i in znuny_ticket_ids if i]
         if not ids:
             return {}
@@ -3241,11 +3242,11 @@ class Database:
                 chunk = ids[i:i + 500]
                 ph = ",".join("?" * len(chunk))
                 cursor.execute(
-                    f"SELECT znuny_ticket_id, state FROM znuny_tickets WHERE znuny_ticket_id IN ({ph})",
+                    f"SELECT znuny_ticket_id, state, queue FROM znuny_tickets WHERE znuny_ticket_id IN ({ph})",
                     chunk,
                 )
                 for row in cursor.fetchall():
-                    out[row["znuny_ticket_id"]] = row["state"]
+                    out[row["znuny_ticket_id"]] = {"state": row["state"], "queue": row["queue"]}
         return out
 
     def upsert_znuny_only_ticket(self, data: dict) -> int:
@@ -3493,6 +3494,9 @@ class Database:
         get_znuny_open_isp_closed, and the same condition the tickets table highlights
         client-side, computed here across all active tickets (not just one page).
 
+        Excludes Junk-queue Znuny tickets: those are routine auto-closes (spam/
+        duplicate detection), not a real "portal needs a check" signal.
+
         See get_znuny_open_isp_closed for why this joins on znuny_ticket_id rather
         than isp_ticket_id."""
         with self._get_connection() as conn:
@@ -3510,6 +3514,7 @@ class Database:
                   AND t.znuny_ticket_id IS NOT NULL
                   AND t.completed_at IS NULL
                   AND LOWER(z.state) IN ('closed', 'resolved')
+                  AND (z.queue IS NULL OR LOWER(z.queue) != 'junk')
                 ORDER BY t.updated_at DESC
                 LIMIT ?
             """, (limit,))

@@ -517,9 +517,12 @@ function renderTicketRow(ticket, onClick) {
     const row = document.createElement('tr');
     // Flag tickets whose linked Znuny ticket was closed while the ticket is still
     // active on the ISP portal — a sign the portal side needs a second look.
+    // Junk-queue tickets are excluded: they're routine auto-closes, not real misses.
     const znunyState = (ticket.znuny_state || '').toLowerCase();
+    const znunyQueue = (ticket.znuny_queue || '').toLowerCase();
     const znunyClosedMismatch = !ticket.completed_at && ticket.in_znuny
-        && ['closed', 'resolved'].includes(znunyState);
+        && ['closed', 'resolved'].includes(znunyState)
+        && znunyQueue !== 'junk';
     row.className = 'ticket-row'
         + (ticket.completed_at ? ' completed' : '')
         + (znunyClosedMismatch ? ' znuny-mismatch' : '');
