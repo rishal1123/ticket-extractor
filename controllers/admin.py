@@ -91,6 +91,8 @@ async def get_scheduler_status():
             result["isp_extraction_enabled"] = status["isp_extraction_enabled"]
         if "portals_enabled" in status:
             result["portals_enabled"] = status["portals_enabled"]
+        if "nocbot_configured" in status:
+            result["nocbot_configured"] = status["nocbot_configured"]
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error getting scheduler status: {e}")

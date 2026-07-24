@@ -1547,6 +1547,19 @@ class Database:
             cursor.execute("SELECT COUNT(*) as count FROM tickets WHERE completed_at IS NULL AND ont_exists = 1")
             ont_exists_count = cursor.fetchone()["count"]
 
+            # Most recent ONT check (any outcome) - "last update" for the dashboard card
+            cursor.execute("SELECT MAX(ont_checked_at) as last_checked FROM tickets")
+            ont_last_checked_at = cursor.fetchone()["last_checked"]
+
+            # Backlog still awaiting a check (or a retry) - lets the dashboard tell
+            # "nothing to do" apart from "job stopped running" when judging staleness.
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM tickets
+                WHERE completed_at IS NULL AND address IS NOT NULL AND address != ''
+                  AND (ont_exists IS NULL OR ont_exists = 0)
+            """)
+            ont_pending_count = cursor.fetchone()["count"]
+
             return {
                 "total": total,
                 "completed": completed,
@@ -1566,7 +1579,9 @@ class Database:
                 "pending_site_visits": pending_site_visits,
                 "today_articles_created": today_articles_created,
                 "today_completed": today_completed,
-                "ont_exists_count": ont_exists_count
+                "ont_exists_count": ont_exists_count,
+                "ont_last_checked_at": ont_last_checked_at,
+                "ont_pending_count": ont_pending_count
             }
 
     def log_login_event(self, portal: str, event_type: str, session_id: str = None,

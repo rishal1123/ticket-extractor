@@ -775,6 +775,7 @@ class SchedulerService:
             status["portals_enabled"] = {
                 p.name: db.get_portal_enabled(p.name) for p in Config.get_all_portals()
             }
+            status["nocbot_configured"] = self._has_nocbot_credentials()
             # Portals paused awaiting a manual Cloudflare bypass via noVNC.
             from extractors.base import BaseExtractor
             status["manual_cf_paused"] = BaseExtractor.manual_cf_paused_portals()

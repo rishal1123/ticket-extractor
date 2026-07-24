@@ -92,6 +92,17 @@
     0%, 100% { box-shadow: none; }
     50% { box-shadow: 0 0 8px rgba(220, 53, 69, 0.3); }
 }
+/* Same "stale" signal as .stale, but for solid-colored cards (white text on a
+   filled background) where overriding to a near-white fill would make the text
+   unreadable — a pulsing ring instead of a background swap. */
+.stat-card.stale-solid {
+    box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.85) !important;
+    animation: pulse-stale-ring 2s infinite;
+}
+@keyframes pulse-stale-ring {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.85); }
+    50% { box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.35); }
+}
 .sortable-th {
     cursor: pointer;
     user-select: none;
@@ -295,12 +306,13 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" style="background-color: #17a2b8; border: none;" title="Active ISP tickets whose address has a confirmed ONT in SMX (via NocBot)">
+        <div class="stat-card card h-100" id="ontExistsCard" style="background-color: #17a2b8; border: none;" title="Active ISP tickets whose address has a confirmed ONT in SMX (via NocBot)">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="ontExistsCount">0</div>
                 <div class="fw-semibold mb-1 text-white">ONT Exists</div>
                 <div class="extraction-info">
                     <small class="text-white-50">Confirmed in SMX</small>
+                    <small class="text-white-50 d-block" id="ontLastChecked">Last update: --</small>
                 </div>
             </div>
         </div>
@@ -826,6 +838,7 @@ async function loadStats() {
 
         // ONT-exists-in-SMX count (NocBot)
         setStatValue('ontExistsCount', stats.ont_exists_count || 0);
+        updateOntCardStatus(stats.ont_last_checked_at, stats.ont_pending_count || 0);
 
         document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
 
@@ -1203,5 +1216,58 @@ function updateExtractionInfo(portal, info) {
         <small class="text-muted d-block" title="${info.extracted_at || ''}">${timeStr}</small>
         ${statusLine}
     `;
+}
+
+// Same disabled/paused/stale treatment as updateExtractionInfo(), applied to the
+// ONT Exists card. "Stale" only fires when there's an actual backlog to work
+// through (pendingCount > 0) — once every active ticket is either confirmed found
+// or was checked within the last hour, the job legitimately has nothing to do,
+// and an old lastCheckedAt shouldn't be read as "the job stopped running".
+function updateOntCardStatus(lastCheckedAt, pendingCount) {
+    const card = document.getElementById('ontExistsCard');
+    const el = document.getElementById('ontLastChecked');
+    if (!el) return;
+
+    if (schedulerData?.nocbot_configured === false) {
+        if (card) { card.classList.remove('stale', 'paused'); card.classList.add('disabled'); }
+        el.innerHTML = '<i class="bi bi-slash-circle"></i> Not configured';
+        return;
+    }
+    if (card) card.classList.remove('disabled');
+
+    const isPaused = schedulerData?.operating_hours?.enabled && !schedulerData?.within_operating_hours;
+    const startHour = schedulerData?.operating_hours?.start_hour ?? 7;
+    const startLabel = startHour === 0 ? '12:00 AM' : startHour < 12 ? `${startHour}:00 AM` : startHour === 12 ? '12:00 PM' : `${startHour - 12}:00 PM`;
+
+    let isStale = false;
+    let ageMinutes = 0;
+    if (pendingCount > 0 && !isPaused) {
+        if (lastCheckedAt) {
+            ageMinutes = Math.round((Date.now() - new Date(lastCheckedAt).getTime()) / 60000);
+            isStale = ageMinutes > 15;
+        } else {
+            isStale = true; // backlog exists but nothing has ever been checked
+        }
+    }
+
+    if (card) {
+        card.classList.remove('stale-solid', 'paused');
+        if (isPaused) card.classList.add('paused');
+        else if (isStale) card.classList.add('stale-solid');
+    }
+
+    const pendingSuffix = pendingCount > 0 ? ` &middot; ${pendingCount} pending` : '';
+
+    if (isPaused) {
+        el.innerHTML = `<i class="bi bi-pause-circle"></i> Paused until ${startLabel}${pendingSuffix}`;
+        return;
+    }
+    if (isStale) {
+        el.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Stale (${ageMinutes}m)${pendingSuffix}`;
+        return;
+    }
+
+    const timeStr = lastCheckedAt ? formatRelativeTime(lastCheckedAt) : '--';
+    el.innerHTML = `Last update: ${timeStr}${pendingSuffix}`;
 }
 {% endblock %}
