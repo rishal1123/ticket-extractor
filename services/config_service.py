@@ -22,7 +22,8 @@ class ConfigService:
         'Znuny API': ['ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD'],
         'Scheduler settings': ['EXTRACTION_INTERVAL_MINUTES', 'ZNUNY_SYNC_INTERVAL_MINUTES'],
         'Dashboard settings': ['DASHBOARD_HOST', 'DASHBOARD_PORT'],
-        'FlareSolverr': ['FLARESOLVERR_URL']
+        'FlareSolverr': ['FLARESOLVERR_URL'],
+        'NocBot API (ONT lookup)': ['NOCBOT_URL', 'NOCBOT_API_KEY']
     }
 
     def __init__(self):
@@ -43,7 +44,8 @@ class ConfigService:
 
         if mask_passwords:
             for key in config:
-                if 'PASSWORD' in key.upper():
+                upper = key.upper()
+                if 'PASSWORD' in upper or 'API_KEY' in upper or 'SECRET' in upper:
                     config[key] = '********' if config[key] else ''
 
         return config

@@ -662,6 +662,26 @@
             </div>
         </div>
 
+        <!-- NocBot -->
+        <div class="col-12 col-md-6">
+            <div class="config-section">
+                <h6><i class="bi bi-broadcast me-1"></i>NocBot API <span class="text-muted small">(ONT lookup)</span></h6>
+                <div class="mb-2">
+                    <label class="form-label small">URL</label>
+                    <input type="text" class="form-control form-control-sm" id="cfg_NOCBOT_URL" placeholder="http://10.241.1.107:5000">
+                </div>
+                <div class="mb-0">
+                    <label class="form-label small">API Key</label>
+                    <div class="input-group input-group-sm">
+                        <input type="password" class="form-control" id="cfg_NOCBOT_API_KEY">
+                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('cfg_NOCBOT_API_KEY')">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- App Settings -->
         <div class="col-12 col-md-6">
             <div class="config-section">
@@ -1504,6 +1524,7 @@ const configKeys = [
     'ROL_URL', 'ROL_USERNAME', 'ROL_PASSWORD',
     'MEDIANET_URL', 'MEDIANET_USERNAME', 'MEDIANET_PASSWORD',
     'ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD',
+    'NOCBOT_URL', 'NOCBOT_API_KEY',
     'EXTRACTION_INTERVAL_MINUTES', 'DASHBOARD_HOST', 'DASHBOARD_PORT',
     'FLARESOLVERR_URL'
 ];

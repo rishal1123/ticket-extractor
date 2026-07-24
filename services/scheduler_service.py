@@ -351,6 +351,37 @@ class SchedulerService:
 
         threading.Thread(target=_run, daemon=True, name="QuickISPCheck").start()
 
+    def _has_nocbot_credentials(self) -> bool:
+        """Check if the NocBot API URL + key are configured."""
+        db = Database()
+        config = db.get_config_settings()
+        return bool(config.get("NOCBOT_URL") and config.get("NOCBOT_API_KEY"))
+
+    def _check_ont_status(self):
+        """Every 5 min: check whether active ISP tickets' addresses have an ONT
+        in SMX via NocBot. Never-checked tickets are checked promptly; tickets
+        already confirmed 'not found' are retried after an hour (enforced by
+        get_tickets_needing_ont_check's cutoff), gated to operating hours like
+        the other periodic checks. Runs in a short-lived thread so it never
+        blocks the scheduler loop, with a reentrancy guard."""
+        if not self._has_nocbot_credentials() or not self._is_within_operating_hours():
+            return
+        if getattr(self, "_ont_check_running", False):
+            logger.debug("ONT check still running, skipping this cycle")
+            return
+        self._ont_check_running = True
+
+        def _run():
+            try:
+                from services.nocbot_service import NocBotService
+                NocBotService().check_pending_tickets()
+            except Exception as e:
+                logger.error(f"ONT status check failed: {e}")
+            finally:
+                self._ont_check_running = False
+
+        threading.Thread(target=_run, daemon=True, name="OntStatusCheck").start()
+
     def _generate_staff_snapshots(self):
         """Freeze the just-completed day's per-staff stats snapshot (daily, at
         midnight). Today is served live by the page, so only prior days need a
@@ -674,6 +705,8 @@ class SchedulerService:
         schedule.every(5).minutes.do(self._check_browser_staleness)
         # Every 1 min: link active ISP tickets to Znuny + refresh their last comment
         schedule.every(1).minutes.do(self._quick_isp_check)
+        # Every 5 min: check active ISP tickets' addresses for an ONT in SMX (NocBot)
+        schedule.every(5).minutes.do(self._check_ont_status)
         # Freeze the completed day's per-staff snapshot once at midnight (today is
         # served live by the page; the creator sweep refreshes prior snapshots).
         schedule.every().day.at("00:30").do(self._generate_staff_snapshots)

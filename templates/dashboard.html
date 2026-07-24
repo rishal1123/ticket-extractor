@@ -294,6 +294,17 @@
             </div>
         </div>
     </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="stat-card card h-100" style="background-color: #17a2b8; border: none;" title="Active ISP tickets whose address has a confirmed ONT in SMX (via NocBot)">
+            <div class="card-body text-center py-3">
+                <div class="stat-value text-white" id="ontExistsCount">0</div>
+                <div class="fw-semibold mb-1 text-white">ONT Exists</div>
+                <div class="extraction-info">
+                    <small class="text-white-50">Confirmed in SMX</small>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Action Buttons -->
@@ -812,6 +823,9 @@ async function loadStats() {
         // Today's ISP totals
         setStatValue('todayExtractedTotal', stats.today_extracted_total || 0);
         setStatValue('todayCompletedCount', stats.today_completed || 0);
+
+        // ONT-exists-in-SMX count (NocBot)
+        setStatValue('ontExistsCount', stats.ont_exists_count || 0);
 
         document.getElementById('lastUpdate').textContent = 'Updated ' + formatMaldivesDateTime(new Date().toISOString());
 

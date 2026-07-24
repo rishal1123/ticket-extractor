@@ -193,6 +193,17 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+            # ONT-exists check (NocBot SMX lookup by address). NULL = not checked
+            # yet, 1 = confirmed exists, 0 = confirmed not found (retried hourly).
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN ont_exists INTEGER")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN ont_checked_at DATETIME")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             # Reopen history table - one row per reopen event (a completed ticket
             # reappearing on the ISP portal), so reopens can be tracked over time.
             cursor.execute("""
@@ -1532,6 +1543,10 @@ class Database:
             # Last extraction per portal
             last_extraction = self.get_last_extraction_per_portal()
 
+            # ONT-exists count (active tickets confirmed to have an ONT in SMX via NocBot)
+            cursor.execute("SELECT COUNT(*) as count FROM tickets WHERE completed_at IS NULL AND ont_exists = 1")
+            ont_exists_count = cursor.fetchone()["count"]
+
             return {
                 "total": total,
                 "completed": completed,
@@ -1550,7 +1565,8 @@ class Database:
                 "today_site_visits_completed": today_site_visits_completed,
                 "pending_site_visits": pending_site_visits,
                 "today_articles_created": today_articles_created,
-                "today_completed": today_completed
+                "today_completed": today_completed,
+                "ont_exists_count": ont_exists_count
             }
 
     def log_login_event(self, portal: str, event_type: str, session_id: str = None,
@@ -3519,6 +3535,44 @@ class Database:
                 LIMIT ?
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_tickets_needing_ont_check(self, cutoff, limit: int = 20) -> list[dict]:
+        """Active ISP tickets whose ONT existence in SMX (via NocBot) is unknown,
+        or was last checked-and-not-found before `cutoff` (the retry backoff).
+        Once ont_exists=1 a ticket is never rechecked. Never-checked tickets sort
+        first, then oldest-checked retries, so the backlog drains in order."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, address FROM tickets
+                WHERE completed_at IS NULL
+                  AND address IS NOT NULL AND address != ''
+                  AND (ont_exists IS NULL OR ont_exists = 0)
+                  AND (ont_checked_at IS NULL OR ont_checked_at <= ?)
+                ORDER BY (ont_checked_at IS NOT NULL), ont_checked_at ASC, created_at ASC
+                LIMIT ?
+            """, (cutoff, limit))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_ont_status(self, ticket_id: int, exists: Optional[bool]):
+        """Record the outcome of a NocBot ONT check for a ticket. `exists=None`
+        means the check was inconclusive (network error, bad format, rate limit,
+        etc.) — ont_exists is left NULL (still unknown) but ont_checked_at is
+        still bumped so it's retried after the same backoff, not hot-looped."""
+        value = 1 if exists is True else (0 if exists is False else None)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE tickets SET ont_exists = ?, ont_checked_at = ?
+                WHERE id = ?
+            """, (value, now_maldives(), ticket_id))
+
+    def get_ont_exists_count(self) -> int:
+        """Count of active ISP tickets confirmed to have an ONT in SMX."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM tickets WHERE completed_at IS NULL AND ont_exists = 1")
+            return cursor.fetchone()["count"]
 
     def get_znuny_only_stats(self, date_from: str = None, date_to: str = None) -> dict:
         """Get summary statistics for Znuny tickets (all + linked/unlinked breakdown).

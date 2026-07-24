@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Application version - update this when deploying changes to bust cache
-APP_VERSION = "1.8.2"
+APP_VERSION = "1.9.0"
 
 
 def _load_db_config() -> dict:
@@ -96,6 +96,17 @@ class Config:
         """Return FlareSolverr base URL, or empty string if not configured.
         DB (cfg_FLARESOLVERR_URL) takes precedence over the .env fallback."""
         return _get("FLARESOLVERR_URL", "")
+
+    @classmethod
+    def get_nocbot_url(cls) -> str:
+        """Base URL of the NocBot external API (see API_GUIDE.md), used for the
+        ONT-exists-in-SMX check. DB (cfg_NOCBOT_URL) takes precedence over the
+        .env fallback."""
+        return _get("NOCBOT_URL", "http://10.241.1.107:5000")
+
+    @classmethod
+    def get_nocbot_api_key(cls) -> str:
+        return _get("NOCBOT_API_KEY", "")
 
     # Portal URLs for template links
     @classmethod
