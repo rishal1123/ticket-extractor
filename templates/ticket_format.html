@@ -43,9 +43,10 @@
                 <i class="bi bi-clipboard me-1"></i>Copy
             </button>
             {% if not meta.in_znuny %}
-            <button class="btn btn-primary btn-sm" id="createInZnunyBtn" style="display:none;"
+            <button class="btn btn-primary btn-sm" id="createInZnunyBtn"
                     {% if not result.ok or result.missing %}disabled{% endif %}
-                    data-relocation="{{ 'true' if result.relocation else 'false' }}">
+                    data-relocation="{{ 'true' if result.relocation else 'false' }}"
+                    title="Requires the admin password">
                 <i class="bi bi-cloud-plus me-1"></i>Create in Znuny
             </button>
             {% endif %}
@@ -143,16 +144,16 @@ if (btn) {
     });
 }
 
-// "Create in Znuny" - admin only. Mirrors the admin panel's pattern for
-// consequential actions (e.g. database download): the button is only shown
-// if this browser session already logged into /admin, and the raw password
-// itself is asked again at the moment of the action rather than stored.
+// "Create in Znuny" - admin only, enforced server-side (X-Admin-Password on the
+// endpoint), not by hiding the button. It used to also gate visibility on
+// sessionStorage.adminLoggedIn, mirroring the admin panel's download-db button --
+// but this page opens in a new tab (target="_blank" rel="noopener" from the
+// dashboard's Format link), and sessionStorage isn't shared with a new tab opened
+// that way, so the button stayed invisible even when already logged in elsewhere.
+// The password prompt at click time is the real gate either way, so the button is
+// just always shown (still disabled when the formatter has unresolved fields).
 const createBtn = document.getElementById('createInZnunyBtn');
 if (createBtn) {
-    if (sessionStorage.getItem('adminLoggedIn') === 'true') {
-        createBtn.style.display = '';
-    }
-
     createBtn.addEventListener('click', async () => {
         const password = prompt('Enter admin password to create this ticket in Znuny:');
         if (!password) return;
