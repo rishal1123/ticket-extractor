@@ -70,6 +70,31 @@ def manual_from_ticket(ticket) -> dict:
     return manual
 
 
+def extract_phone(raw_dump: Optional[str], portal: str) -> Optional[str]:
+    """Pull the customer's contact number out of a ticket's captured raw dump,
+    reusing the same per-portal parsing the standalone formatter already does
+    for its "Phone :" output line — just exposed here without needing to
+    generate the full formatted block."""
+    if not raw_dump or not raw_dump.strip():
+        return None
+    try:
+        from formatter.model.formatters import detect_formatter
+    except Exception as e:  # pragma: no cover - import/setup issue
+        logger.error(f"Formatter model import failed: {e}")
+        return None
+
+    keyword = _PORTAL_KEYWORD.get((portal or "").lower(), portal or "")
+    raw = f"{keyword}\n{raw_dump}"
+    fmt = detect_formatter(raw)
+    if fmt is None:
+        return None
+    try:
+        return fmt.phone_for_display(raw)
+    except Exception as e:  # pragma: no cover - defensive, parsing is regex-only
+        logger.warning(f"Phone extraction failed for {portal}: {e}")
+        return None
+
+
 def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[dict] = None,
                        relocation: bool = False) -> dict:
     """Format a raw dump into a standardized block.

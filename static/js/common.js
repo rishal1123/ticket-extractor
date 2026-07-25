@@ -160,6 +160,11 @@ async function showTicketDetail(ticketId, callbacks = {}) {
 
         document.getElementById('modalTicketId').textContent = `${ticket.portal.toUpperCase()} - ${ticket.ticket_id}`;
 
+        // Once linked to Znuny, its address (from the phone-ticket article) is
+        // often cleaner/more accurate than the portal's — prefer it for display.
+        const displayAddress = (ticket.in_znuny && ticket.znuny_address) ? ticket.znuny_address : ticket.address;
+        const addressIsFromZnuny = !!(ticket.in_znuny && ticket.znuny_address);
+
         // Calculate times
         let timeToCreate = '-';
         let timeToComplete = '-';
@@ -369,10 +374,16 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                                 <div class="value">${escapeHtml(ticket.customer_name) || '-'}</div>
                             </div>
                         </div>
-                        <div class="col-12">
+                        <div class="col-6">
                             <div class="info-card">
-                                <div class="label">Address</div>
-                                <div class="value">${escapeHtml(ticket.address) || '-'}</div>
+                                <div class="label">Phone</div>
+                                <div class="value">${ticket.phone ? `<a href="tel:${ticket.phone}" class="text-decoration-none">${escapeHtml(ticket.phone)}</a>` : '-'}</div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="info-card">
+                                <div class="label">Address ${addressIsFromZnuny ? '<span class="text-muted fw-normal">(Znuny)</span>' : ''}</div>
+                                <div class="value">${escapeHtml(displayAddress) || '-'}</div>
                             </div>
                         </div>
                     </div>
@@ -549,11 +560,15 @@ function renderTicketRow(ticket, onClick) {
         timeToCreate = `<span class="badge bg-info time-badge">${formatTimeDiff(diffMs)}</span>`;
     }
 
+    // Once linked to Znuny, its address (from the phone-ticket article) is often
+    // cleaner/more accurate than the portal's — prefer it for display.
+    const rowAddress = (ticket.in_znuny && ticket.znuny_address) ? ticket.znuny_address : ticket.address;
+
     row.innerHTML = `
         <td><span class="badge badge-portal badge-${ticket.portal}">${ticket.portal}</span></td>
         <td><strong>${ticket.ticket_id}</strong></td>
         <td class="text-truncate" style="max-width: 150px;" title="${escapeHtml(ticket.customer_name || '')}">${escapeHtml(ticket.customer_name) || '-'}</td>
-        <td class="text-truncate d-none d-md-table-cell" style="max-width: 180px;" title="${escapeHtml(ticket.address || '')}">${escapeHtml(ticket.address) || '-'}</td>
+        <td class="text-truncate d-none d-md-table-cell" style="max-width: 180px;" title="${escapeHtml(rowAddress || '')}">${escapeHtml(rowAddress) || '-'}</td>
         <td class="d-none d-lg-table-cell">${escapeHtml(ticket.ticket_type) || '-'}</td>
         <td class="d-none d-sm-table-cell">${escapeHtml(ticket.status) || '-'}</td>
         <td class="d-none d-md-table-cell">

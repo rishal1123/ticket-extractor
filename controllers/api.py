@@ -351,6 +351,9 @@ async def get_ticket(ticket_id: int, db: Database = Depends(get_db)):
             result["znuny_queue"] = zt.get("queue")
             result["znuny_owner"] = zt.get("owner")
             result["znuny_priority"] = zt.get("priority")
+    # Customer phone number, parsed from the captured portal detail-page dump
+    from utils.ticket_formatter import extract_phone
+    result["phone"] = extract_phone(ticket.raw_dump, ticket.portal)
     return JSONResponse(content=result)
 
 

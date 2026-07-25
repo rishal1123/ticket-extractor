@@ -241,6 +241,10 @@ class BaseFormatter:
         """Return the Atoll value to validate, or None if N/A for this ISP."""
         return None
 
+    def phone_for_display(self, text: str) -> Optional[str]:
+        """Return the customer's contact number, or None if N/A/not found."""
+        return None
+
 
 class _StubFormatter(BaseFormatter):
     """Placeholder for an ISP whose format hasn't been supplied yet."""
@@ -294,6 +298,9 @@ class OoredooFormatter(BaseFormatter):
         if val is None:
             val = field_after_label(text, "Atol")
         return val
+
+    def phone_for_display(self, text: str) -> Optional[str]:
+        return local_phone(field_after_label(text, "Contact")) or None
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         account = field_after_label(text, "Account Number") or ""
@@ -408,6 +415,9 @@ class DhiraaguFormatter(BaseFormatter):
             field_after_label(text, "Floor"),
             field_after_label(text, "Apartment"),
         ) or None
+
+    def phone_for_display(self, text: str) -> Optional[str]:
+        return local_phone(field_after_label(text, "Contact number")) or None
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         manual = manual or {}
@@ -543,6 +553,9 @@ class MedianetFormatter(BaseFormatter):
     def account_id_for_validation(self, text: str) -> Optional[str]:
         return self._contact(text)[1] or None
 
+    def phone_for_display(self, text: str) -> Optional[str]:
+        return local_phone(self._contact(text)[2]) or None
+
     def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
         ticket = field_after_label(text, "Service Request") or ""
 
@@ -647,6 +660,9 @@ class RolFormatter(BaseFormatter):
 
     def account_id_for_validation(self, text: str) -> Optional[str]:
         return self._display_id(text) or None
+
+    def phone_for_display(self, text: str) -> Optional[str]:
+        return local_phone(self._posted_fields(text)[1]) or None
 
     def display_address(self, text: str) -> str:
         """Building code with the area appended, e.g. 'UD-06-15-05, Hulhumale Phase 2'.
