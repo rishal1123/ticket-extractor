@@ -760,6 +760,7 @@ class Database:
         status: str = None,
         ticket_type: str = None,
         in_znuny: bool = None,
+        ont_exists: bool = None,
         staff: str = None,
         search: str = None,
         include_completed: bool = False,
@@ -804,6 +805,10 @@ class Database:
             if in_znuny is not None:
                 conditions.append("in_znuny = ?")
                 params.append(1 if in_znuny else 0)
+
+            if ont_exists is not None:
+                conditions.append("ont_exists = ?")
+                params.append(1 if ont_exists else 0)
 
             if staff:
                 conditions.append("LOWER(znuny_created_by) = LOWER(?)")
@@ -3555,11 +3560,15 @@ class Database:
         """Active ISP tickets whose ONT existence in SMX (via NocBot) is unknown,
         or was last checked-and-not-found before `cutoff` (the retry backoff).
         Once ont_exists=1 a ticket is never rechecked. Never-checked tickets sort
-        first, then oldest-checked retries, so the backlog drains in order."""
+        first, then oldest-checked retries, so the backlog drains in order.
+
+        Includes in_znuny/znuny_address so the caller can fall back to the Znuny
+        phone-ticket address (often cleaner than the portal's) when the portal
+        address comes back not found."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, address FROM tickets
+                SELECT id, address, in_znuny, znuny_address FROM tickets
                 WHERE completed_at IS NULL
                   AND address IS NOT NULL AND address != ''
                   AND (ont_exists IS NULL OR ont_exists = 0)

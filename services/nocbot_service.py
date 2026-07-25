@@ -70,7 +70,15 @@ class NocBotService:
 
     def check_pending_tickets(self, limit: int = BATCH_SIZE) -> dict:
         """Check active ISP tickets whose ONT existence is unknown, or was 'not
-        found' more than RETRY_AFTER_HOURS ago. Persists the result per ticket."""
+        found' more than RETRY_AFTER_HOURS ago. Persists the result per ticket.
+
+        For a ticket linked to Znuny, a portal-address check that didn't come back
+        found gets a second try against the Znuny phone-ticket address
+        (znuny_address) before giving up. This covers both a confirmed 404 *and*
+        an inconclusive result (e.g. NocBot's ont_id format rejects commas/spaces,
+        which a fair number of portal addresses contain) — znuny_address is a
+        separately-captured address that's often cleaner/more accurate than the
+        portal's, so it's worth a shot in either case."""
         if not self.enabled:
             return {"checked": 0, "found": 0}
 
@@ -81,6 +89,21 @@ class NocBotService:
         found = 0
         for t in candidates:
             result = self.check_ont(t["address"])
+
+            znuny_address = t.get("znuny_address")
+            if result is not True and t.get("in_znuny") and znuny_address and znuny_address != t["address"]:
+                fallback = self.check_ont(znuny_address)
+                if fallback is True:
+                    logger.info(
+                        f"NocBot ONT found via Znuny address for ticket {t['id']} "
+                        f"('{znuny_address}' vs portal '{t['address']}')"
+                    )
+                    result = True
+                elif fallback is False:
+                    # A confirmed not-found is stronger signal than an inconclusive
+                    # portal-address result (e.g. a 400 tells us nothing either way).
+                    result = False
+
             self.db.update_ont_status(t["id"], result)
             checked += 1
             if result:

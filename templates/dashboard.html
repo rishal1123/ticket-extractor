@@ -306,7 +306,7 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100" id="ontExistsCard" style="background-color: #17a2b8; border: none;" title="Active ISP tickets whose address has a confirmed ONT in SMX (via NocBot)">
+        <div class="stat-card card h-100 portal-card-link" id="ontExistsCard" style="background-color: #17a2b8; border: none;" onclick="filterByOntExists()" title="Active ISP tickets whose address has a confirmed ONT in SMX (via NocBot) — click to filter">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="ontExistsCount">0</div>
                 <div class="fw-semibold mb-1 text-white">ONT Exists</div>
@@ -376,6 +376,12 @@
                 <i class="bi bi-x-circle me-1"></i>Clear
             </button>
         </div>
+    </div>
+    <div class="mt-2" id="ontFilterBadge" style="display: none;">
+        <span class="badge" style="background-color: #17a2b8;">
+            Filtering: ONT Exists
+            <i class="bi bi-x-circle ms-1" style="cursor: pointer;" onclick="clearOntExistsFilter()" title="Clear ONT filter"></i>
+        </span>
     </div>
 </div>
 
@@ -550,6 +556,10 @@ const pageSize = 50;
 let ticketSortColumn = null;
 let ticketSortDir = 'desc';
 
+// ONT Exists card filter — a separate axis from the Znuny dropdown, so it's
+// tracked as its own flag and combined with whatever else is in the filter bar.
+let ontExistsFilterActive = false;
+
 // Delayed analysis section state
 let delayedDateFilter = 'today';
 let delayedTimeFilter = 5;
@@ -629,6 +639,21 @@ function clearDashTicketFilters() {
     document.getElementById('dashPortalFilter').value = '';
     document.getElementById('dashStatusFilter').value = '';
     document.getElementById('dashZnunyFilter').value = '';
+    ontExistsFilterActive = false;
+    document.getElementById('ontFilterBadge').style.display = 'none';
+    applyDashTicketFilters();
+}
+
+function filterByOntExists() {
+    ontExistsFilterActive = true;
+    document.getElementById('ontFilterBadge').style.display = '';
+    applyDashTicketFilters();
+    document.getElementById('ticketsTableSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function clearOntExistsFilter() {
+    ontExistsFilterActive = false;
+    document.getElementById('ontFilterBadge').style.display = 'none';
     applyDashTicketFilters();
 }
 
@@ -994,6 +1019,7 @@ async function loadTickets() {
         if (portal) params.append('portal', portal);
         if (status) params.append('status', status);
         if (inZnuny) params.append('in_znuny', inZnuny);
+        if (ontExistsFilterActive) params.append('ont_exists', 'true');
 
         const response = await fetch(`/api/tickets?${params.toString()}`);
         const data = await response.json();
