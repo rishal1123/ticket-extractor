@@ -8,13 +8,13 @@ This module provides RESTful API endpoints for:
 - Znuny integration
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File, Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from database import Database
-from services import StatsService, ZnunyService, ConfigService
+from database import Database, now_maldives
+from services import StatsService, ZnunyService, ConfigService, ZnunyCreateService
 from config import Config, APP_VERSION
 from utils.logger import get_logger
 from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams, verify_external_api_key
@@ -156,8 +156,6 @@ async def get_external_open_tickets(
     db: Database = Depends(get_db),
     _auth: None = Depends(verify_external_api_key),
 ):
-    from database import now_maldives
-
     tickets = db.get_open_tickets_export()
     return JSONResponse(content={
         "success": True,
@@ -364,6 +362,50 @@ async def check_ticket_znuny(ticket_id: int):
     service = get_znuny_service()
     result = service.check_ticket_in_znuny(ticket_id)
     return JSONResponse(content=result)
+
+
+@router.post("/tickets/{ticket_id}/create-in-znuny")
+@handle_errors("create ticket in Znuny")
+async def create_ticket_in_znuny(
+    ticket_id: int,
+    request: Request,
+    x_admin_password: str = Header(default=""),
+    db: Database = Depends(get_db),
+):
+    """Create this ISP ticket in Znuny (admin only). Requires the write-only
+    ZNUNY_CREATE_* credentials to be configured (Admin > Config) -- separate
+    from the read-only sync credentials."""
+    stored_password = db.get_setting("admin_password", "admin123")
+    if x_admin_password != stored_password:
+        raise HTTPException(status_code=403, detail="Invalid admin password")
+
+    ticket = db.get_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.in_znuny:
+        raise HTTPException(status_code=400, detail="Ticket is already linked to Znuny")
+
+    body = await request.json() if await request.body() else {}
+    relocation = bool(body.get("relocation"))
+
+    service = ZnunyCreateService()
+    result = service.create_isp_ticket(ticket, relocation=relocation)
+    if not result["success"]:
+        raise HTTPException(status_code=502, detail=result["error"])
+
+    db.update_znuny_status(ticket.id, True, result["znuny_ticket_id"])
+    db.update_znuny_details(
+        ticket.id,
+        znuny_created_at=now_maldives(),
+        znuny_created_by="Ticket Extractor (Auto)",
+        znuny_url=result["znuny_url"],
+    )
+
+    return JSONResponse(content={
+        "success": True,
+        "znuny_ticket_id": result["znuny_ticket_id"],
+        "znuny_url": result["znuny_url"],
+    })
 
 
 @router.post("/tickets/{ticket_id}/sync-znuny")

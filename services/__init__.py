@@ -9,6 +9,7 @@ from .stats_service import StatsService
 from .config_service import ConfigService
 from .scheduler_service import SchedulerService, get_scheduler
 from .nocbot_service import NocBotService
+from .znuny_create_service import ZnunyCreateService
 
 __all__ = [
     'ExtractionService',
@@ -17,5 +18,6 @@ __all__ = [
     'ConfigService',
     'SchedulerService',
     'get_scheduler',
-    'NocBotService'
+    'NocBotService',
+    'ZnunyCreateService'
 ]

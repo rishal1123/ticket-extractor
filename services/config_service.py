@@ -20,6 +20,7 @@ class ConfigService:
         'ROL Portal': ['ROL_URL', 'ROL_USERNAME', 'ROL_PASSWORD'],
         'Medianet Portal': ['MEDIANET_URL', 'MEDIANET_USERNAME', 'MEDIANET_PASSWORD'],
         'Znuny API': ['ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD'],
+        'Znuny Ticket Creation (write)': ['ZNUNY_CREATE_URL', 'ZNUNY_CREATE_USERNAME', 'ZNUNY_CREATE_PASSWORD'],
         'Scheduler settings': ['EXTRACTION_INTERVAL_MINUTES', 'ZNUNY_SYNC_INTERVAL_MINUTES'],
         'Dashboard settings': ['DASHBOARD_HOST', 'DASHBOARD_PORT'],
         'FlareSolverr': ['FLARESOLVERR_URL'],

@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Application version - update this when deploying changes to bust cache
-APP_VERSION = "1.9.4"
+APP_VERSION = "1.9.5"
 
 
 def _load_db_config() -> dict:
@@ -82,6 +82,23 @@ class Config:
     @classmethod
     def get_znuny_password(cls) -> str:
         return _get("ZNUNY_PASSWORD")
+
+    # Separate, deliberately-distinct credential set for *writing* tickets to
+    # Znuny (Admin > Config > "Znuny Ticket Creation"). Kept apart from the
+    # read-only ZNUNY_URL/USERNAME/PASSWORD above (used for the sync pipeline)
+    # so a write-capable agent account is never assumed by default -- creating
+    # tickets is a much more consequential action than reading them.
+    @classmethod
+    def get_znuny_create_url(cls) -> str:
+        return _get("ZNUNY_CREATE_URL")
+
+    @classmethod
+    def get_znuny_create_username(cls) -> str:
+        return _get("ZNUNY_CREATE_USERNAME")
+
+    @classmethod
+    def get_znuny_create_password(cls) -> str:
+        return _get("ZNUNY_CREATE_PASSWORD")
 
     @classmethod
     def get_extraction_interval(cls) -> int:
