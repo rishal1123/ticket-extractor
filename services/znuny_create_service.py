@@ -121,6 +121,15 @@ class ZnunyCreateService:
                 "Type": "Relocation" if relocation else "New Service",
                 "State": state,
                 "Priority": "Regular",
+                # Without this, tickets created here don't show up in the
+                # existing sync's get_open_tickets() (znuny_client.py), which
+                # filters by Services=["OAN"]. Confirmed missing on early bot
+                # tickets by comparing against a manually-created one.
+                "Service": "OAN",
+                # Confirmed on recent real tickets across three different
+                # portals (Dhiraagu/Medianet/ROL, three different staff) --
+                # a shared SLA, not queue-specific, safe to set unconditionally.
+                "SLA": "Residential Normal",
                 "CustomerUser": account,
                 **({"CustomerID": customer_id} if customer_id else {}),
             },
@@ -130,6 +139,10 @@ class ZnunyCreateService:
                 "MimeType": "text/plain",
                 "Charset": "utf8",
                 "CommunicationChannel": "Phone",
+                # Manually-created phone tickets record the customer as the
+                # article's sender (the agent is just relaying the call), not
+                # the agent -- TicketCreate defaults to "agent" if unset.
+                "SenderType": "customer",
             },
             "DynamicField": [
                 {"Name": "ISPTicket", "Value": str(ticket.ticket_id)},
