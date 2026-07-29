@@ -347,17 +347,15 @@ class OoredooFormatter(BaseFormatter):
         body = "\n".join(
             [
                 f"Ooredoo - {service}",
-                f"Ticket ID :{ticket_id}",
-                f"Ticket URL:{ticket_url}",
-                f"Bandwidth :{bandwidth}",
+                f"Ticket ID : {ticket_id}",
+                f"Ticket URL: {ticket_url}",
+                f"Bandwidth : {bandwidth}",
                 f"Account # : {account}",
                 f"Address: {address}",
                 f"Customer Name: {name}",
                 f"Phone : {phone}",
                 f"HDC ONT FSAN:{(' ' + fsan) if fsan else ''}",
                 "Other info:",
-                "",
-                "ONT Contract Status: Signed / Not Signed",
             ]
         )
 
@@ -477,7 +475,7 @@ class DhiraaguFormatter(BaseFormatter):
             body = "\n".join(
                 [
                     f"Dhiraagu - {service}",
-                    f"Order ID :{order_no}",
+                    f"Order ID : {order_no}",
                     f"Order URL: {order_url}",
                     f"Service # : {service_no}",
                     f"Address: {tv_address}",
@@ -498,17 +496,15 @@ class DhiraaguFormatter(BaseFormatter):
         body = "\n".join(
             [
                 f"Dhiraagu - {service}",
-                f"Order ID :{order_no}",
-                f"Order URL:{order_url}",
+                f"Order ID : {order_no}",
+                f"Order URL: {order_url}",
                 f"Service # : {service_no}",
                 f"Address: {address}",
                 f"Customer Name: {name}",
                 f"Phone : {phone}",
-                f"Service Profile :{package}",
+                f"Service Profile : {package}",
                 f"SVLAN | CVLAN: {svlan} | {cvlan}",
                 f"HDC ONT FSAN:{(' ' + fsan) if fsan else ''}",
-                "",
-                "ONT Contract Status: Signed / Not Signed",
             ]
         )
 
@@ -595,7 +591,7 @@ class MedianetFormatter(BaseFormatter):
         body = "\n".join(
             [
                 f"Medianet - {service}",
-                f"Ticket # :{ticket}",
+                f"Ticket # : {ticket}",
                 f"Account # : {account}",
                 f"Address: {address}",
                 f"Customer Name: {name}",
@@ -724,7 +720,6 @@ class RolFormatter(BaseFormatter):
                 f"Address: {address}",
                 "",
                 "Other info:",
-                "ONT Contract Status: Signed / Not Signed",
             ]
         )
         return f"{title}\n\n{body}"
