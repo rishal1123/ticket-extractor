@@ -68,17 +68,41 @@ class NocBotService:
         logger.warning(f"NocBot ONT check for '{address}' returned unexpected status {resp.status_code}")
         return None
 
+    def _check_with_fallback(self, ticket_id: int, address: str, in_znuny: bool,
+                              znuny_address: Optional[str]) -> Optional[bool]:
+        """Check one ticket's ONT status (portal address, then the Znuny address
+        as a fallback), persist it, and return the result. Shared by the
+        scheduled batch check and the on-demand single-ticket check so both
+        apply the exact same logic.
+
+        For a ticket linked to Znuny, a portal-address check that didn't come
+        back found gets a second try against the Znuny phone-ticket address
+        (znuny_address) before giving up. This covers both a confirmed 404 *and*
+        an inconclusive result (e.g. NocBot's ont_id format rejects commas/
+        spaces, which a fair number of portal addresses contain) —
+        znuny_address is a separately-captured address that's often cleaner/
+        more accurate than the portal's, so it's worth a shot in either case."""
+        result = self.check_ont(address)
+
+        if result is not True and in_znuny and znuny_address and znuny_address != address:
+            fallback = self.check_ont(znuny_address)
+            if fallback is True:
+                logger.info(
+                    f"NocBot ONT found via Znuny address for ticket {ticket_id} "
+                    f"('{znuny_address}' vs portal '{address}')"
+                )
+                result = True
+            elif fallback is False:
+                # A confirmed not-found is stronger signal than an inconclusive
+                # portal-address result (e.g. a 400 tells us nothing either way).
+                result = False
+
+        self.db.update_ont_status(ticket_id, result)
+        return result
+
     def check_pending_tickets(self, limit: int = BATCH_SIZE) -> dict:
         """Check active ISP tickets whose ONT existence is unknown, or was 'not
-        found' more than RETRY_AFTER_HOURS ago. Persists the result per ticket.
-
-        For a ticket linked to Znuny, a portal-address check that didn't come back
-        found gets a second try against the Znuny phone-ticket address
-        (znuny_address) before giving up. This covers both a confirmed 404 *and*
-        an inconclusive result (e.g. NocBot's ont_id format rejects commas/spaces,
-        which a fair number of portal addresses contain) — znuny_address is a
-        separately-captured address that's often cleaner/more accurate than the
-        portal's, so it's worth a shot in either case."""
+        found' more than RETRY_AFTER_HOURS ago. Persists the result per ticket."""
         if not self.enabled:
             return {"checked": 0, "found": 0}
 
@@ -88,23 +112,7 @@ class NocBotService:
         checked = 0
         found = 0
         for t in candidates:
-            result = self.check_ont(t["address"])
-
-            znuny_address = t.get("znuny_address")
-            if result is not True and t.get("in_znuny") and znuny_address and znuny_address != t["address"]:
-                fallback = self.check_ont(znuny_address)
-                if fallback is True:
-                    logger.info(
-                        f"NocBot ONT found via Znuny address for ticket {t['id']} "
-                        f"('{znuny_address}' vs portal '{t['address']}')"
-                    )
-                    result = True
-                elif fallback is False:
-                    # A confirmed not-found is stronger signal than an inconclusive
-                    # portal-address result (e.g. a 400 tells us nothing either way).
-                    result = False
-
-            self.db.update_ont_status(t["id"], result)
+            result = self._check_with_fallback(t["id"], t["address"], bool(t.get("in_znuny")), t.get("znuny_address"))
             checked += 1
             if result:
                 found += 1
@@ -112,3 +120,14 @@ class NocBotService:
         if checked:
             logger.info(f"NocBot ONT check: {checked} checked, {found} found")
         return {"checked": checked, "found": found}
+
+    def check_ticket(self, ticket) -> Optional[bool]:
+        """Check ONT status for one ticket right now, on demand -- e.g. when
+        staff click "Check Znuny" in the ticket detail modal, rather than
+        waiting for the next scheduled batch. Skipped (returns None without
+        an API call) if the ticket has no address or NocBot isn't configured."""
+        if not self.enabled or not getattr(ticket, "address", None):
+            return None
+        return self._check_with_fallback(
+            ticket.id, ticket.address, bool(ticket.in_znuny), getattr(ticket, "znuny_address", None)
+        )

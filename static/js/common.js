@@ -386,6 +386,16 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                                 <div class="value">${escapeHtml(displayAddress) || '-'}</div>
                             </div>
                         </div>
+                        <div class="col-6">
+                            <div class="info-card">
+                                <div class="label">ONT in SMX</div>
+                                <div class="value" title="${ticket.ont_checked_at ? 'Last checked ' + formatRelativeTime(ticket.ont_checked_at) : 'Never checked'}">
+                                    ${ticket.ont_exists === true ? '<span class="badge bg-success">Confirmed</span>'
+                                        : ticket.ont_exists === false ? '<span class="badge bg-danger">Not found</span>'
+                                        : '<span class="badge bg-secondary">Not checked</span>'}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <!-- Status & Timestamps -->
@@ -483,15 +493,22 @@ async function showTicketDetail(ticketId, callbacks = {}) {
 async function checkZnuny(ticketId, callbacks = {}) {
     showLoading(true);
     try {
+        // Also checks ONT-in-SMX for this ticket on demand (server-side), not
+        // waiting for the next scheduled batch -- see the ont_exists field.
         const response = await fetch(`/api/tickets/${ticketId}/check-znuny`, { method: 'POST' });
         const data = await response.json();
 
-        alert(data.in_znuny
+        const znunyMsg = data.in_znuny
             ? `Ticket found in Znuny! (ID: ${data.znuny_ticket_id})`
-            : 'Ticket not found in Znuny'
-        );
+            : 'Ticket not found in Znuny';
+        const ontMsg = data.ont_exists === true ? 'ONT confirmed in SMX.'
+            : data.ont_exists === false ? 'ONT not found in SMX.'
+            : 'ONT check inconclusive (not configured, or address unreachable/invalid).';
+        alert(`${znunyMsg}\n${ontMsg}`);
 
         if (callbacks.onUpdate) callbacks.onUpdate();
+        // Full refresh of everything known about this ticket (Znuny state,
+        // articles, site visits, ONT status) -- not just the two fields above.
         if (window.currentTicketId === ticketId) showTicketDetail(ticketId, callbacks);
 
     } catch (error) {

@@ -3598,6 +3598,21 @@ class Database:
             cursor.execute("SELECT COUNT(*) as count FROM tickets WHERE completed_at IS NULL AND ont_exists = 1")
             return cursor.fetchone()["count"]
 
+    def get_ont_status(self, ticket_id: int) -> dict:
+        """A single ticket's ONT-exists status/last-checked time, for the ticket
+        detail modal. ont_exists: None (not checked), True, or False."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT ont_exists, ont_checked_at FROM tickets WHERE id = ?", (ticket_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"ont_exists": None, "ont_checked_at": None}
+            value = row["ont_exists"]
+            return {
+                "ont_exists": bool(value) if value is not None else None,
+                "ont_checked_at": row["ont_checked_at"],
+            }
+
     def get_znuny_only_stats(self, date_from: str = None, date_to: str = None) -> dict:
         """Get summary statistics for Znuny tickets (all + linked/unlinked breakdown).
 

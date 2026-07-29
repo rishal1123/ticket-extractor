@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from database import Database, now_maldives
-from services import StatsService, ZnunyService, ConfigService, ZnunyCreateService
+from services import StatsService, ZnunyService, ConfigService, ZnunyCreateService, NocBotService
 from services.znuny_create_service import ZNUNY_STATES, DEFAULT_STATE as DEFAULT_ZNUNY_STATE
 from config import Config, APP_VERSION
 from utils.logger import get_logger
@@ -353,15 +353,26 @@ async def get_ticket(ticket_id: int, db: Database = Depends(get_db)):
     # Customer phone number, parsed from the captured portal detail-page dump
     from utils.ticket_formatter import extract_phone
     result["phone"] = extract_phone(ticket.raw_dump, ticket.portal)
+    result.update(db.get_ont_status(ticket_id))
     return JSONResponse(content=result)
 
 
 @router.post("/tickets/{ticket_id}/check-znuny")
 @handle_errors("check Znuny")
-async def check_ticket_znuny(ticket_id: int):
-    """Check if a ticket exists in Znuny."""
+async def check_ticket_znuny(ticket_id: int, db: Database = Depends(get_db)):
+    """Check if a ticket exists in Znuny, and (on demand, not waiting for the
+    next scheduled batch) whether its ONT exists in SMX via NocBot -- so
+    clicking "Check Znuny" for one ticket refreshes everything known about
+    it in a single action."""
     service = get_znuny_service()
     result = service.check_ticket_in_znuny(ticket_id)
+
+    # Re-fetch after the Znuny check: it may have just set in_znuny, which
+    # controls whether the ONT check's Znuny-address fallback applies.
+    ticket = db.get_ticket_by_id(ticket_id)
+    if ticket:
+        result["ont_exists"] = NocBotService(db).check_ticket(ticket)
+
     return JSONResponse(content=result)
 
 
