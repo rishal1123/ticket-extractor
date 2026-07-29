@@ -35,6 +35,33 @@ PORTAL_QUEUE = {
     "rol": "*ROL",
 }
 
+# States available on the "New phone ticket" form (Action=AgentTicketPhone ->
+# NextStateID), read from a live Znuny instance. TicketCreate takes the state
+# by name, not ID, so this is just the list of valid name strings -- no numeric
+# IDs needed. "Open" first as the sensible default.
+DEFAULT_STATE = "Open"
+ZNUNY_STATES = [
+    "Open",
+    "1. Call Customer",
+    "2. SD Team Site",
+    "3. Field Team Site",
+    "4. Ready for Provision",
+    "5. ISP Issue",
+    "5. ONT Lost",
+    "6. ONT Contract Pending",
+    "7. Building Contractor Pending",
+    "8. HDC Contractor Pending",
+    "9. Customer Pending",
+    "Dhiraagu - Suspended",
+    "*FDC - Contractor Pending",
+    "*FDC - Contractor Resolved",
+    "*FDC - Customer Renovation",
+    "*FDC - ONT Power",
+    "*FDC - Site Pending",
+    "*FDC - Site Retry",
+    "*FDC - Tower Hold",
+]
+
 
 class ZnunyCreateService:
     """Creates ISP tickets in Znuny. Fails soft/returns a clear error dict --
@@ -51,7 +78,7 @@ class ZnunyCreateService:
     def enabled(self) -> bool:
         return bool(self.base_url and self.username and self.password)
 
-    def create_isp_ticket(self, ticket, relocation: bool = False) -> dict:
+    def create_isp_ticket(self, ticket, relocation: bool = False, state: str = DEFAULT_STATE) -> dict:
         """Create a Znuny ticket for an ISP portal ticket that isn't linked yet.
 
         Returns {success, znuny_ticket_id, znuny_url, error}. znuny_ticket_id
@@ -59,6 +86,9 @@ class ZnunyCreateService:
         tickets.znuny_ticket_id column convention used everywhere else."""
         if not self.enabled:
             return self._fail("Znuny ticket creation isn't configured (Admin > Config).")
+
+        if state not in ZNUNY_STATES:
+            state = DEFAULT_STATE
 
         queue = PORTAL_QUEUE.get((ticket.portal or "").lower())
         if not queue:
@@ -89,7 +119,7 @@ class ZnunyCreateService:
                 "Title": title,
                 "Queue": queue,
                 "Type": "Relocation" if relocation else "New Service",
-                "State": "Open",
+                "State": state,
                 "Priority": "Regular",
                 "CustomerUser": account,
                 **({"CustomerID": customer_id} if customer_id else {}),

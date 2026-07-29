@@ -43,6 +43,9 @@
                 <i class="bi bi-clipboard me-1"></i>Copy
             </button>
             {% if not meta.in_znuny %}
+            <select class="form-select form-select-sm" id="znunyStateSelect" style="width: auto;" title="State the created ticket will be in">
+                <option>Open</option>
+            </select>
             <button class="btn btn-primary btn-sm" id="createInZnunyBtn"
                     {% if not result.ok or result.missing %}disabled{% endif %}
                     data-relocation="{{ 'true' if result.relocation else 'false' }}"
@@ -153,6 +156,31 @@ if (btn) {
 // The password prompt at click time is the real gate either way, so the button is
 // just always shown (still disabled when the formatter has unresolved fields).
 const createBtn = document.getElementById('createInZnunyBtn');
+const stateSelect = document.getElementById('znunyStateSelect');
+const STATE_CACHE_KEY = 'znunyCreateState';
+
+// Populate the state picker from the server's known-good list (scraped from
+// the real "New phone ticket" form), pre-selecting whatever was last chosen
+// -- cached in localStorage so it survives across tickets/tabs/sessions,
+// not just this page load.
+if (stateSelect) {
+    fetch('/api/znuny-create-states')
+        .then(r => r.json())
+        .then(data => {
+            const states = data.states || ['Open'];
+            const cached = localStorage.getItem(STATE_CACHE_KEY);
+            const selected = states.includes(cached) ? cached : (data.default || 'Open');
+            stateSelect.innerHTML = states.map(s =>
+                `<option value="${s}"${s === selected ? ' selected' : ''}>${s}</option>`
+            ).join('');
+        })
+        .catch(() => { /* keep the static "Open" fallback already in the DOM */ });
+
+    stateSelect.addEventListener('change', () => {
+        localStorage.setItem(STATE_CACHE_KEY, stateSelect.value);
+    });
+}
+
 if (createBtn) {
     createBtn.addEventListener('click', async () => {
         const password = prompt('Enter admin password to create this ticket in Znuny:');
@@ -167,7 +195,10 @@ if (createBtn) {
             const response = await fetch(`/api/tickets/{{ db_id }}/create-in-znuny`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
-                body: JSON.stringify({ relocation: createBtn.dataset.relocation === 'true' }),
+                body: JSON.stringify({
+                    relocation: createBtn.dataset.relocation === 'true',
+                    state: stateSelect ? stateSelect.value : undefined,
+                }),
             });
             const data = await response.json().catch(() => ({}));
 

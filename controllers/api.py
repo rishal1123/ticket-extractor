@@ -15,6 +15,7 @@ from datetime import datetime
 
 from database import Database, now_maldives
 from services import StatsService, ZnunyService, ConfigService, ZnunyCreateService
+from services.znuny_create_service import ZNUNY_STATES, DEFAULT_STATE as DEFAULT_ZNUNY_STATE
 from config import Config, APP_VERSION
 from utils.logger import get_logger
 from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams, verify_external_api_key
@@ -364,6 +365,15 @@ async def check_ticket_znuny(ticket_id: int):
     return JSONResponse(content=result)
 
 
+@router.get("/znuny-create-states")
+@handle_errors("get znuny create states")
+async def get_znuny_create_states():
+    """States selectable on the "Create in Znuny" button, matching the New
+    phone ticket form's State dropdown. Read-only/informational -- no admin
+    auth needed, the actual create call is what's gated."""
+    return JSONResponse(content={"states": ZNUNY_STATES, "default": DEFAULT_ZNUNY_STATE})
+
+
 @router.post("/tickets/{ticket_id}/create-in-znuny")
 @handle_errors("create ticket in Znuny")
 async def create_ticket_in_znuny(
@@ -387,9 +397,10 @@ async def create_ticket_in_znuny(
 
     body = await request.json() if await request.body() else {}
     relocation = bool(body.get("relocation"))
+    state = body.get("state") or DEFAULT_ZNUNY_STATE
 
     service = ZnunyCreateService()
-    result = service.create_isp_ticket(ticket, relocation=relocation)
+    result = service.create_isp_ticket(ticket, relocation=relocation, state=state)
     if not result["success"]:
         raise HTTPException(status_code=502, detail=result["error"])
 
