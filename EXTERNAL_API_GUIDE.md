@@ -1,0 +1,244 @@
+# External API Guide
+
+Read-only, authenticated JSON endpoints for other applications to consume
+ticket data from this app — e.g. a separate server that auto-creates Znuny
+tickets for ISP tickets that don't have one yet. Separate from the
+unauthenticated `/api/*` endpoints the dashboard itself uses (those stay
+open because they're only ever called by pages the browser already loaded
+from this server).
+
+> **Keep this file in sync.** Whenever an `/api/external/*` endpoint is
+> added, removed, or its response shape changes, update this guide in the
+> same change.
+
+## Authentication
+
+Every endpoint below requires an `X-API-Key` header:
+
+```
+X-API-Key: <your key>
+```
+
+There is a single shared key for all external endpoints (no per-key scoping,
+no per-key rate limit). It's stored in `app_settings` (`external_api_key`)
+and managed from **Admin → API**, or directly via:
+
+- `GET /api/settings/external-api-key` — `{success, configured, key}`
+- `POST /api/settings/external-api-key` — body `{}` (or omit) to
+  auto-generate a new random key, or `{"key": "your-own-value"}` to set an
+  explicit one. Returns the new key. **Regenerating immediately invalidates
+  the old key** — update the consuming server at the same time.
+
+Failure modes:
+
+- No key configured yet → `503 {"detail": "External API key not configured"}`
+  (fails closed — the endpoint is unreachable until a key exists, not open).
+- Missing/wrong key → `401 {"detail": "Invalid or missing API key"}`.
+- Comparison is constant-time (`secrets.compare_digest`); treat the key like
+  a password — don't log it, don't commit a real value to the repo (see
+  `.env.example` for the placeholder pattern used elsewhere in this repo).
+
+## Activity log
+
+Every call to an `/api/external/*` endpoint (accepted or rejected) is
+recorded to the `external_api_logs` table -- endpoint, method, status code,
+caller IP, whether the key was valid, timestamp. View it at
+**Admin → API → Recent Activity** (selectable window: 1h/24h/3d/7d), or
+directly via `GET /api/admin/external-api-logs?hours=24` and
+`GET /api/admin/external-api-log-stats?hours=24`. Entries older than the
+retention window (default 2 days, Admin → Status → System Logs → "Clear Old")
+are purged along with the other log tables.
+
+## Rate limiting
+
+Covered by this app's existing global middleware (`middleware/security.py`),
+applied to every non-exempt path including these: **120 requests/minute,
+20 requests/second, per client IP**. There's no separate per-key budget.
+
+## Endpoints
+
+### `GET /api/external/open-tickets`
+
+ISP tickets **already linked and currently open in Znuny** (`in_znuny=1`,
+Znuny state not closed/resolved). Use this to track tickets that are in
+progress; it does **not** include tickets waiting to be created — for that,
+use `/api/external/isp-tickets` below.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "generated_at": "2026-07-30T14:05:00+05:00",
+  "count": 2,
+  "tickets": [
+    {
+      "portal": "ooredoo",
+      "ticket_id": "160836",
+      "address": "DH-08-11-07",
+      "account": "40015036",
+      "customer_name": "Ahmed",
+      "ticket_type": "New Service",
+      "portal_created_at": "2026-07-30T09:12:00+05:00",
+      "service_type": "SuperNet U10M 400",
+      "status": "Open",
+      "kpi": null,
+      "notes": null,
+      "created_at": "2026-07-30T09:15:00+05:00",
+      "updated_at": "2026-07-30T09:40:00+05:00",
+      "completed_at": null,
+      "znuny_ticket_id": "2026072528000493",
+      "znuny_created_at": "2026-07-30T09:18:00+05:00",
+      "znuny_created_by": "staff.name",
+      "znuny_address": "DH-08-11-07",
+      "znuny_url": "https://10.241.1.12/otrs/index.pl?Action=AgentTicketZoom;TicketID=28609",
+      "portal_url": "https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/160836",
+      "znuny_state": "Open",
+      "znuny_queue": "*Ooredoo",
+      "znuny_owner": "staff.name",
+      "znuny_priority": "Regular"
+    }
+  ]
+}
+```
+
+### `GET /api/external/isp-tickets`
+
+**Currently-open ISP portal tickets** (not yet completed/disappeared from
+the portal). By default returns **all** active tickets, both linked and
+not-yet-linked to Znuny — filter client-side on `"in_znuny": false` to get
+the ones that still need a Znuny ticket, or use the query param below to
+have the server do that filtering instead.
+
+**Query parameters**
+
+| Param | Values | Effect |
+|---|---|---|
+| `in_znuny` | omitted (default) | all active tickets, linked and not-linked |
+| `in_znuny` | `false` | only tickets that still need a Znuny ticket created |
+| `in_znuny` | `true` | only tickets already linked to a Znuny ticket |
+
+```bash
+# Only the ones that need a Znuny ticket created
+curl -H "X-API-Key: <your key>" \
+  "http://<host>:8003/api/external/isp-tickets?in_znuny=false"
+```
+
+Each ticket includes a pre-formatted title/body (`formatted_title`/
+`formatted_body`, the same text the "Create in Znuny" button on this app's
+own formatter page uses) plus `suggested_queue`, so a consumer can either:
+
+- Call this app's own `POST /api/tickets/{id}/create-in-znuny` (admin-
+  password gated, meant for interactive/admin use), **or**
+- Create the Znuny ticket itself directly via Znuny's Generic Interface
+  REST API, using the fields below as-is.
+
+Note: `formatted_title`/`formatted_body` are generated **without** the live
+Znuny address/account cross-check that the interactive formatter page runs
+(too slow to do per-ticket across a bulk list) — treat them as a best-effort
+draft, not a guaranteed-valid submission. `formatter_missing` lists any
+required fields the formatter couldn't fill in from the captured portal
+data; when non-empty, `formatted_title`/`formatted_body` are `null` and the
+ticket should be skipped or handled manually until the portal capture is
+complete (this usually clears itself once the ISP extractor next visits the
+ticket's detail page).
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "generated_at": "2026-07-30T14:05:00+05:00",
+  "count": 1,
+  "tickets": [
+    {
+      "id": 5120,
+      "portal": "ooredoo",
+      "ticket_id": "160836",
+      "portal_url": "https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/160836",
+      "address": "DH-08-11-07",
+      "znuny_address": null,
+      "account": "40015036",
+      "customer_name": "Ahmed",
+      "ticket_type": "New Service",
+      "service_type": "SuperNet U10M 400",
+      "status": "Open",
+      "phone": "7774773",
+      "portal_created_at": "2026-07-30T09:12:00+05:00",
+      "created_at": "2026-07-30T09:15:00+05:00",
+      "updated_at": "2026-07-30T09:40:00+05:00",
+      "in_znuny": false,
+      "znuny_ticket_id": null,
+      "znuny_created_at": null,
+      "znuny_created_by": null,
+      "znuny_url": null,
+      "znuny_state": null,
+      "znuny_queue": null,
+      "znuny_owner": null,
+      "suggested_queue": "*Ooredoo",
+      "formatted_title": "Ooredoo - New Service - DH-08-11-07 / Account #: 40015036 / SuperNet U10M 400/ Ticket ID:160836",
+      "formatted_body": "Ooredoo - New Service\nTicket ID : 160836\nTicket URL: https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/160836\nBandwidth : SuperNet U10M 400\nAccount # : 40015036\nAddress: DH-08-11-07\nCustomer Name: Ahmed\nPhone : 7774773\nHDC ONT FSAN:\nOther info:",
+      "formatter_ok": true,
+      "formatter_missing": [],
+      "formatter_error": null
+    }
+  ]
+}
+```
+
+`formatted_title` is a one-line summary (address/account/bandwidth/ticket id);
+`formatted_body` is the full block, including the `{ISP} - {Type}` header line
+at the top — this is a straight split of the formatter's output on the first
+blank line, not independently generated fields. Use `formatted_body` as-is for
+the Znuny article; `formatted_title` as-is for the ticket/article subject.
+
+**Field notes:**
+
+| Field | Meaning |
+|---|---|
+| `id` | This app's internal ticket id (not the portal's `ticket_id`) |
+| `in_znuny` | `true` once a Znuny ticket has been linked — the fields to act on are only meaningful when this is `false` |
+| `suggested_queue` | Znuny queue this portal's tickets go to (`*Dhiraagu`, `*Ooredoo`, `*Medianet`, `*ROL`) |
+| `formatter_missing` | Non-empty means the captured portal data is incomplete — don't auto-create yet |
+
+## Examples
+
+curl:
+
+```bash
+curl -H "X-API-Key: <your key>" \
+  http://<host>:8003/api/external/isp-tickets
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Uri "http://<host>:8003/api/external/isp-tickets" `
+  -Headers @{ "X-API-Key" = "<your key>" }
+```
+
+Python:
+
+```python
+import requests
+
+resp = requests.get(
+    "http://<host>:8003/api/external/isp-tickets",
+    headers={"X-API-Key": "<your key>"},
+)
+resp.raise_for_status()
+data = resp.json()
+to_create = [t for t in data["tickets"] if not t["in_znuny"] and t["formatter_ok"]]
+```
+
+## Adding a new external endpoint
+
+1. Add the route in `controllers/api.py` under the `# External integration
+   endpoints` section, with `Depends(verify_external_api_key)` on the
+   dependency list -- this also wires in the activity-log entry for free
+   (logged once, inside the dependency itself).
+2. Add any new `Database` query method needed (`database.py`).
+3. Add a row for it to the "Endpoints" reference table on
+   **Admin → API** (`templates/admin.html`).
+4. Document it in this file: path, response shape, field notes, and an
+   example.

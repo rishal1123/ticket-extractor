@@ -333,6 +333,26 @@ class Database:
                 )
             """)
 
+            # External API request log — every call to /api/external/* (success or
+            # rejected), for the Admin > API tab's activity view. Logged from the
+            # verify_external_api_key dependency so it covers every endpoint that
+            # uses it without each one needing its own logging call.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS external_api_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    endpoint TEXT NOT NULL,
+                    method TEXT NOT NULL,
+                    status_code INTEGER NOT NULL,
+                    ip_address TEXT,
+                    key_valid BOOLEAN NOT NULL,
+                    created_at DATETIME NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_external_api_logs_created_at
+                ON external_api_logs(created_at)
+            """)
+
             # Site visits table for tracking OAN site visit articles
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS site_visits (
@@ -2953,6 +2973,7 @@ class Database:
                 ("system_logs", "created_at"),
                 ("extraction_logs", "extracted_at"),
                 ("login_stats", "created_at"),
+                ("external_api_logs", "created_at"),
             ]:
                 cursor.execute(f"""
                     DELETE FROM {table}
@@ -2963,6 +2984,79 @@ class Database:
         if total > 0:
             logger.info(f"Cleared old logs ({days}d): {results}")
         return results
+
+    # ==================== External API Logs ====================
+
+    def log_external_api_request(self, endpoint: str, method: str, status_code: int,
+                                  ip_address: Optional[str], key_valid: bool):
+        """Record a call to an /api/external/* endpoint (success or rejected),
+        for the Admin > API tab's activity view."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO external_api_logs (endpoint, method, status_code, ip_address, key_valid, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (endpoint, method, status_code, ip_address, key_valid, now_maldives().isoformat()))
+
+    def get_external_api_logs(self, hours: int = 24, limit: int = 200, offset: int = 0) -> dict:
+        """Recent external API request log entries, newest first."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = (now_maldives() - timedelta(hours=hours)).isoformat()
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM external_api_logs WHERE created_at >= ?", (cutoff,)
+            )
+            total = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT id, endpoint, method, status_code, ip_address, key_valid, created_at
+                FROM external_api_logs
+                WHERE created_at >= ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """, (cutoff, limit, offset))
+            logs = [{
+                "id": row["id"],
+                "endpoint": row["endpoint"],
+                "method": row["method"],
+                "status_code": row["status_code"],
+                "ip_address": row["ip_address"],
+                "key_valid": bool(row["key_valid"]),
+                "created_at": row["created_at"],
+            } for row in cursor.fetchall()]
+
+            return {"logs": logs, "total": total}
+
+    def get_external_api_log_stats(self, hours: int = 24) -> dict:
+        """Summary counts for the external API log window (default last 24h)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = (now_maldives() - timedelta(hours=hours)).isoformat()
+
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN key_valid = 1 THEN 1 ELSE 0 END) AS successful,
+                    SUM(CASE WHEN key_valid = 0 THEN 1 ELSE 0 END) AS rejected
+                FROM external_api_logs
+                WHERE created_at >= ?
+            """, (cutoff,))
+            row = cursor.fetchone()
+
+            cursor.execute("""
+                SELECT endpoint, COUNT(*) AS count FROM external_api_logs
+                WHERE created_at >= ?
+                GROUP BY endpoint ORDER BY count DESC
+            """, (cutoff,))
+            by_endpoint = [{"endpoint": r["endpoint"], "count": r["count"]} for r in cursor.fetchall()]
+
+            return {
+                "total": row["total"] or 0,
+                "successful": row["successful"] or 0,
+                "rejected": row["rejected"] or 0,
+                "by_endpoint": by_endpoint,
+            }
 
     # ==================== App Settings ====================
 
@@ -3484,6 +3578,40 @@ class Database:
                   AND (z.state IS NULL OR LOWER(z.state) NOT IN ('closed', 'resolved'))
                 ORDER BY t.znuny_created_at DESC
             """)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_active_isp_tickets_export(self, in_znuny: Optional[bool] = None) -> list[dict]:
+        """Currently-open ISP portal tickets (completed_at IS NULL) with full
+        Znuny linkage status, for consumption by an external application via
+        /api/external/isp-tickets that decides which ones still need a Znuny
+        ticket created and does so automatically.
+
+        Unlike get_open_tickets_export() (which only returns tickets already
+        linked+open in Znuny), this defaults to EVERY active ISP ticket
+        regardless of in_znuny -- the external consumer needs the not-yet-linked
+        ones to know what to create, and the already-linked ones to know what
+        to skip. Pass in_znuny=False/True to have the DB do that filtering
+        instead of the caller."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            where = "t.completed_at IS NULL"
+            params: tuple = ()
+            if in_znuny is not None:
+                where += " AND t.in_znuny = ?"
+                params = (1 if in_znuny else 0,)
+            cursor.execute(f"""
+                SELECT
+                    t.id, t.portal, t.ticket_id, t.address, t.account, t.customer_name,
+                    t.ticket_type, t.portal_created_at, t.service_type, t.status, t.kpi,
+                    t.created_at, t.updated_at, t.raw_dump,
+                    t.in_znuny, t.znuny_ticket_id, t.znuny_created_at, t.znuny_created_by,
+                    t.znuny_address, t.znuny_url, t.portal_url,
+                    z.state AS znuny_state, z.queue AS znuny_queue, z.owner AS znuny_owner
+                FROM tickets t
+                LEFT JOIN znuny_tickets z ON z.znuny_ticket_id = t.znuny_ticket_id
+                WHERE {where}
+                ORDER BY t.created_at ASC
+            """, params)
             return [dict(row) for row in cursor.fetchall()]
 
     def get_znuny_open_isp_closed(self, limit: int = 200) -> list[dict]:

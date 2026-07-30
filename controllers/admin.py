@@ -182,6 +182,30 @@ async def clear_old_logs(days: int = 30, db: Database = Depends(get_db)):
     ))
 
 
+@router.get("/external-api-logs")
+@handle_errors("get external API logs")
+async def get_external_api_logs(
+    hours: int = Query(default=24, ge=1, le=168, description="Look-back window in hours"),
+    limit: int = Query(default=200, le=1000),
+    offset: int = 0,
+    db: Database = Depends(get_db)
+):
+    """Recent /api/external/* request log entries (Admin > API tab)."""
+    result = db.get_external_api_logs(hours=hours, limit=limit, offset=offset)
+    return JSONResponse(content=result)
+
+
+@router.get("/external-api-log-stats")
+@handle_errors("get external API log stats")
+async def get_external_api_log_stats(
+    hours: int = Query(default=24, ge=1, le=168),
+    db: Database = Depends(get_db)
+):
+    """Summary counts for the external API log window (Admin > API tab)."""
+    stats = db.get_external_api_log_stats(hours=hours)
+    return JSONResponse(content=stats)
+
+
 @router.get("/delayed-tickets")
 @handle_errors("get delayed tickets")
 async def get_delayed_tickets(

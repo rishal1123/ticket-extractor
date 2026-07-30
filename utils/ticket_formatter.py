@@ -96,12 +96,17 @@ def extract_phone(raw_dump: Optional[str], portal: str) -> Optional[str]:
 
 
 def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[dict] = None,
-                       relocation: bool = False) -> dict:
+                       relocation: bool = False, verify_with_znuny: bool = True) -> dict:
     """Format a raw dump into a standardized block.
 
     Returns a dict: {ok, isp, text, missing, warnings, relocation_possible,
     relocation, error}. ``ok`` is False when there's no dump or the ISP couldn't be
     formatted. When ``relocation`` is True the relocation template is used.
+
+    ``verify_with_znuny=False`` skips the live Znuny cross-check (address/account
+    lookups) -- those are real network round trips per ticket, fine for a single
+    formatter-page view but too slow when formatting many tickets at once (e.g.
+    the external API's bulk export).
     """
     if not raw_dump or not raw_dump.strip():
         return {"ok": False, "isp": None, "text": "", "missing": [], "warnings": [],

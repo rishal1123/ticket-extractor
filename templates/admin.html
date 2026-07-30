@@ -144,6 +144,11 @@
             <i class="bi bi-sliders me-1"></i>Config
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="api-tab" data-bs-toggle="tab" data-bs-target="#api-content" type="button" role="tab">
+            <i class="bi bi-plug me-1"></i>API
+        </button>
+    </li>
 </ul>
 
 <div class="tab-content" id="adminTabContent">
@@ -967,6 +972,7 @@
                 </button>
             </div>
         </div>
+
     </div>
 
     <div class="alert alert-warning mt-3 mb-0">
@@ -974,6 +980,120 @@
         <strong>Note:</strong> Changes to port or host settings require a server restart to take effect.
     </div>
 </div><!-- End Config Tab -->
+
+<!-- API Tab -->
+<div class="tab-pane fade" id="api-content" role="tabpanel">
+
+<div class="row g-3">
+    <!-- External API Key -->
+    <div class="col-12 col-md-6">
+        <div class="config-section">
+            <h6><i class="bi bi-key me-1"></i>External API Key</h6>
+            <p class="text-muted small mb-2">
+                Single shared key, sent as an <code>X-API-Key</code> header, gates
+                <code>GET /api/external/open-tickets</code> and <code>GET /api/external/isp-tickets</code>.
+                See <code>EXTERNAL_API_GUIDE.md</code> in the repo for full request/response docs.
+            </p>
+            <div class="mb-2">
+                <span id="externalApiKeyStatus" class="badge bg-secondary">Loading...</span>
+            </div>
+            <div class="mb-2">
+                <label class="form-label small">API Key</label>
+                <div class="input-group input-group-sm">
+                    <input type="password" class="form-control" id="externalApiKey" readonly>
+                    <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('externalApiKey')">
+                        <i class="bi bi-eye"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" onclick="copyExternalApiKey()" title="Copy">
+                        <i class="bi bi-clipboard"></i>
+                    </button>
+                </div>
+            </div>
+            <button class="btn btn-outline-warning btn-sm" onclick="regenerateExternalApiKey()">
+                <i class="bi bi-arrow-repeat me-1"></i>Regenerate Key
+            </button>
+            <p class="text-muted small mb-0 mt-2">Regenerating immediately invalidates the old key — update the consuming server before or right after.</p>
+        </div>
+    </div>
+
+    <!-- Endpoints reference -->
+    <div class="col-12 col-md-6">
+        <div class="config-section">
+            <h6><i class="bi bi-signpost-split me-1"></i>Endpoints</h6>
+            <table class="table table-sm mb-0">
+                <tbody>
+                    <tr>
+                        <td><code>GET /api/external/open-tickets</code></td>
+                        <td class="text-muted small">ISP tickets already linked + open in Znuny</td>
+                    </tr>
+                    <tr>
+                        <td><code>GET /api/external/isp-tickets</code></td>
+                        <td class="text-muted small">All active ISP tickets; <code>?in_znuny=false</code> for not-yet-created only</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Recent Activity (24h) -->
+    <div class="col-12">
+        <div class="config-section">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0"><i class="bi bi-activity me-1"></i>Recent Activity</h6>
+                <div class="d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm" id="apiLogHours" style="width: auto;" onchange="loadExternalApiLogs()">
+                        <option value="1">Last 1 hour</option>
+                        <option value="24" selected>Last 24 hours</option>
+                        <option value="72">Last 3 days</option>
+                        <option value="168">Last 7 days</option>
+                    </select>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="loadExternalApiLogs()">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-4 col-md-2">
+                    <div class="text-center bg-light rounded py-1">
+                        <div class="small fw-bold" id="apiLogTotalCount">0</div>
+                        <div class="small text-muted">Total</div>
+                    </div>
+                </div>
+                <div class="col-4 col-md-2">
+                    <div class="text-center bg-success bg-opacity-10 rounded py-1">
+                        <div class="small fw-bold text-success" id="apiLogSuccessCount">0</div>
+                        <div class="small text-muted">Successful</div>
+                    </div>
+                </div>
+                <div class="col-4 col-md-2">
+                    <div class="text-center bg-danger bg-opacity-10 rounded py-1">
+                        <div class="small fw-bold text-danger" id="apiLogRejectedCount">0</div>
+                        <div class="small text-muted">Rejected</div>
+                    </div>
+                </div>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th style="width: 130px;">Time</th>
+                            <th>Endpoint</th>
+                            <th style="width: 70px;">Method</th>
+                            <th style="width: 80px;">Status</th>
+                            <th class="d-none d-md-table-cell">IP</th>
+                        </tr>
+                    </thead>
+                    <tbody id="apiLogsTable">
+                        <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="text-muted small mt-2" id="apiLogPaginationInfo">--</div>
+        </div>
+    </div>
+</div>
+
+</div><!-- End API Tab -->
 
 </div><!-- End Tab Content -->
 
@@ -1565,6 +1685,12 @@ document.getElementById('staff-tab').addEventListener('shown.bs.tab', function()
     loadStaffList();
 });
 
+// Load API key + activity when switching to API tab
+document.getElementById('api-tab').addEventListener('shown.bs.tab', function() {
+    loadExternalApiKey();
+    loadExternalApiLogs();
+});
+
 // Staff Management Functions
 async function loadStaffList() {
     try {
@@ -1842,10 +1968,111 @@ async function loadConfig() {
                 </div>
             `).join('');
         }
+        await loadExternalApiKey();
     } catch (error) {
         console.error('Error loading config:', error);
         alert('Error loading configuration');
     }
+}
+
+async function loadExternalApiKey() {
+    try {
+        const response = await fetch('/api/settings/external-api-key');
+        const data = await response.json();
+        document.getElementById('externalApiKey').value = data.key || '';
+        const status = document.getElementById('externalApiKeyStatus');
+        if (data.configured) {
+            status.className = 'badge bg-success';
+            status.textContent = 'Configured';
+        } else {
+            status.className = 'badge bg-secondary';
+            status.textContent = 'Not configured — endpoints return 503';
+        }
+    } catch (error) {
+        console.error('Error loading external API key:', error);
+    }
+}
+
+async function copyExternalApiKey() {
+    const value = document.getElementById('externalApiKey').value;
+    if (!value) return;
+    try {
+        await navigator.clipboard.writeText(value);
+    } catch (error) {
+        console.error('Clipboard copy failed:', error);
+    }
+}
+
+async function regenerateExternalApiKey() {
+    if (!confirm('Regenerate the external API key? Any application using the current key will stop working until it\'s updated with the new one.')) {
+        return;
+    }
+    try {
+        const response = await fetch('/api/settings/external-api-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        if (data.success) {
+            await loadExternalApiKey();
+            alert('External API key regenerated.');
+        } else {
+            alert('Failed to regenerate key: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error regenerating external API key:', error);
+        alert('Error regenerating external API key: ' + error.message);
+    }
+}
+
+// API Tab: Recent Activity
+async function loadExternalApiLogs() {
+    const hours = document.getElementById('apiLogHours')?.value || 24;
+    try {
+        const [logsResponse, statsResponse] = await Promise.all([
+            fetch(`/api/admin/external-api-logs?hours=${hours}&limit=200`),
+            fetch(`/api/admin/external-api-log-stats?hours=${hours}`)
+        ]);
+        const logsData = await logsResponse.json();
+        const stats = await statsResponse.json();
+
+        document.getElementById('apiLogTotalCount').textContent = stats.total || 0;
+        document.getElementById('apiLogSuccessCount').textContent = stats.successful || 0;
+        document.getElementById('apiLogRejectedCount').textContent = stats.rejected || 0;
+
+        renderExternalApiLogs(logsData.logs || []);
+
+        const info = document.getElementById('apiLogPaginationInfo');
+        const total = logsData.total || 0;
+        const shown = (logsData.logs || []).length;
+        info.textContent = total > shown
+            ? `Showing ${shown} most recent of ${total} requests`
+            : `${total} request${total === 1 ? '' : 's'}`;
+    } catch (error) {
+        console.error('Error loading external API logs:', error);
+        document.getElementById('apiLogsTable').innerHTML =
+            '<tr><td colspan="5" class="text-center text-danger py-3">Failed to load</td></tr>';
+    }
+}
+
+function renderExternalApiLogs(logs) {
+    const tbody = document.getElementById('apiLogsTable');
+    if (!logs.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No requests in this window</td></tr>';
+        return;
+    }
+    tbody.innerHTML = logs.map(log => `
+        <tr>
+            <td class="small">${formatTime(log.created_at)}</td>
+            <td class="small"><code>${escapeHtml(log.endpoint)}</code></td>
+            <td class="small">${escapeHtml(log.method)}</td>
+            <td>${log.key_valid
+                ? '<span class="badge bg-success">200</span>'
+                : `<span class="badge bg-danger">${log.status_code}</span>`}</td>
+            <td class="small d-none d-md-table-cell">${escapeHtml(log.ip_address || '--')}</td>
+        </tr>
+    `).join('');
 }
 
 async function saveConfig() {

@@ -13,7 +13,7 @@ from functools import wraps
 from typing import Optional, Callable, Any
 from datetime import datetime
 
-from fastapi import HTTPException, Query, Depends, Header
+from fastapi import HTTPException, Query, Depends, Header, Request
 from pydantic import BaseModel, Field
 
 from database import Database
@@ -54,6 +54,7 @@ EXTERNAL_API_KEY_SETTING = "external_api_key"
 
 
 def verify_external_api_key(
+    request: Request,
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     db: Database = Depends(get_db),
 ) -> None:
@@ -62,11 +63,28 @@ def verify_external_api_key(
     Requires an X-API-Key header matching the key configured via
     POST /api/settings/external-api-key. Fails closed: if no key has been
     configured yet, the endpoint is unreachable (503) rather than open.
+
+    Every call (accepted or rejected) is recorded to external_api_logs for
+    the Admin > API tab's activity view -- logged here, once, so every
+    endpoint using this dependency is covered without its own logging call.
     """
     configured_key = db.get_setting(EXTERNAL_API_KEY_SETTING)
+    client_ip = request.client.host if request.client else None
+
     if not configured_key:
         raise HTTPException(status_code=503, detail="External API key not configured")
-    if not x_api_key or not secrets.compare_digest(x_api_key, configured_key):
+
+    key_valid = bool(x_api_key) and secrets.compare_digest(x_api_key, configured_key)
+    try:
+        db.log_external_api_request(
+            endpoint=request.url.path, method=request.method,
+            status_code=200 if key_valid else 401,
+            ip_address=client_ip, key_valid=key_valid,
+        )
+    except Exception as e:  # pragma: no cover - logging must never break the request
+        logger.warning(f"Failed to log external API request: {e}")
+
+    if not key_valid:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 

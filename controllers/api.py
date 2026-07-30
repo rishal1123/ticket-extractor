@@ -15,7 +15,8 @@ from datetime import datetime
 
 from database import Database, now_maldives
 from services import StatsService, ZnunyService, ConfigService, ZnunyCreateService, NocBotService
-from services.znuny_create_service import ZNUNY_STATES, DEFAULT_STATE as DEFAULT_ZNUNY_STATE
+from services.znuny_create_service import ZNUNY_STATES, DEFAULT_STATE as DEFAULT_ZNUNY_STATE, PORTAL_QUEUE
+from utils.ticket_formatter import format_ticket_dump, manual_from_ticket, extract_phone
 from config import Config, APP_VERSION
 from utils.logger import get_logger
 from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams, verify_external_api_key
@@ -158,6 +159,95 @@ async def get_external_open_tickets(
     _auth: None = Depends(verify_external_api_key),
 ):
     tickets = db.get_open_tickets_export()
+    return JSONResponse(content={
+        "success": True,
+        "generated_at": now_maldives().isoformat(),
+        "count": len(tickets),
+        "tickets": tickets
+    })
+
+
+@router.get(
+    "/external/isp-tickets",
+    tags=["External Integration"],
+    summary="Active ISP Tickets Export",
+    description=(
+        "Returns currently-open ISP portal tickets (not yet completed on the "
+        "portal) with their Znuny linkage status, portal URL, and enough detail -- "
+        "a pre-formatted title/body, suggested queue, phone number -- for another "
+        "application to auto-create the matching Znuny ticket for the ones where "
+        "in_znuny is false. By default returns all active tickets (linked and "
+        "not-linked); pass ?in_znuny=false to get only the ones still needing a "
+        "Znuny ticket, or ?in_znuny=true for only the already-linked ones. "
+        "Requires an X-API-Key header matching the key configured via "
+        "POST /api/settings/external-api-key."
+    ),
+    responses={
+        401: {"description": "Missing or invalid API key"},
+        503: {"description": "External API key not configured"},
+    }
+)
+@handle_errors("get active ISP tickets export")
+async def get_external_isp_tickets(
+    in_znuny: Optional[bool] = Query(
+        default=None,
+        description="Filter by Znuny link status: false=only not yet linked "
+                     "(need a Znuny ticket created), true=only already linked, "
+                     "omit=all active tickets."
+    ),
+    db: Database = Depends(get_db),
+    _auth: None = Depends(verify_external_api_key),
+):
+    from types import SimpleNamespace
+
+    rows = db.get_active_isp_tickets_export(in_znuny=in_znuny)
+    tickets = []
+    for row in rows:
+        portal = row.get("portal")
+        raw_dump = row.get("raw_dump")
+
+        # format_ticket_dump()/manual_from_ticket() take a ticket-like object
+        # (attribute access), not a dict -- a lightweight stand-in avoids a
+        # second DB round trip per row just to get a real Ticket instance.
+        stub = SimpleNamespace(portal=portal, ticket_id=row.get("ticket_id"),
+                                portal_url=row.get("portal_url"))
+        formatted = format_ticket_dump(
+            raw_dump, portal, manual_from_ticket(stub), verify_with_znuny=False
+        )
+        title, _, body = (formatted.get("text") or "").partition("\n\n")
+
+        tickets.append({
+            "id": row.get("id"),
+            "portal": portal,
+            "ticket_id": row.get("ticket_id"),
+            "portal_url": row.get("portal_url"),
+            "address": row.get("address"),
+            "znuny_address": row.get("znuny_address"),
+            "account": row.get("account"),
+            "customer_name": row.get("customer_name"),
+            "ticket_type": row.get("ticket_type"),
+            "service_type": row.get("service_type"),
+            "status": row.get("status"),
+            "phone": extract_phone(raw_dump, portal),
+            "portal_created_at": row.get("portal_created_at"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "in_znuny": bool(row.get("in_znuny")),
+            "znuny_ticket_id": row.get("znuny_ticket_id"),
+            "znuny_created_at": row.get("znuny_created_at"),
+            "znuny_created_by": row.get("znuny_created_by"),
+            "znuny_url": row.get("znuny_url"),
+            "znuny_state": row.get("znuny_state"),
+            "znuny_queue": row.get("znuny_queue"),
+            "znuny_owner": row.get("znuny_owner"),
+            "suggested_queue": PORTAL_QUEUE.get((portal or "").lower()),
+            "formatted_title": title.strip() if formatted.get("ok") else None,
+            "formatted_body": body.strip() if formatted.get("ok") else None,
+            "formatter_ok": formatted.get("ok", False),
+            "formatter_missing": formatted.get("missing") or [],
+            "formatter_error": formatted.get("error"),
+        })
+
     return JSONResponse(content={
         "success": True,
         "generated_at": now_maldives().isoformat(),
