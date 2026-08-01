@@ -65,7 +65,7 @@ async def ticket_format_page(request: Request, ticket_id: int, relocation: bool 
             ticket.raw_dump, ticket.portal, manual_from_ticket(ticket), relocation=relocation
         )
         meta = {"ticket_id": ticket.ticket_id, "portal": ticket.portal,
-                "customer_name": ticket.customer_name or "", "in_znuny": ticket.in_znuny}
+                "customer_name": ticket.customer_name or ""}
     return templates.TemplateResponse(
         "ticket_format.html",
         {"request": request, "result": result, "meta": meta, "db_id": ticket_id}

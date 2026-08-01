@@ -42,20 +42,8 @@
             <button class="btn btn-success btn-sm" id="copyBtn" {% if not result.ok %}disabled{% endif %}>
                 <i class="bi bi-clipboard me-1"></i>Copy
             </button>
-            {% if not meta.in_znuny %}
-            <select class="form-select form-select-sm" id="znunyStateSelect" style="width: auto;" title="State the created ticket will be in">
-                <option>Open</option>
-            </select>
-            <button class="btn btn-primary btn-sm" id="createInZnunyBtn"
-                    {% if not result.ok or result.missing %}disabled{% endif %}
-                    data-relocation="{{ 'true' if result.relocation else 'false' }}"
-                    title="Requires the admin password">
-                <i class="bi bi-cloud-plus me-1"></i>Create in Znuny
-            </button>
-            {% endif %}
         </div>
     </div>
-    <div id="createInZnunyResult" class="alert py-2 mb-3" style="display:none;"></div>
     {% if result.relocation_possible and not result.relocation %}
         <div class="alert alert-warning py-2">
             <i class="bi bi-signpost-split me-1"></i>This account already exists in Znuny — this may be a
@@ -143,84 +131,6 @@ if (btn) {
             return;
         } catch (e) {
             if (legacyCopy(html, text)) copiedFeedback();
-        }
-    });
-}
-
-// "Create in Znuny" - admin only, enforced server-side (X-Admin-Password on the
-// endpoint), not by hiding the button. It used to also gate visibility on
-// sessionStorage.adminLoggedIn, mirroring the admin panel's download-db button --
-// but this page opens in a new tab (target="_blank" rel="noopener" from the
-// dashboard's Format link), and sessionStorage isn't shared with a new tab opened
-// that way, so the button stayed invisible even when already logged in elsewhere.
-// The password prompt at click time is the real gate either way, so the button is
-// just always shown (still disabled when the formatter has unresolved fields).
-const createBtn = document.getElementById('createInZnunyBtn');
-const stateSelect = document.getElementById('znunyStateSelect');
-const STATE_CACHE_KEY = 'znunyCreateState';
-
-// Populate the state picker from the server's known-good list (scraped from
-// the real "New phone ticket" form), pre-selecting whatever was last chosen
-// -- cached in localStorage so it survives across tickets/tabs/sessions,
-// not just this page load.
-if (stateSelect) {
-    fetch('/api/znuny-create-states')
-        .then(r => r.json())
-        .then(data => {
-            const states = data.states || ['Open'];
-            const cached = localStorage.getItem(STATE_CACHE_KEY);
-            const selected = states.includes(cached) ? cached : (data.default || 'Open');
-            stateSelect.innerHTML = states.map(s =>
-                `<option value="${s}"${s === selected ? ' selected' : ''}>${s}</option>`
-            ).join('');
-        })
-        .catch(() => { /* keep the static "Open" fallback already in the DOM */ });
-
-    stateSelect.addEventListener('change', () => {
-        localStorage.setItem(STATE_CACHE_KEY, stateSelect.value);
-    });
-}
-
-if (createBtn) {
-    createBtn.addEventListener('click', async () => {
-        const password = prompt('Enter admin password to create this ticket in Znuny:');
-        if (!password) return;
-
-        const resultBox = document.getElementById('createInZnunyResult');
-        resultBox.style.display = 'none';
-        createBtn.disabled = true;
-        createBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Creating...';
-
-        try {
-            const response = await fetch(`/api/tickets/{{ db_id }}/create-in-znuny`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
-                body: JSON.stringify({
-                    relocation: createBtn.dataset.relocation === 'true',
-                    state: stateSelect ? stateSelect.value : undefined,
-                }),
-            });
-            const data = await response.json().catch(() => ({}));
-
-            if (response.ok && data.success) {
-                resultBox.className = 'alert alert-success py-2 mb-3';
-                resultBox.innerHTML = `<i class="bi bi-check-circle me-1"></i>Created Znuny ticket ` +
-                    `<a href="${data.znuny_url}" target="_blank" rel="noopener">${data.znuny_ticket_id}</a>`;
-                resultBox.style.display = '';
-                createBtn.innerHTML = '<i class="bi bi-check2 me-1"></i>Created';
-            } else {
-                resultBox.className = 'alert alert-danger py-2 mb-3';
-                resultBox.innerHTML = `<i class="bi bi-exclamation-triangle me-1"></i>${data.detail || 'Failed to create ticket in Znuny.'}`;
-                resultBox.style.display = '';
-                createBtn.disabled = false;
-                createBtn.innerHTML = '<i class="bi bi-cloud-plus me-1"></i>Create in Znuny';
-            }
-        } catch (e) {
-            resultBox.className = 'alert alert-danger py-2 mb-3';
-            resultBox.innerHTML = `<i class="bi bi-exclamation-triangle me-1"></i>${e.message}`;
-            resultBox.style.display = '';
-            createBtn.disabled = false;
-            createBtn.innerHTML = '<i class="bi bi-cloud-plus me-1"></i>Create in Znuny';
         }
     });
 }

@@ -8,19 +8,28 @@ This module provides RESTful API endpoints for:
 - Znuny integration
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File, Header
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from database import Database, now_maldives
-from services import StatsService, ZnunyService, ConfigService, ZnunyCreateService, NocBotService
-from services.znuny_create_service import ZNUNY_STATES, DEFAULT_STATE as DEFAULT_ZNUNY_STATE, PORTAL_QUEUE
+from services import StatsService, ZnunyService, ConfigService, NocBotService
 from utils.ticket_formatter import format_ticket_dump, manual_from_ticket, extract_phone
 from config import Config, APP_VERSION
 from utils.logger import get_logger
 from .dependencies import get_db, handle_errors, get_date_filter, DateFilterParams, verify_external_api_key
 import threading
+
+# Portal -> destination Znuny queue, informational only (used for the
+# external export's "suggested_queue" field -- matches the queues already
+# seen in synced Znuny data).
+PORTAL_QUEUE = {
+    "dhiraagu": "*Dhiraagu",
+    "ooredoo": "*Ooredoo",
+    "medianet": "*Medianet",
+    "rol": "*ROL",
+}
 
 # API Router with OpenAPI tags
 router = APIRouter(
@@ -464,60 +473,6 @@ async def check_ticket_znuny(ticket_id: int, db: Database = Depends(get_db)):
         result["ont_exists"] = NocBotService(db).check_ticket(ticket)
 
     return JSONResponse(content=result)
-
-
-@router.get("/znuny-create-states")
-@handle_errors("get znuny create states")
-async def get_znuny_create_states():
-    """States selectable on the "Create in Znuny" button, matching the New
-    phone ticket form's State dropdown. Read-only/informational -- no admin
-    auth needed, the actual create call is what's gated."""
-    return JSONResponse(content={"states": ZNUNY_STATES, "default": DEFAULT_ZNUNY_STATE})
-
-
-@router.post("/tickets/{ticket_id}/create-in-znuny")
-@handle_errors("create ticket in Znuny")
-async def create_ticket_in_znuny(
-    ticket_id: int,
-    request: Request,
-    x_admin_password: str = Header(default=""),
-    db: Database = Depends(get_db),
-):
-    """Create this ISP ticket in Znuny (admin only). Requires the write-only
-    ZNUNY_CREATE_* credentials to be configured (Admin > Config) -- separate
-    from the read-only sync credentials."""
-    stored_password = db.get_setting("admin_password", "admin123")
-    if x_admin_password != stored_password:
-        raise HTTPException(status_code=403, detail="Invalid admin password")
-
-    ticket = db.get_ticket_by_id(ticket_id)
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    if ticket.in_znuny:
-        raise HTTPException(status_code=400, detail="Ticket is already linked to Znuny")
-
-    body = await request.json() if await request.body() else {}
-    relocation = bool(body.get("relocation"))
-    state = body.get("state") or DEFAULT_ZNUNY_STATE
-
-    service = ZnunyCreateService()
-    result = service.create_isp_ticket(ticket, relocation=relocation, state=state)
-    if not result["success"]:
-        raise HTTPException(status_code=502, detail=result["error"])
-
-    db.update_znuny_status(ticket.id, True, result["znuny_ticket_id"])
-    db.update_znuny_details(
-        ticket.id,
-        znuny_created_at=now_maldives(),
-        znuny_created_by="Ticket Extractor (Auto)",
-        znuny_url=result["znuny_url"],
-    )
-
-    return JSONResponse(content={
-        "success": True,
-        "znuny_ticket_id": result["znuny_ticket_id"],
-        "znuny_url": result["znuny_url"],
-    })
 
 
 @router.post("/tickets/{ticket_id}/sync-znuny")

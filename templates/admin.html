@@ -667,31 +667,6 @@
             </div>
         </div>
 
-        <!-- Znuny Ticket Creation (write) -->
-        <div class="col-12 col-md-6">
-            <div class="config-section">
-                <h6><i class="bi bi-plus-square me-1"></i>Znuny Ticket Creation <span class="text-muted small">(write, admin only)</span></h6>
-                <p class="text-muted small mb-2">Separate credentials from the read-only Znuny API above &mdash; used only by the "Create in Znuny" button on the ticket formatter page. Needs an agent account with ticket-create rights on the ISP queues. Leave blank to keep that button disabled.</p>
-                <div class="mb-2">
-                    <label class="form-label small">URL</label>
-                    <input type="text" class="form-control form-control-sm" id="cfg_ZNUNY_CREATE_URL">
-                </div>
-                <div class="mb-2">
-                    <label class="form-label small">Username</label>
-                    <input type="text" class="form-control form-control-sm" id="cfg_ZNUNY_CREATE_USERNAME">
-                </div>
-                <div class="mb-0">
-                    <label class="form-label small">Password</label>
-                    <div class="input-group input-group-sm">
-                        <input type="password" class="form-control" id="cfg_ZNUNY_CREATE_PASSWORD">
-                        <button class="btn btn-outline-secondary password-toggle" type="button" onclick="togglePassword('cfg_ZNUNY_CREATE_PASSWORD')">
-                            <i class="bi bi-eye"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- NocBot -->
         <div class="col-12 col-md-6">
             <div class="config-section">
@@ -1669,7 +1644,6 @@ const configKeys = [
     'ROL_URL', 'ROL_USERNAME', 'ROL_PASSWORD',
     'MEDIANET_URL', 'MEDIANET_USERNAME', 'MEDIANET_PASSWORD',
     'ZNUNY_URL', 'ZNUNY_USERNAME', 'ZNUNY_PASSWORD',
-    'ZNUNY_CREATE_URL', 'ZNUNY_CREATE_USERNAME', 'ZNUNY_CREATE_PASSWORD',
     'NOCBOT_URL', 'NOCBOT_API_KEY',
     'EXTRACTION_INTERVAL_MINUTES', 'DASHBOARD_HOST', 'DASHBOARD_PORT',
     'FLARESOLVERR_URL'
