@@ -297,6 +297,15 @@ class ZnunyClient:
     _number_to_id_cache: dict[str, str] = {}  # {ticket_number: ticket_id}
     _user_names: dict[str, str] = {}  # {user_id (str): display name} harvested from agent articles
 
+    # Known bot/integration Znuny agent logins whose own agent-typed articles set
+    # From to the customer's identity instead of their own (e.g. an external
+    # ticket-creation integration misconfiguring the article sender). Their
+    # Owner field IS set correctly, so it's used directly instead of the
+    # harvested/parsed article sender name -- and harvesting is skipped
+    # entirely for their tickets so the bad name never poisons the id->name
+    # cache in the first place.
+    BOT_OWNER_LOGINS = {"writerbot"}
+
     # Per-ticket TicketGet failure tracking (e.g. persistent access-denied tickets).
     # After MAX_GET_DETAILS_FAILURES consecutive failures, the ticket is given up on.
     _get_details_fail_counts: dict[str, int] = {}  # {ticket_number: consecutive failure count}
@@ -449,6 +458,8 @@ class ZnunyClient:
     # ------------------------------------------------------------------ #
     def _harvest_user_names(self, ticket: dict):
         """Map CreateBy ids -> display names from agent-authored articles."""
+        if (ticket.get("Owner") or "") in self.BOT_OWNER_LOGINS:
+            return
         for art in ticket.get("Article") or []:
             if str(art.get("SenderType")) == "agent":
                 uid = art.get("CreateBy")
@@ -827,7 +838,8 @@ class ZnunyClient:
         state = t.get("State") or ""
         queue = t.get("Queue") or ""
         priority = t.get("Priority") or ""
-        created_by = self._name_for(t.get("CreateBy"), fallback=owner)
+        is_bot_owner = owner in self.BOT_OWNER_LOGINS
+        created_by = owner if is_bot_owner else self._name_for(t.get("CreateBy"), fallback=owner)
 
         raw_articles = t.get("Article") or []
         total_on_page = len(raw_articles)
@@ -850,7 +862,7 @@ class ZnunyClient:
             # Attribute notes to the staff who wrote them (agent-sender articles only).
             is_agent = str(a.get("SenderType")) == "agent"
             if is_agent:
-                art_created_by = sender or self._name_for(a.get("CreateBy"), "")
+                art_created_by = owner if is_bot_owner else (sender or self._name_for(a.get("CreateBy"), ""))
             else:
                 art_created_by = ""
 
