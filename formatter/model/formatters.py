@@ -441,6 +441,13 @@ class DhiraaguFormatter(BaseFormatter):
             field_after_label(text, "Apartment"),
         ) or None
 
+    def account_id_for_validation(self, text: str) -> Optional[str]:
+        # "Service number" (e.g. "BB19471961"), not "Order number" (e.g.
+        # "0127108369", the sequential order id already used as ticket_id) --
+        # this is the same circuit-style code stored in ticket.account and
+        # what NocBot's port_description search expects.
+        return (field_after_label(text, "Service number") or "").strip() or None
+
     def phone_for_display(self, text: str) -> Optional[str]:
         return local_phone(field_after_label(text, "Contact number")) or None
 

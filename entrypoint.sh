@@ -107,6 +107,20 @@ finally:
     conn.close()
 PY
 
+# One-time correction: verify each active ticket currently labeled Relocation
+# or a portal "new service" type against NocBot's actual provisioned-service
+# records, and fix ticket_type when the portal's own label disagrees (see
+# scripts/fix_relocation_ticket_types.py for the full rationale). Paced to
+# stay under NocBot's per-minute rate limit, so this can take a while on the
+# very first run if there are many candidates -- app startup is genuinely
+# blocked for that stretch, which is intentional here. The script tracks its
+# own completion (migration_fix_relocation_ticket_types_v1 in app_settings),
+# so every restart after a clean first run returns almost instantly instead
+# of re-checking. It exits 0 (not an error) when NocBot isn't configured yet,
+# so `|| echo WARN` below only fires on a genuine, unexpected failure.
+echo "Checking one-time relocation ticket_type verification (paced against NocBot)..."
+python scripts/fix_relocation_ticket_types.py --apply || echo "WARN: relocation ticket_type check failed; will retry on next restart"
+
 # Remove stale Chrome profile locks (SingletonLock/SingletonCookie/SingletonSocket)
 # left in the persistent browser sessions by a previous container. These live on
 # the named volume, so on a container RECREATE the new container has a different
