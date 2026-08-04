@@ -48,6 +48,22 @@ def _get_znuny():
     return None
 
 
+def _get_nocbot():
+    """Return a NocBotService for relocation account lookups (see
+    NocBotService.lookup_relocation_data), or None when NocBot isn't
+    configured. NocBot's service-search is DB-only (no live SMX round trip),
+    so unlike the Znuny cross-check this is left on regardless of
+    verify_with_znuny -- it's only attempted for tickets whose portal
+    ticket_type is "Relocation" anyway, not every ticket."""
+    try:
+        from services.nocbot_service import NocBotService
+        service = NocBotService()
+        return service if service.enabled else None
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"NocBot lookup unavailable: {e}")
+        return None
+
+
 def manual_from_ticket(ticket) -> dict:
     """Auto-fill the formatter's manual fields from a ticket where we can.
 
@@ -96,17 +112,28 @@ def extract_phone(raw_dump: Optional[str], portal: str) -> Optional[str]:
 
 
 def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[dict] = None,
-                       relocation: bool = False, verify_with_znuny: bool = True) -> dict:
+                       relocation: Optional[bool] = None, verify_with_znuny: bool = True,
+                       ticket_type: Optional[str] = None) -> dict:
     """Format a raw dump into a standardized block.
 
     Returns a dict: {ok, isp, text, missing, warnings, relocation_possible,
     relocation, error}. ``ok`` is False when there's no dump or the ISP couldn't be
-    formatted. When ``relocation`` is True the relocation template is used.
+    formatted.
+
+    ``relocation``: None (default) auto-decides -- when ``ticket_type`` is
+    "Relocation" (as reported by the ISP portal), NocBot is checked for an
+    existing service on the account; found -> format as Relocation with the
+    old-service fields auto-filled, not found -> format as New Service instead
+    (the portal's own type label isn't always reliable). Pass True/False to
+    force one or the other regardless of ticket_type (e.g. the formatter
+    page's manual "Convert to Relocation" toggle).
 
     ``verify_with_znuny=False`` skips the live Znuny cross-check (address/account
     lookups) -- those are real network round trips per ticket, fine for a single
     formatter-page view but too slow when formatting many tickets at once (e.g.
-    the external API's bulk export).
+    the external API's bulk export). The NocBot relocation lookup is unaffected
+    by this flag (DB-only on NocBot's side, and only attempted for tickets
+    actually typed "Relocation").
     """
     if not raw_dump or not raw_dump.strip():
         return {"ok": False, "isp": None, "text": "", "missing": [], "warnings": [],
@@ -130,8 +157,10 @@ def format_ticket_dump(raw_dump: Optional[str], portal: str, manual: Optional[di
     result = TicketModel().build(
         raw, manual or {},
         address_rules=_load_address_rules(),
-        znuny=_get_znuny(),
+        znuny=_get_znuny() if verify_with_znuny else None,
         relocation=relocation,
+        ticket_type=ticket_type,
+        nocbot=_get_nocbot(),
     )
     if not result.detected:
         return {"ok": False, "isp": None, "text": result.text or "", "missing": [],

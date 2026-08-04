@@ -131,3 +131,65 @@ class NocBotService:
         return self._check_with_fallback(
             ticket.id, ticket.address, bool(ticket.in_znuny), getattr(ticket, "znuny_address", None)
         )
+
+    def lookup_relocation_data(self, account: str) -> Optional[dict]:
+        """Look up an existing provisioned service for `account` (sent as
+        NocBot's port_description -- see NOCBOT_API_GUIDE.md GET
+        /api/services/search), to auto-fill a relocation ticket's "old
+        service" fields on the formatter page.
+
+        Returns None when NocBot has no matching service for this account
+        (or the check was inconclusive) -- callers should then treat the
+        ticket as a New Service rather than a Relocation, since there's
+        nothing to relocate FROM (ISP portals don't always label ticket
+        type reliably). Returns {"old_address", "old_svlan", "old_cvlan",
+        "old_fsan"} when found; old_fsan may be "" if the follow-up ONT
+        lookup fails or the ONT has none -- non-fatal, the rest is still
+        useful. old_address is the ONT ID (e.g. "H01-01-01"), which doubles
+        as the building/address code in this system, same convention as
+        ont_exists checks elsewhere in this app."""
+        if not self.enabled or not account:
+            return None
+
+        try:
+            resp = httpx.get(
+                f"{self.base_url}/api/services/search",
+                params={"port_description": account},
+                headers={"X-API-Key": self.api_key}, timeout=REQUEST_TIMEOUT,
+            )
+        except Exception as e:
+            logger.warning(f"NocBot service search failed for account '{account}': {e}")
+            return None
+
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            logger.warning(
+                f"NocBot service search for '{account}' returned unexpected status {resp.status_code}"
+            )
+            return None
+
+        services = (resp.json() or {}).get("services") or []
+        if not services:
+            return None
+        service = services[0]
+        ont_id = (service.get("ont_id") or "").strip()
+
+        old_fsan = ""
+        if ont_id:
+            try:
+                ont_resp = httpx.get(
+                    f"{self.base_url}/api/ont/{quote(ont_id, safe='')}",
+                    headers={"X-API-Key": self.api_key}, timeout=REQUEST_TIMEOUT,
+                )
+                if ont_resp.status_code == 200:
+                    old_fsan = ((ont_resp.json() or {}).get("ont") or {}).get("fsan") or ""
+            except Exception as e:
+                logger.warning(f"NocBot ONT lookup failed for '{ont_id}' (relocation fill): {e}")
+
+        return {
+            "old_address": ont_id,
+            "old_svlan": str(service.get("s_vlan") or "").strip(),
+            "old_cvlan": str(service.get("c_vlan") or "").strip(),
+            "old_fsan": str(old_fsan).strip(),
+        }

@@ -2,6 +2,8 @@
 Pages Controller - Handles HTML page routes.
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -47,12 +49,16 @@ async def tickets_page(request: Request):
 
 
 @router.get("/tickets/{ticket_id}/format", response_class=HTMLResponse)
-async def ticket_format_page(request: Request, ticket_id: int, relocation: bool = False):
+async def ticket_format_page(request: Request, ticket_id: int, relocation: Optional[bool] = None):
     """Standalone page (opened in a new tab) showing the standardized, formatted
     ticket block for an ISP ticket, generated from its captured portal dump.
 
-    ``?relocation=1`` renders the Relocation variant (offered when the account
-    already exists in Znuny)."""
+    No ``?relocation=`` (the default): auto-decided -- a portal-reported
+    Relocation ticket is checked against NocBot (does the account have an
+    existing service to relocate from?) and formatted/filled accordingly,
+    otherwise New Service. ``?relocation=1``/``?relocation=0`` force the
+    Relocation/New Service template regardless (the manual toggle links, or
+    the account already existing in Znuny)."""
     db = Database()
     ticket = db.get_ticket_by_id(ticket_id)
     if not ticket:
@@ -62,7 +68,8 @@ async def ticket_format_page(request: Request, ticket_id: int, relocation: bool 
         meta = {"ticket_id": ticket_id, "portal": ""}
     else:
         result = format_ticket_dump(
-            ticket.raw_dump, ticket.portal, manual_from_ticket(ticket), relocation=relocation
+            ticket.raw_dump, ticket.portal, manual_from_ticket(ticket),
+            relocation=relocation, ticket_type=ticket.ticket_type
         )
         meta = {"ticket_id": ticket.ticket_id, "portal": ticket.portal,
                 "customer_name": ticket.customer_name or ""}

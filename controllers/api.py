@@ -221,7 +221,8 @@ async def get_external_isp_tickets(
         stub = SimpleNamespace(portal=portal, ticket_id=row.get("ticket_id"),
                                 portal_url=row.get("portal_url"))
         formatted = format_ticket_dump(
-            raw_dump, portal, manual_from_ticket(stub), verify_with_znuny=False
+            raw_dump, portal, manual_from_ticket(stub), verify_with_znuny=False,
+            ticket_type=row.get("ticket_type")
         )
         title, _, body = (formatted.get("text") or "").partition("\n\n")
 

@@ -1,11 +1,12 @@
-# External API Guide
+# Ticket Extractor External API Guide
 
 Read-only, authenticated JSON endpoints for other applications to consume
-ticket data from this app — e.g. a separate server that auto-creates Znuny
-tickets for ISP tickets that don't have one yet. Separate from the
+ticket data from Ticket Extractor — e.g. a separate server that auto-creates
+Znuny tickets for ISP tickets that don't have one yet. Separate from the
 unauthenticated `/api/*` endpoints the dashboard itself uses (those stay
 open because they're only ever called by pages the browser already loaded
-from this server).
+from this server). Not to be confused with `NOCBOT_API_GUIDE.md`, which
+documents NocBot's own API (ONT/service lookups) that this app *consumes*.
 
 > **Keep this file in sync.** Whenever an `/api/external/*` endpoint is
 > added, removed, or its response shape changes, update this guide in the
@@ -140,6 +141,30 @@ data; when non-empty, `formatted_title`/`formatted_body` are `null` and the
 ticket should be skipped or handled manually until the portal capture is
 complete (this usually clears itself once the ISP extractor next visits the
 ticket's detail page).
+
+For a ticket whose portal `ticket_type` is `"Relocation"`, the formatter
+auto-decides Relocation vs. New Service by checking NocBot for an existing
+service on the account (see NOCBOT_API_GUIDE.md `GET /api/services/search`):
+found → formatted as Relocation with the old address/SVLAN/CVLAN/ONT FSAN
+fields auto-filled from that service; not found → formatted as New Service
+instead, since the portal's own type label isn't always reliable. This is
+unaffected by the `verify_with_znuny` skip above (NocBot's lookup is DB-only
+on its side, and only attempted for tickets actually typed "Relocation").
+For example, a `ticket_type: "Relocation"` ticket where NocBot found an
+existing service produces:
+
+```json
+{
+  "ticket_type": "Relocation",
+  "formatted_title": "Ooredoo - Relocation - DH-08-11-07 / Account #: 40015036 / SuperNet U10M 400/ Ticket ID:160836",
+  "formatted_body": "Ooredoo - Relocation\nTicket ID : 160836\nTicket URL: https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/160836\nAccount # : 40015036\nBandwidth : SuperNet U10M 400\nCustomer Name: Ahmed\nPhone : 7774773\n\nNew Address: DH-08-11-07\nHDC ONT FSAN (New):\n\nOld Address: H01-01-01\nOld SVLAN | CVLAN : 101 | 842\nHDC ONT FSAN (Old): HWTC12345678"
+}
+```
+
+If NocBot has no service for that account, the same ticket instead comes back
+formatted as New Service (`"formatted_title": "Ooredoo - New Service - ..."`,
+no Old-* fields at all) — there's no separate flag for this in the response;
+it's reflected directly in `formatted_title`/`formatted_body`.
 
 **Response `200`:**
 

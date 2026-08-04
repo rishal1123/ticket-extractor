@@ -78,6 +78,17 @@ def manual_value(manual: Optional[dict], key: str, label: str) -> str:
     return val if val else f"<enter {label}>"
 
 
+def old_value(old_service: Optional[dict], key: str, label: str) -> str:
+    """Same convention as manual_value(), for a relocation ticket's "old
+    service" fields auto-filled from NocBot (see NocBotService.
+    lookup_relocation_data) instead of typed by hand: the real value if
+    NocBot had it, else the same ``<enter Label>`` placeholder used for
+    manual fields.
+    """
+    val = ((old_service or {}).get(key) or "").strip()
+    return val if val else f"<enter {label}>"
+
+
 def split_name_account(value: Optional[str]) -> tuple[str, str]:
     """Split "Shihaaz Shamoon (5481835352241408)" -> ("Shihaaz Shamoon", "5481835352241408")."""
     if not value:
@@ -218,7 +229,8 @@ class BaseFormatter:
         low = text.lower()
         return sum(1 for kw in self.detect_keywords if kw.lower() in low)
 
-    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False,
+               old_service: dict | None = None) -> str:
         raise NotImplementedError
 
     def address_for_validation(self, text: str) -> Optional[tuple[str, str]]:
@@ -249,7 +261,8 @@ class BaseFormatter:
 class _StubFormatter(BaseFormatter):
     """Placeholder for an ISP whose format hasn't been supplied yet."""
 
-    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False,
+               old_service: dict | None = None) -> str:
         return (
             f"[{self.name}] formatter not configured yet.\n\n"
             f"Send a sample (unformatted input + desired output) and this "
@@ -266,9 +279,14 @@ class OoredooFormatter(BaseFormatter):
 
     TICKET_URL = "https://www.ooredoo.mv/webapps/FMS/public/tickets/ticket_info/{ticket_id}"
 
-    # Ticket Type -> service label used in the heading.
+    # Ticket Type -> service label used in the heading. "relocation" maps here
+    # too: reaching this (non-relocation) branch with a portal Ticket Type of
+    # "Relocation" only happens when NocBot found no existing service for the
+    # account, so this ticket is being deliberately treated as New Service --
+    # the heading should say that, not parrot the portal's stale label.
     SERVICE_LABELS = {
         "installation": "New Service",
+        "relocation": "New Service",
     }
 
     def _service_label(self, text: str) -> str:
@@ -302,7 +320,8 @@ class OoredooFormatter(BaseFormatter):
     def phone_for_display(self, text: str) -> Optional[str]:
         return local_phone(field_after_label(text, "Contact")) or None
 
-    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False,
+               old_service: dict | None = None) -> str:
         account = field_after_label(text, "Account Number") or ""
         bandwidth = field_after_label(text, "Ratepan") or ""
         name = dedupe_name(field_after_label(text, "Name"))
@@ -313,6 +332,9 @@ class OoredooFormatter(BaseFormatter):
         ticket_url = self.TICKET_URL.format(ticket_id=ticket_id)
 
         if relocation:
+            old_vlan = ""
+            if old_service and (old_service.get("old_svlan") or old_service.get("old_cvlan")):
+                old_vlan = f"{old_service.get('old_svlan', '')} | {old_service.get('old_cvlan', '')}"
             title = (
                 f"Ooredoo - Relocation - {address} / Account #: {account} / "
                 f"{bandwidth}/ Ticket ID:{ticket_id}"
@@ -330,9 +352,9 @@ class OoredooFormatter(BaseFormatter):
                     f"New Address: {address}",
                     f"HDC ONT FSAN (New):{(' ' + fsan) if fsan else ''}",
                     "",
-                    "Old Address: <enter Old Address>",
-                    "Old SVLAN | CVLAN : <enter Old SVLAN | CVLAN>",
-                    "HDC ONT FSAN (Old): <enter HDC ONT FSAN (Old)>",
+                    f"Old Address: {old_value(old_service, 'old_address', 'Old Address')}",
+                    f"Old SVLAN | CVLAN : {old_vlan or '<enter Old SVLAN | CVLAN>'}",
+                    f"HDC ONT FSAN (Old): {old_value(old_service, 'old_fsan', 'HDC ONT FSAN (Old)')}",
                 ]
             )
             return f"{title}\n\n{body}"
@@ -372,9 +394,14 @@ class DhiraaguFormatter(BaseFormatter):
 
     ORDER_URL = "https://afas.dhiraagu.com.mv/orders/hdc/{order_url_id}?activeRelationManager=notes"
 
-    # Order type -> service label used in the heading.
+    # Order type -> service label used in the heading. "relocation" maps here
+    # too: reaching this (non-relocation) branch with a portal Order type of
+    # "Relocation" only happens when NocBot found no existing service for the
+    # account, so this ticket is being deliberately treated as New Service --
+    # the heading should say that, not parrot the portal's stale label.
     SERVICE_LABELS = {
         "new service": "New Service",
+        "relocation": "New Service",
     }
 
     def _service_label(self, text: str) -> str:
@@ -417,7 +444,8 @@ class DhiraaguFormatter(BaseFormatter):
     def phone_for_display(self, text: str) -> Optional[str]:
         return local_phone(field_after_label(text, "Contact number")) or None
 
-    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False,
+               old_service: dict | None = None) -> str:
         manual = manual or {}
         order_no = field_after_label(text, "Order number") or ""
         service_no = field_after_label(text, "Service number") or ""
@@ -438,6 +466,9 @@ class DhiraaguFormatter(BaseFormatter):
         order_url = self.ORDER_URL.format(order_url_id=url_id)
 
         if relocation:
+            old_vlan = ""
+            if old_service and (old_service.get("old_svlan") or old_service.get("old_cvlan")):
+                old_vlan = f"{old_service.get('old_svlan', '')} / {old_service.get('old_cvlan', '')}"
             title = (
                 f"Dhiraagu - Relocation - {address} / Service #: {service_no}/ "
                 f"{package}/ Order ID:{order_no}"
@@ -456,9 +487,9 @@ class DhiraaguFormatter(BaseFormatter):
                     f"New SVLAN / CVLAN: {svlan} / {cvlan}",
                     "HDC ONT FSAN (New): <enter HDC ONT FSAN (New)>",
                     "",
-                    "Old Address: <enter Old Address>",
-                    "Previous SVLAN / CVLAN: <enter Previous SVLAN / CVLAN>",
-                    "ONT FSAN (Old): <enter ONT FSAN (Old)>",
+                    f"Old Address: {old_value(old_service, 'old_address', 'Old Address')}",
+                    f"Previous SVLAN / CVLAN: {old_vlan or '<enter Previous SVLAN / CVLAN>'}",
+                    f"ONT FSAN (Old): {old_value(old_service, 'old_fsan', 'ONT FSAN (Old)')}",
                 ]
             )
             return f"{title}\n\n{body}"
@@ -552,7 +583,8 @@ class MedianetFormatter(BaseFormatter):
     def phone_for_display(self, text: str) -> Optional[str]:
         return local_phone(self._contact(text)[2]) or None
 
-    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False,
+               old_service: dict | None = None) -> str:
         ticket = field_after_label(text, "Service Request") or ""
 
         name, account, phone_raw, address_raw = self._contact(text)
@@ -574,8 +606,8 @@ class MedianetFormatter(BaseFormatter):
                     f"New Address: {address}",
                     "HDC ONT FSAN (New): <enter HDC ONT FSAN (New)>",
                     "",
-                    "Old Address: <enter Old Address>",
-                    "HDC ONT FSAN (Old): <enter HDC ONT FSAN (Old)>",
+                    f"Old Address: {old_value(old_service, 'old_address', 'Old Address')}",
+                    f"HDC ONT FSAN (Old): {old_value(old_service, 'old_fsan', 'HDC ONT FSAN (Old)')}",
                     "",
                     "ONT Contract Status: Signed",
                 ]
@@ -666,7 +698,8 @@ class RolFormatter(BaseFormatter):
         _, _, building, area, _ = self._posted_fields(text)
         return f"{building}, {area}" if area else building
 
-    def format(self, text: str, manual: dict | None = None, relocation: bool = False) -> str:
+    def format(self, text: str, manual: dict | None = None, relocation: bool = False,
+               old_service: dict | None = None) -> str:
         account = self._display_id(text)        # ROL###### reference -> Account #
         ticket_id = self._internal_id(text)     # Kayako TICKET ID -> Ticket ID + URL
         name_raw, phone_raw, building, area, bandwidth = self._posted_fields(text)
@@ -677,6 +710,9 @@ class RolFormatter(BaseFormatter):
         ticket_url = self.TICKET_URL.format(internal_id=ticket_id) if ticket_id else ""
 
         if relocation:
+            old_vlan = ""
+            if old_service and (old_service.get("old_svlan") or old_service.get("old_cvlan")):
+                old_vlan = f"{old_service.get('old_svlan', '')} | {old_service.get('old_cvlan', '')}"
             title = (
                 f"ROL - Relocation - {address} / Account #: {account} / "
                 f"{bandwidth}/ Ticket ID:{ticket_id}"
@@ -693,9 +729,9 @@ class RolFormatter(BaseFormatter):
                     "",
                     f"New Address: {address}",
                     "",
-                    "Old Address: <enter Old Address>",
-                    "Old SVLAN | CVLAN: <enter Old SVLAN | CVLAN>",
-                    "HDC ONT FSAN (Old): <enter HDC ONT FSAN (Old)>",
+                    f"Old Address: {old_value(old_service, 'old_address', 'Old Address')}",
+                    f"Old SVLAN | CVLAN: {old_vlan or '<enter Old SVLAN | CVLAN>'}",
+                    f"HDC ONT FSAN (Old): {old_value(old_service, 'old_fsan', 'HDC ONT FSAN (Old)')}",
                     "",
                     "Other info:",
                     "ONT Contract Status: Signed / Not Signed",

@@ -59,8 +59,14 @@ class TicketModel:
         manual: Optional[dict] = None,
         address_rules: Optional[dict] = None,
         znuny=None,
-        relocation: bool = False,
+        relocation: Optional[bool] = None,
+        ticket_type: Optional[str] = None,
+        nocbot=None,
     ) -> FormatResult:
+        """``relocation``: None auto-decides (see below); True/False forces the
+        New Service/Relocation template regardless of ``ticket_type``, e.g. the
+        formatter page's manual "Convert to Relocation" / "New Service" toggle.
+        """
         raw = (raw or "").strip()
         manual = manual or {}
 
@@ -72,8 +78,31 @@ class TicketModel:
             logger.debug("No ISP matched the pasted data (%d chars)", len(raw))
             return FormatResult(isp=None, text="Could not detect the ISP from the pasted data.")
 
-        logger.debug("Detected ISP: %s (relocation=%s)", fmt.name, relocation)
-        text = fmt.format(raw, manual, relocation=relocation)
+        # Auto-decide Relocation vs New Service for a portal-reported
+        # relocation ticket when the caller hasn't explicitly forced one or
+        # the other: a genuine relocation only makes sense if the account
+        # already has a provisioned service to relocate FROM, so check NocBot
+        # and fall back to New Service when it doesn't -- the portal's own
+        # "Relocation" label isn't always reliable (e.g. applied to what's
+        # actually a fresh install). When the caller DID force relocation
+        # (e.g. the manual toggle), still try to auto-fill the old-service
+        # fields from NocBot if available, purely as a convenience.
+        old_service: Optional[dict] = None
+        is_relocation = relocation
+        if is_relocation is None:
+            is_relocation = False
+            if ticket_type and ticket_type.strip().lower() == "relocation" and nocbot is not None:
+                account_id = (fmt.account_id_for_validation(raw) or "").strip()
+                if account_id:
+                    old_service = nocbot.lookup_relocation_data(account_id)
+                    is_relocation = old_service is not None
+        elif is_relocation and nocbot is not None:
+            account_id = (fmt.account_id_for_validation(raw) or "").strip()
+            if account_id:
+                old_service = nocbot.lookup_relocation_data(account_id)
+
+        logger.debug("Detected ISP: %s (relocation=%s)", fmt.name, is_relocation)
+        text = fmt.format(raw, manual, relocation=is_relocation, old_service=old_service)
         missing = tuple(
             key for key, _ in fmt.manual_fields if not manual.get(key, "").strip()
         )
@@ -144,5 +173,5 @@ class TicketModel:
             warnings=tuple(warnings),
             flagged=tuple(flagged),
             relocation_possible=relocation_possible,
-            relocation=relocation,
+            relocation=is_relocation,
         )
