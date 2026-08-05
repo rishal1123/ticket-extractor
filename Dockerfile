@@ -1,4 +1,12 @@
-FROM python:3.11-slim
+# Pinned to the Debian release explicitly (not the floating `python:3.11-slim`
+# tag) -- that tag silently re-resolves to whatever Debian codename is current
+# whenever the image is rebuilt from scratch (no cached layers), and Playwright
+# 1.58.0's `install-deps` has a hardcoded list of OS releases it knows how to
+# provision. A base-image codename drift out from under an unchanged Dockerfile
+# command is the most plausible explanation for `playwright install-deps
+# chromium` suddenly failing with no other change in this file. Bookworm is
+# Debian 12, well within 1.58.0's supported range.
+FROM python:3.11-slim-bookworm
 
 # Set working directory
 WORKDIR /app
