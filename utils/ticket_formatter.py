@@ -70,6 +70,10 @@ def manual_from_ticket(ticket) -> dict:
     Dhiraagu's only manual field is "Order URL ID" — the /orders/hdc/{id} segment
     of the order URL. Derive it from the ticket's portal_url, falling back to the
     ticket_id (the extractor builds the detail URL from ticket_id anyway).
+
+    Medianet's "Ticket URL" is UUID-based (no template to rebuild it from a
+    ticket id parsed out of the dump), so it's taken as-is from portal_url --
+    captured directly during extraction, reliably present.
     """
     manual: dict = {}
     portal = (getattr(ticket, "portal", "") or "").lower()
@@ -83,6 +87,10 @@ def manual_from_ticket(ticket) -> dict:
         order_url_id = order_url_id or getattr(ticket, "ticket_id", None)
         if order_url_id:
             manual["order_url_id"] = str(order_url_id)
+    elif portal == "medianet":
+        portal_url = getattr(ticket, "portal_url", None)
+        if portal_url:
+            manual["ticket_url"] = str(portal_url)
     return manual
 
 

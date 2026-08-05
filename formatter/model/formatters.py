@@ -558,6 +558,14 @@ class MedianetFormatter(BaseFormatter):
 
     SERVICE_LABEL = "New Service"
 
+    # Medianet ticket URLs are UUID-based (e.g. https://app.crm.com/crm/
+    # service-request/5656c291-...), captured directly during extraction into
+    # ticket.portal_url -- unlike the other ISPs, there's no template to build
+    # it from a ticket id parsed out of the dump. manual_from_ticket() auto-
+    # fills this from ticket.portal_url, same mechanism Dhiraagu uses for its
+    # order_url_id; the box only needs manual typing if that's ever missing.
+    manual_fields = (("ticket_url", "Ticket URL"),)
+
     def _contact(self, text: str) -> tuple[str, str, str, str]:
         """Parse the Contact Details block -> (name, account, phone_raw, address_raw).
 
@@ -597,6 +605,7 @@ class MedianetFormatter(BaseFormatter):
         name, account, phone_raw, address_raw = self._contact(text)
         phone = local_phone(phone_raw)
         address = clean_building_code(address_raw)
+        ticket_url = manual_value(manual, "ticket_url", "Ticket URL")
 
         if relocation:
             title = (
@@ -606,6 +615,7 @@ class MedianetFormatter(BaseFormatter):
                 [
                     "Medianet - Relocation",
                     f"Ticket ID : {ticket}",
+                    f"Ticket URL: {ticket_url}",
                     f"Account # : {account}",
                     f"Customer Name: {name}",
                     f"Phone : {phone}",
@@ -631,6 +641,7 @@ class MedianetFormatter(BaseFormatter):
             [
                 f"Medianet - {service}",
                 f"Ticket # : {ticket}",
+                f"Ticket URL: {ticket_url}",
                 f"Account # : {account}",
                 f"Address: {address}",
                 f"Customer Name: {name}",
