@@ -9,20 +9,22 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright system dependencies for Chromium AND Firefox (Dhiraagu runs
+# Install Playwright system dependencies for Chromium, then Firefox (Dhiraagu runs
 # Firefox headed under Xvfb to bypass Cloudflare — Chrome's renderer crashes in the
-# container) + curl for healthcheck + xvfb (virtual display so the real browser can
-# run HEADED) + x11vnc/novnc/websockify so an operator can watch and DRIVE that
-# headed browser to solve a Cloudflare challenge by hand when the automatic bypass
-# can't (Turnstile/CAPTCHA). Both browsers' deps must be installed here, in the same
-# apt session as the extra packages below, BEFORE `rm -rf /var/lib/apt/lists/*` --
-# that cleanup wipes the package index, so anything needing apt-get after this
-# layer (e.g. a later `playwright install --with-deps firefox`) fails with "Unable
-# to locate package". Browser *binaries* are downloaded separately further down,
-# without --with-deps, since the deps are already installed here.
-RUN playwright install-deps chromium && \
-    playwright install-deps firefox && \
-    apt-get install -y --no-install-recommends \
+# container). Split into separate RUN layers (rather than one chained `&&` command)
+# so a build failure's log points at exactly which step broke, instead of hiding it
+# inside one opaque combined command.
+RUN playwright install-deps chromium
+RUN playwright install-deps firefox
+
+# curl for healthcheck + xvfb (virtual display so the real browser can run HEADED)
+# + x11vnc/novnc/websockify so an operator can watch and DRIVE that headed browser
+# to solve a Cloudflare challenge by hand when the automatic bypass can't (Turnstile/
+# CAPTCHA). Must run before `rm -rf /var/lib/apt/lists/*` -- that cleanup wipes the
+# package index, so anything needing apt-get after this layer would fail with
+# "Unable to locate package". Browser *binaries* are downloaded separately further
+# down, without --with-deps, since the deps are already installed above.
+RUN apt-get install -y --no-install-recommends \
         curl xvfb xauth tzdata x11vnc novnc websockify fluxbox socat \
         libgl1-mesa-dri libglx-mesa0 libegl1 libgles2 mesa-vulkan-drivers && \
     rm -rf /var/lib/apt/lists/*
