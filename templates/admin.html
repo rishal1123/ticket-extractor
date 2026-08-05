@@ -537,6 +537,9 @@
             <button class="btn btn-outline-info btn-sm" onclick="document.getElementById('envFileInput').click()">
                 <i class="bi bi-upload me-1"></i><span class="d-none d-sm-inline">Upload .env</span>
             </button>
+            <button class="btn btn-outline-info btn-sm" onclick="exportConfigEnv()" title="Download the current config as a .env file -- for backup, or re-importing into a fresh deployment">
+                <i class="bi bi-download me-1"></i><span class="d-none d-sm-inline">Export .env</span>
+            </button>
             <button class="btn btn-outline-secondary btn-sm" onclick="loadConfig()">
                 <i class="bi bi-arrow-clockwise me-1"></i><span class="d-none d-sm-inline">Reload</span>
             </button>
@@ -1864,6 +1867,39 @@ async function uploadEnvFile(input) {
     }
 
     input.value = '';
+}
+
+async function exportConfigEnv() {
+    const password = prompt('Enter admin password to export the config (contains real credentials):');
+    if (!password) return;
+
+    try {
+        const response = await fetch('/api/config/export', {
+            headers: { 'X-Admin-Password': password }
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            alert(data.detail || data.message || 'Export failed - check the password and try again.');
+            return;
+        }
+
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        const filename = match ? match[1] : 'ticket-extractor-config.env';
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (e) {
+        alert('Export failed: ' + e.message);
+    }
 }
 
 async function loadConfig() {

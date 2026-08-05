@@ -8,7 +8,7 @@ This module provides RESTful API endpoints for:
 - Znuny integration
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, UploadFile, File, Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -888,6 +888,62 @@ async def get_config_raw():
     service = get_config_service()
     config = service.get_config(mask_passwords=False)
     return JSONResponse(content={"config": config})
+
+
+# Section headers/comments for the exported .env, matching .env.example's
+# layout so the file is readable and round-trips cleanly back through
+# POST /api/config/upload (which just parses KEY=value lines, ignoring
+# blank lines and '#' comments).
+_EXPORT_SECTION_HEADERS = {
+    'Dhiraagu Portal': '# Dhiraagu Portal',
+    'Ooredoo Portal': '# Ooredoo Portal',
+    'ROL Portal': '# ROL Portal',
+    'Medianet Portal': '# Medianet Portal',
+    'Znuny API': '# Znuny API (read-only sync)',
+    'NocBot API (ONT lookup)': '# NocBot API - ONT-exists-in-SMX lookup',
+    'FlareSolverr': '# Cloudflare bypass (FlareSolverr)',
+    'Scheduler settings': '# Scheduler settings',
+    'Dashboard settings': '# Dashboard settings',
+}
+
+
+@router.get("/config/export")
+@handle_errors("export config")
+async def export_config(x_admin_password: str = Header(default=""), db: Database = Depends(get_db)):
+    """Download the current DB-stored config as a .env-formatted file --
+    the inverse of POST /api/config/upload. Includes real passwords/API
+    keys (not masked): this is meant as a real, usable backup/restore file
+    for re-importing into a fresh deployment via Admin > Config > Upload .env,
+    so a masked '********' value would be useless there. Admin password
+    required via header (not query string), same as the DB backup download,
+    since this is equally credential-bearing."""
+    stored_password = db.get_setting("admin_password", "admin123")
+    if x_admin_password != stored_password:
+        raise HTTPException(status_code=403, detail="Invalid admin password")
+
+    from datetime import datetime as _dt
+    from services.config_service import ConfigService
+
+    config = get_config_service().get_config(mask_passwords=False)
+
+    lines = [
+        f"# Ticket Extractor config export - {_dt.now().isoformat(timespec='seconds')}",
+        "# Generated from Admin > Config > Export .env. Contains real credentials --",
+        "# keep this file secure, don't commit it to git.",
+    ]
+    for section, keys in ConfigService.CONFIG_SECTIONS.items():
+        lines.append("")
+        lines.append(_EXPORT_SECTION_HEADERS.get(section, f"# {section}"))
+        for key in keys:
+            lines.append(f"{key}={config.get(key, '')}")
+
+    content = "\n".join(lines) + "\n"
+    filename = f"ticket-extractor-config-{_dt.now().strftime('%Y%m%d-%H%M%S')}.env"
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 def _restart_extractions():
