@@ -101,8 +101,14 @@ class TicketModel:
             if account_id:
                 old_service = nocbot.lookup_relocation_data(account_id)
 
-        logger.debug("Detected ISP: %s (relocation=%s)", fmt.name, is_relocation)
-        text = fmt.format(raw, manual, relocation=is_relocation, old_service=old_service)
+        # Fault tickets get their own template (see formatters.py) -- driven by
+        # the portal's own ticket_type, the same reliable source relocation
+        # auto-detection uses, rather than re-parsing a "Ticket Type" field out
+        # of the dump per-ISP (Medianet's dump doesn't even expose one cleanly).
+        is_fault = bool(ticket_type and ticket_type.strip().lower() == "fault")
+
+        logger.debug("Detected ISP: %s (relocation=%s, fault=%s)", fmt.name, is_relocation, is_fault)
+        text = fmt.format(raw, manual, relocation=is_relocation, old_service=old_service, is_fault=is_fault)
         missing = tuple(
             key for key, _ in fmt.manual_fields if not manual.get(key, "").strip()
         )

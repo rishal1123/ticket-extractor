@@ -230,7 +230,7 @@ class BaseFormatter:
         return sum(1 for kw in self.detect_keywords if kw.lower() in low)
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False,
-               old_service: dict | None = None) -> str:
+               old_service: dict | None = None, is_fault: bool = False) -> str:
         raise NotImplementedError
 
     def address_for_validation(self, text: str) -> Optional[tuple[str, str]]:
@@ -262,7 +262,7 @@ class _StubFormatter(BaseFormatter):
     """Placeholder for an ISP whose format hasn't been supplied yet."""
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False,
-               old_service: dict | None = None) -> str:
+               old_service: dict | None = None, is_fault: bool = False) -> str:
         return (
             f"[{self.name}] formatter not configured yet.\n\n"
             f"Send a sample (unformatted input + desired output) and this "
@@ -321,7 +321,7 @@ class OoredooFormatter(BaseFormatter):
         return local_phone(field_after_label(text, "Contact")) or None
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False,
-               old_service: dict | None = None) -> str:
+               old_service: dict | None = None, is_fault: bool = False) -> str:
         account = field_after_label(text, "Account Number") or ""
         bandwidth = field_after_label(text, "Ratepan") or ""
         name = dedupe_name(field_after_label(text, "Name"))
@@ -360,6 +360,27 @@ class OoredooFormatter(BaseFormatter):
             return f"{title}\n\n{body}"
 
         service = self._service_label(text)  # e.g. "New Service"
+
+        if is_fault:
+            title = (
+                f"Ooredoo - Fault - {address} / Account #: {account} / "
+                f"{bandwidth}/ Ticket ID:{ticket_id}"
+            )
+            body = "\n".join(
+                [
+                    "Ooredoo - Fault",
+                    "Fault Raised Platform: Portal / Whatsapp Group",
+                    f"Ticket ID : {ticket_id}",
+                    f"Ticket URL: {ticket_url}",
+                    f"Account # : {account}",
+                    f"Bandwidth : {bandwidth}",
+                    f"Address: {address}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    f"HDC ONT FSAN:{(' ' + fsan) if fsan else ''}",
+                ]
+            )
+            return f"{title}\n\n{body}"
 
         title = (
             f"Ooredoo - {service} - {address} / Account #: {account} / "
@@ -452,7 +473,7 @@ class DhiraaguFormatter(BaseFormatter):
         return local_phone(field_after_label(text, "Contact number")) or None
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False,
-               old_service: dict | None = None) -> str:
+               old_service: dict | None = None, is_fault: bool = False) -> str:
         manual = manual or {}
         order_no = field_after_label(text, "Order number") or ""
         service_no = field_after_label(text, "Service number") or ""
@@ -502,6 +523,28 @@ class DhiraaguFormatter(BaseFormatter):
             return f"{title}\n\n{body}"
 
         service = self._service_label(text)  # e.g. "New Service"
+
+        if is_fault:
+            title = (
+                f"Dhiraagu - Fault - {address} / Service #: {service_no}/ "
+                f"{package}/ Order ID:{order_no}"
+            )
+            body = "\n".join(
+                [
+                    "Dhiraagu - Fault",
+                    "Fault Raised Platform: Portal / Whatsapp Group",
+                    f"Order ID : {order_no}",
+                    f"Order URL: {order_url}",
+                    f"Service # : {service_no}",
+                    f"Address: {address}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    f"Service Profile : {package}",
+                    f"SVLAN | CVLAN: {svlan} | {cvlan}",
+                    f"HDC ONT FSAN:{(' ' + fsan) if fsan else ''}",
+                ]
+            )
+            return f"{title}\n\n{body}"
 
         if self._is_tv(text):
             tv_address = self._tv_address(text)
@@ -599,7 +642,7 @@ class MedianetFormatter(BaseFormatter):
         return local_phone(self._contact(text)[2]) or None
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False,
-               old_service: dict | None = None) -> str:
+               old_service: dict | None = None, is_fault: bool = False) -> str:
         ticket = field_after_label(text, "Service Request") or ""
 
         name, account, phone_raw, address_raw = self._contact(text)
@@ -627,6 +670,25 @@ class MedianetFormatter(BaseFormatter):
                     f"HDC ONT FSAN (Old): {old_value(old_service, 'old_fsan', 'HDC ONT FSAN (Old)')}",
                     "",
                     "ONT Contract Status: Signed",
+                ]
+            )
+            return f"{title}\n\n{body}"
+
+        if is_fault:
+            title = (
+                f"Medianet - Fault - {address} / Account #: {account}/ Ticket #:{ticket}"
+            )
+            body = "\n".join(
+                [
+                    "Medianet - Fault",
+                    "Fault Raised Platform: Portal / Whatsapp Group",
+                    f"Ticket # : {ticket}",
+                    f"Ticket URL: {ticket_url}",
+                    f"Account # : {account}",
+                    f"Address: {address}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    "HDC ONT FSAN:",
                 ]
             )
             return f"{title}\n\n{body}"
@@ -717,7 +779,7 @@ class RolFormatter(BaseFormatter):
         return f"{building}, {area}" if area else building
 
     def format(self, text: str, manual: dict | None = None, relocation: bool = False,
-               old_service: dict | None = None) -> str:
+               old_service: dict | None = None, is_fault: bool = False) -> str:
         account = self._display_id(text)        # ROL###### reference -> Account #
         ticket_id = self._internal_id(text)     # Kayako TICKET ID -> Ticket ID + URL
         name_raw, phone_raw, building, area, bandwidth = self._posted_fields(text)
@@ -753,6 +815,26 @@ class RolFormatter(BaseFormatter):
                     "",
                     "Other info:",
                     "ONT Contract Status: Signed / Not Signed",
+                ]
+            )
+            return f"{title}\n\n{body}"
+
+        if is_fault:
+            title = (
+                f"ROL - Fault - {address} / Account #: {account} / "
+                f"{bandwidth}/ Ticket ID:{ticket_id}"
+            )
+            body = "\n".join(
+                [
+                    "ROL - Fault",
+                    "Fault Raised Platform: Portal / Whatsapp Group",
+                    f"Ticket ID : {ticket_id}",
+                    f"Ticket URL : {ticket_url}",
+                    f"Account # : {account}",
+                    f"Bandwidth : {bandwidth}",
+                    f"Customer Name: {name}",
+                    f"Phone : {phone}",
+                    f"Address: {address}",
                 ]
             )
             return f"{title}\n\n{body}"
