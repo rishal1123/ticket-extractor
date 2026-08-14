@@ -271,7 +271,17 @@ def analyze(tickets: list[dict], client: ZnunyClient, prefixes: list[str]):
 
         number = str(t.get("TicketNumber", ""))
         tid = str(t.get("TicketID", ""))
-        creator = client._name_for(t.get("CreateBy"), fallback=t.get("Owner") or "")
+        owner = t.get("Owner") or ""
+        is_bot_owner = owner in ZnunyClient.BOT_OWNER_LOGINS
+        # Known bot/integration accounts (e.g. writerbot) set their own agent
+        # article's From header to the CUSTOMER's identity, not their own --
+        # trust Owner (which they DO set correctly) instead for both the
+        # ticket creator and its note authors below, same fix as
+        # znuny_client.py's _build_details_from_ticket(). Otherwise every
+        # such ticket/article creates a new phantom "staff" entry keyed by
+        # whatever different customer name happened to be in that From
+        # header -- this is what was inflating the staff count.
+        creator = owner if is_bot_owner else client._name_for(t.get("CreateBy"), fallback=owner)
 
         raw_articles = t.get("Article") or []
         rows.append(TicketRow(
@@ -304,7 +314,9 @@ def analyze(tickets: list[dict], client: ZnunyClient, prefixes: list[str]):
         for a in raw_articles:
             if str(a.get("SenderType")) != "agent":
                 continue
-            author = _parse_from_name(a.get("From") or "") or client._name_for(a.get("CreateBy"), "")
+            author = owner if is_bot_owner else (
+                _parse_from_name(a.get("From") or "") or client._name_for(a.get("CreateBy"), "")
+            )
             au = user(author)
             au.notes_written += 1
             au.tickets_touched.add(number)
