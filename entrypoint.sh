@@ -121,6 +121,17 @@ PY
 echo "Checking one-time relocation ticket_type verification (paced against NocBot)..."
 python scripts/fix_relocation_ticket_types.py --apply || echo "WARN: relocation ticket_type check failed; will retry on next restart"
 
+# One-time backfill: correct created_by for tickets/articles owned by a known
+# bot login (e.g. writerbot) that predate the znuny_client.py creator-
+# attribution fix -- closed tickets aren't re-touched by the routine sync, so
+# ones already wrong stay wrong until this runs (see
+# scripts/fix_bot_creator_attribution.py for the full rationale). DB-only, no
+# network calls, so this is fast regardless of history size. Tracks its own
+# completion (migration_fix_bot_creator_attribution_v1 in app_settings), so
+# restarts after a clean first run skip straight past it.
+echo "Checking one-time bot creator-attribution backfill..."
+python scripts/fix_bot_creator_attribution.py --apply || echo "WARN: bot creator-attribution backfill failed; will retry on next restart"
+
 # Remove stale Chrome profile locks (SingletonLock/SingletonCookie/SingletonSocket)
 # left in the persistent browser sessions by a previous container. These live on
 # the named volume, so on a container RECREATE the new container has a different

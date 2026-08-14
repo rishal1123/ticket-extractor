@@ -28,9 +28,17 @@ Idempotent and re-runnable: after the fix, nothing matches "owner is a bot
 but created_by isn't", so a second run finds 0 rows. Takes a timestamped DB
 backup before applying.
 
+Auto-run: entrypoint.sh runs this with --apply on every container start.
+A successful --apply run sets MIGRATION_FLAG in app_settings, so normal
+restarts after the first skip straight past the check (this script is DB-
+only/fast either way, but the flag keeps it from re-writing a backup file on
+every single restart). Pass --force to bypass the flag and re-verify
+everything regardless (e.g. if BOT_OWNER_LOGINS gains a new entry later).
+
 Run inside the container:
     docker exec ticket-extractor python scripts/fix_bot_creator_attribution.py          # dry-run (default)
     docker exec ticket-extractor python scripts/fix_bot_creator_attribution.py --apply   # apply the fix
+    docker exec ticket-extractor python scripts/fix_bot_creator_attribution.py --apply --force  # re-run anyway
 Or locally:
     python scripts/fix_bot_creator_attribution.py --apply
 """
@@ -49,10 +57,14 @@ if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) == 0:
 sys.path.insert(0, ROOT)
 from znuny_client import ZnunyClient  # noqa: E402 -- just reads a class constant, no network/init
 
+MIGRATION_FLAG = "migration_fix_bot_creator_attribution_v1"
+
 
 def main():
     ap = argparse.ArgumentParser(description="Backfill created_by to the real bot login for known bot-owned tickets.")
     ap.add_argument("--apply", action="store_true", help="Apply the fix (default is a dry-run).")
+    ap.add_argument("--force", action="store_true",
+                     help="Re-verify everything even if MIGRATION_FLAG is already set.")
     args = ap.parse_args()
     apply = args.apply
 
@@ -65,13 +77,19 @@ def main():
         print(f"[ERROR] Database not found at {DB_PATH}")
         sys.exit(1)
 
-    print(f"Database   : {DB_PATH}")
-    print(f"Bot logins : {', '.join(bot_logins)}")
-    print(f"Mode       : {'APPLY' if apply else 'DRY-RUN (no changes; pass --apply to write)'}")
-
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
+
+    cur.execute("SELECT value FROM app_settings WHERE key = ?", (MIGRATION_FLAG,))
+    if cur.fetchone() and not args.force:
+        print("Bot creator-attribution check already completed; skipping (pass --force to re-verify).")
+        conn.close()
+        return
+
+    print(f"Database   : {DB_PATH}")
+    print(f"Bot logins : {', '.join(bot_logins)}")
+    print(f"Mode       : {'APPLY' if apply else 'DRY-RUN (no changes; pass --apply to write)'}")
 
     if apply:
         bak = f"{DB_PATH}.bak-botcreator-{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -139,6 +157,10 @@ def main():
             print(s)
 
     if apply:
+        cur.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, description) VALUES (?, ?, ?)",
+            (MIGRATION_FLAG, "1", "Backfilled created_by to the real bot login for known bot-owned tickets"),
+        )
         conn.commit()
         print("\nDone.")
     else:
