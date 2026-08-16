@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import Database, now_maldives
 from config import Config
 from models.ticket import Ticket
+from znuny_client import ZnunyClient
 from datetime import datetime, timezone, timedelta
 
 
@@ -82,6 +83,30 @@ def client(isolated_db_path):
         yield TestClient(app)
     finally:
         reset_db()
+
+
+@pytest.fixture(autouse=True)
+def _reset_znuny_class_state():
+    """ZnunyClient's caches/user-name map/login state are deliberately
+    class-level (not instance-level) in production -- see znuny_client.py's
+    ZnunyClient.__init__ docstring for why -- so they'd otherwise leak
+    between tests via the class object itself, independent of temp-db/other
+    isolation. Reset them around every test; autouse since any test touching
+    ZnunyClient (directly or via ZnunyService) is affected, not just
+    znuny_client-specific ones."""
+    def _clear():
+        ZnunyClient._shared_http = None
+        ZnunyClient._shared_open_tickets_cache = None
+        ZnunyClient._shared_cache_timestamp = None
+        ZnunyClient._shared_details_cache = {}
+        ZnunyClient._number_to_id_cache = {}
+        ZnunyClient._user_names = {}
+        ZnunyClient._get_details_fail_counts = {}
+        ZnunyClient._get_details_gaveup = set()
+
+    _clear()
+    yield
+    _clear()
 
 
 @pytest.fixture

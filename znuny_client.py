@@ -272,7 +272,21 @@ class ZnunyClient:
     # Memory limit kept for interface compatibility (no browser -> always 0)
     MEMORY_LIMIT_MB = 800
 
-    def __init__(self):
+    def __init__(self, http_client: httpx.Client = None):
+        """
+        http_client: optional injected httpx.Client, for tests that want to
+        mock HTTP responses directly instead of monkeypatching _ticket_search/
+        _ticket_get. Defaults to None, which preserves production behavior
+        exactly: a lazily-created client shared at the CLASS level (see
+        _http() below) -- same as every other piece of shared state on this
+        class (caches, login state), so it survives the "new ZnunyService()
+        per sync cycle" pattern the scheduler uses. Caches/login state are
+        deliberately NOT made instance-level for the same reason: the
+        scheduler's periodic cache-reset (_nuke_all_browsers in
+        scheduler_service.py) clears them via ZnunyClient.<attr> directly, on
+        the class, independent of any particular instance.
+        """
+        self._injected_http = http_client
         self.username = Config.get_znuny_username()
         self.password = Config.get_znuny_password()
         configured = Config.get_znuny_url() or ZnunyClient.BASE_URL
@@ -313,7 +327,11 @@ class ZnunyClient:
     # HTTP plumbing
     # ------------------------------------------------------------------ #
     def _http(self) -> httpx.Client:
-        """Lazily create a shared httpx client (self-signed cert -> verify=False)."""
+        """Return the injected client if one was given at construction,
+        otherwise lazily create the shared class-level httpx client
+        (self-signed cert -> verify=False)."""
+        if self._injected_http is not None:
+            return self._injected_http
         if ZnunyClient._shared_http is None:
             ZnunyClient._shared_http = httpx.Client(
                 verify=False,

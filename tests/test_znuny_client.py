@@ -26,26 +26,6 @@ from znuny_client import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _reset_znuny_class_state():
-    """ZnunyClient's caches/user-name map are class attributes, shared across
-    every instance -- reset them around each test so tests don't leak into
-    each other (the exact problem Phase 8's refactor fixes)."""
-    def _clear():
-        ZnunyClient._shared_http = None
-        ZnunyClient._shared_open_tickets_cache = None
-        ZnunyClient._shared_cache_timestamp = None
-        ZnunyClient._shared_details_cache = {}
-        ZnunyClient._number_to_id_cache = {}
-        ZnunyClient._user_names = {}
-        ZnunyClient._get_details_fail_counts = {}
-        ZnunyClient._get_details_gaveup = set()
-
-    _clear()
-    yield
-    _clear()
-
-
 def _article(subject="", body="", created_at=None, article_number=1):
     return ZnunyArticle(
         article_number=article_number, sender="agent", via="Internal",
