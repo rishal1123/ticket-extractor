@@ -12,7 +12,7 @@ from starlette.background import BackgroundTask
 from typing import Optional
 
 from database import Database, now_maldives
-from services import ExtractionService, StatsService, ZnunyService
+from services import ExtractionService, StatsService, ZnunyService, BackupService, StaffMergeService
 from services.scheduler_service import get_scheduler
 from config import Config
 from utils.logger import get_logger
@@ -270,7 +270,7 @@ async def download_db(x_admin_password: str = Header(default=""), db: Database =
 
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".db")
     os.close(tmp_fd)
-    db.create_backup(tmp_path)
+    BackupService(db).create_backup(tmp_path)
 
     filename = f"tickets_backup_{now_maldives().strftime('%Y%m%d_%H%M%S')}.db"
     logger.info(f"Database backup downloaded as {filename}")
@@ -459,14 +459,8 @@ async def get_staff_merge_preview(
     db: Database = Depends(get_db)
 ):
     """Preview the effect of merging one staff name into another."""
-    if source == target:
-        return JSONResponse(content={
-            "success": False,
-            "message": "Source and target cannot be the same"
-        })
-
-    preview = db.get_staff_merge_preview(source, target)
-    return JSONResponse(content={"success": True, "preview": preview})
+    result = StaffMergeService(db).preview(source, target)
+    return JSONResponse(content=result)
 
 
 @router.post("/staff-merge")
@@ -474,30 +468,8 @@ async def get_staff_merge_preview(
 async def merge_staff(request: Request, db: Database = Depends(get_db)):
     """Merge one staff name into another across all tables."""
     data = await request.json()
-    source = data.get("source", "").strip()
-    target = data.get("target", "").strip()
-
-    if not source or not target:
-        return JSONResponse(content={
-            "success": False,
-            "message": "Both source and target names are required"
-        })
-
-    if source == target:
-        return JSONResponse(content={
-            "success": False,
-            "message": "Source and target cannot be the same"
-        })
-
-    result = db.merge_staff_names(source, target)
-
-    logger.info(f"Staff merge completed: '{source}' -> '{target}', {result['total_updated']} records updated")
-
-    return JSONResponse(content={
-        "success": True,
-        "message": f"Merged '{source}' into '{target}'",
-        "result": result
-    })
+    result = StaffMergeService(db).merge(data.get("source", ""), data.get("target", ""))
+    return JSONResponse(content=result)
 
 
 # ==================== Reports ====================

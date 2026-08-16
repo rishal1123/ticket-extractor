@@ -10,7 +10,7 @@ import tempfile
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database import Database
+from database import Database, now_maldives
 from config import Config
 from models.ticket import Ticket
 from datetime import datetime, timezone, timedelta
@@ -82,6 +82,34 @@ def client(isolated_db_path):
         yield TestClient(app)
     finally:
         reset_db()
+
+
+@pytest.fixture
+def seed_ticket():
+    """Factory fixture: insert a ticket and give it a znuny_created_by/
+    znuny_created_at pair `minutes_to_znuny_create` minutes after its
+    created_at, mirroring how a real extraction (upsert_ticket) + Znuny sync
+    (update_znuny_status/update_znuny_details) populate a row."""
+    def _seed(db, sample_ticket, ticket_id_suffix, staff, minutes_to_znuny_create):
+        sample_ticket.ticket_id = f"CHAR{ticket_id_suffix}"
+        ticket_id, _, _ = db.upsert_ticket(sample_ticket)
+
+        now = now_maldives()
+        db.update_znuny_status(ticket_id=ticket_id, in_znuny=True, znuny_ticket_id=f"ZNY{ticket_id_suffix}")
+        db.update_znuny_details(
+            ticket_id=ticket_id,
+            znuny_created_at=now + timedelta(minutes=minutes_to_znuny_create),
+            znuny_created_by=staff,
+            znuny_address="Test Address",
+            znuny_url=f"https://znuny.example.com/{ticket_id_suffix}",
+        )
+        # Backdate created_at to `now` so the time-to-create diff is exactly
+        # `minutes_to_znuny_create`, independent of how fast the test runs.
+        with db._get_connection() as conn:
+            conn.execute("UPDATE tickets SET created_at = ? WHERE id = ?", (now, ticket_id))
+        return ticket_id
+
+    return _seed
 
 
 @pytest.fixture

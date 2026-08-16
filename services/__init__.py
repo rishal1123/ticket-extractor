@@ -9,6 +9,8 @@ from .stats_service import StatsService
 from .config_service import ConfigService
 from .scheduler_service import SchedulerService, get_scheduler
 from .nocbot_service import NocBotService
+from .backup_service import BackupService
+from .staff_merge_service import StaffMergeService
 
 __all__ = [
     'ExtractionService',
@@ -17,5 +19,7 @@ __all__ = [
     'ConfigService',
     'SchedulerService',
     'get_scheduler',
-    'NocBotService'
+    'NocBotService',
+    'BackupService',
+    'StaffMergeService'
 ]

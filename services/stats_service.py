@@ -97,18 +97,36 @@ class StatsService:
             limit=limit, offset=offset
         )
 
-    def get_staff_performance(self, staff_name: str, days: int = 14) -> List[Dict]:
+    def get_staff_performance(self, staff_name: str, days: int = 14, thresholds: dict = None) -> List[Dict]:
         """
         Get daily performance trend for a staff member.
 
         Args:
             staff_name: Name of the staff member
             days: Number of days to look back
+            thresholds: Optional dict with a 'good' threshold (minutes); defaults
+                to the configured performance thresholds when not provided
 
         Returns:
             List of daily performance data
         """
-        return self.db.get_staff_performance_trend(staff_name, days=days)
+        if thresholds is None:
+            thresholds = self.db.get_performance_thresholds()
+        t_good = thresholds.get("good", 5)
+
+        rows = self.db.get_staff_performance_trend_raw(staff_name, days, t_good)
+
+        results = []
+        for row in rows:
+            valid = row["valid_tickets"] or 0
+            results.append({
+                "date": row["date"],
+                "tickets_created": row["tickets_created"],
+                "within_5min": row["within_good"] or 0,
+                "on_time_pct": round((row["within_good"] or 0) / valid * 100, 1) if valid > 0 else 0,
+                "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0
+            })
+        return results
 
     def get_staff_names(self) -> List[str]:
         """Get list of all staff names who have created tickets."""
@@ -179,7 +197,13 @@ class StatsService:
         Returns:
             CSV content as string
         """
-        return self.db.export_staff_stats_csv(date_from=date_from, date_to=date_to)
+        stats = self.db.get_staff_detailed_stats(date_from, date_to)
+
+        lines = ["Staff Name,Tickets Created,Within 5min,Within 10min,Over 10min,On Time %,Avg Minutes,Articles,Tickets Updated"]
+        for s in stats["staff"]:
+            lines.append(f"{s['name']},{s['tickets_created']},{s['within_5min']},{s['within_10min']},{s['over_10min']},{s['on_time_pct']},{s['avg_minutes']},{s['articles_count']},{s['tickets_updated']}")
+
+        return "\n".join(lines)
 
     def export_tickets_csv(self, staff: str = None, date_from: str = None,
                            date_to: str = None) -> str:

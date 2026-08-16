@@ -143,6 +143,32 @@ class TestAdminEndpoints:
         assert "dates" in data
         assert "staff_rows" in data
 
+    def test_staff_merge_preview_rejects_same_name(self, client):
+        response = client.get("/api/admin/staff-merge-preview?source=Same&target=Same")
+        assert response.status_code == 200
+        assert response.json() == {"success": False, "message": "Source and target cannot be the same"}
+
+    def test_staff_merge_preview_returns_preview_shape(self, client):
+        response = client.get("/api/admin/staff-merge-preview?source=A&target=B")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["preview"]["source"] == "A"
+        assert data["preview"]["target"] == "B"
+
+    def test_staff_merge_rejects_missing_fields(self, client):
+        response = client.post("/api/admin/staff-merge", json={"source": "A"})
+        assert response.status_code == 200
+        assert response.json() == {"success": False, "message": "Both source and target names are required"}
+
+    def test_staff_merge_executes_and_returns_result(self, client):
+        response = client.post("/api/admin/staff-merge", json={"source": "A", "target": "B"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["message"] == "Merged 'A' into 'B'"
+        assert "result" in data
+
 
 class TestErrorHandling:
     """Tests for API error handling."""

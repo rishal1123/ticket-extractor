@@ -2356,13 +2356,13 @@ class Database:
                 "tickets": tickets
             }
 
-    def get_staff_performance_trend(self, staff_name: str, days: int = 30, thresholds: dict = None) -> list:
-        """Get daily performance trend for a staff member."""
-        # Use default threshold if not provided
-        if thresholds is None:
-            thresholds = self.get_performance_thresholds()
-        t_good = thresholds.get("good", 5)
-
+    def get_staff_performance_trend_raw(self, staff_name: str, days: int, t_good: int) -> list:
+        """Raw per-day ticket/on-time counts for a staff member's performance
+        trend. The on-time threshold is applied inside the query -- it drives
+        which rows count toward within_good -- so it stays here rather than
+        being reapplied post-hoc; only the on_time_pct/avg_minutes rounding
+        and result-shape formatting is business logic and lives in
+        StatsService.get_staff_performance()."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -2390,17 +2390,7 @@ class Database:
                 ORDER BY date DESC
             """, (t_good, staff_name, -days))
 
-            results = []
-            for row in cursor.fetchall():
-                valid = row["valid_tickets"] or 0
-                results.append({
-                    "date": row["date"],
-                    "tickets_created": row["tickets_created"],
-                    "within_5min": row["within_good"] or 0,
-                    "on_time_pct": round((row["within_good"] or 0) / valid * 100, 1) if valid > 0 else 0,
-                    "avg_minutes": round(row["avg_minutes"], 1) if row["avg_minutes"] else 0
-                })
-            return results
+            return [dict(row) for row in cursor.fetchall()]
 
     def get_delayed_tickets_by_staff(self, min_delay_minutes: int = 5,
                                       date_from: str = None, date_to: str = None) -> list:
@@ -2453,16 +2443,6 @@ class Database:
                 ORDER BY staff
             """)
             return [row["staff"] for row in cursor.fetchall()]
-
-    def export_staff_stats_csv(self, date_from: str = None, date_to: str = None) -> str:
-        """Export staff statistics as CSV string."""
-        stats = self.get_staff_detailed_stats(date_from, date_to)
-
-        lines = ["Staff Name,Tickets Created,Within 5min,Within 10min,Over 10min,On Time %,Avg Minutes,Articles,Tickets Updated"]
-        for s in stats["staff"]:
-            lines.append(f"{s['name']},{s['tickets_created']},{s['within_5min']},{s['within_10min']},{s['over_10min']},{s['on_time_pct']},{s['avg_minutes']},{s['articles_count']},{s['tickets_updated']}")
-
-        return "\n".join(lines)
 
     # ==================== Site Visits ====================
 
@@ -4379,22 +4359,6 @@ class Database:
             } for row in cursor.fetchall()]
 
             return {"total": total, "articles": articles}
-
-    # ==================== Backup ====================
-
-    def create_backup(self, dest_path: str):
-        """Snapshot the live database to dest_path via SQLite's online backup API
-        (transactionally consistent even while the app is writing to it, unlike a
-        plain file copy)."""
-        source = sqlite3.connect(self.db_path)
-        try:
-            dest = sqlite3.connect(dest_path)
-            try:
-                source.backup(dest)
-            finally:
-                dest.close()
-        finally:
-            source.close()
 
     def get_report_portal_stats(self, date_from: str = None, date_to: str = None) -> dict:
         """Get ticket statistics by portal for reporting."""
