@@ -15,9 +15,9 @@ from datetime import datetime
 
 import pytest
 
+from models.znuny import ZnunyArticle
 from znuny_client import (
     ZnunyClient,
-    ZnunyArticle,
     parse_site_visit_article,
     _title_has_ticket_id,
     _parse_dt,

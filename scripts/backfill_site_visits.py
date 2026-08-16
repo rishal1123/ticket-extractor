@@ -27,7 +27,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import Database
-from znuny_client import ZnunyArticle, parse_site_visit_article
+from models.znuny import ZnunyArticle
+from znuny_client import parse_site_visit_article
 from services.znuny_service import ZnunyService
 
 
