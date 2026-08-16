@@ -31,15 +31,15 @@ not been seen yet.
 """
 
 import re
-import time
 import threading
-from datetime import datetime, timezone, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
 
 from config import Config
-from models.znuny import ZnunyArticle, ZnunyTicketDetails, SiteVisit
+from models.znuny import SiteVisit, ZnunyArticle, ZnunyTicketDetails
 from utils.logger import get_logger
 
 # Maldives timezone (UTC+5). Znuny's system timezone (OTRSTimeZone) is UTC, so the

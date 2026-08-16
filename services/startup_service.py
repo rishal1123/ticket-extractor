@@ -6,13 +6,13 @@ the server) instead of owning ~180 lines of formatting/business logic itself.
 """
 
 import os
-import sys
 import platform
-from datetime import datetime, timezone, timedelta
+import sys
+from datetime import datetime, timedelta, timezone
 
 import psutil
 
-from config import Config, APP_VERSION
+from config import APP_VERSION, Config
 from database import Database
 from utils.logger import get_logger
 

@@ -5,7 +5,7 @@ diagnostics banner)."""
 from datetime import timedelta
 
 from database import now_maldives
-from services.startup_service import run_startup_check, _format_ago, _dir_size_mb
+from services.startup_service import _dir_size_mb, _format_ago, run_startup_check
 
 
 class TestRunStartupCheck:

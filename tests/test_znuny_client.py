@@ -3,26 +3,26 @@ Characterization tests for znuny_client.py's current behavior: pure parsing
 helpers, and the caching/search logic built on top of ZnunyClient's
 class-level shared state.
 
-These pin down CURRENT behavior before Phase 8 of the MVC cleanup moves that
-shared state from class-level to instance-level with an injectable HTTP
-client. `_ticket_search`/`_ticket_get` are monkeypatched (rather than faking
-httpx.Response objects) since they're the seam between the cache/search logic
-under test and the actual REST calls.
+These pin down CURRENT behavior across Phase 8 of the MVC cleanup, which
+added an injectable HTTP client (ZnunyClient(http_client=...)) but
+deliberately left the caches/login state class-level -- see the docstring on
+ZnunyClient.__init__ for why. `_ticket_search`/`_ticket_get` are
+monkeypatched here (rather than faking httpx.Response objects, which
+tests/test_znuny_client_http.py does instead) since they're the seam between
+the cache/search logic under test and the actual REST calls.
 """
 
 import time
 from datetime import datetime
 
-import pytest
-
 from models.znuny import ZnunyArticle
 from znuny_client import (
+    MALDIVES_TZ,
     ZnunyClient,
-    parse_site_visit_article,
-    _title_has_ticket_id,
     _parse_dt,
     _parse_from_name,
-    MALDIVES_TZ,
+    _title_has_ticket_id,
+    parse_site_visit_article,
 )
 
 

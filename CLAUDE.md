@@ -11,21 +11,25 @@ The application follows MVC (Model-View-Controller) pattern with a service layer
 ```
 Extractor/
 ├── main.py              # CLI entry point, runs extraction + dashboard
-├── app.py               # MVC FastAPI app (recommended entry point)
-├── database.py          # SQLite database operations (Repository, ~2970 lines)
+├── app.py               # MVC FastAPI app entrypoint (orchestration only; startup diagnostics live in services/startup_service.py)
+├── database.py          # SQLite database operations (Repository, ~4400 lines)
 ├── config.py            # Configuration from DB + .env fallback + APP_VERSION
-├── znuny_client.py      # Znuny integration via Generic Interface REST API (httpx)
+├── znuny_client.py      # Znuny integration via Generic Interface REST API (httpx, injectable client for tests)
 │
 ├── models/              # Data Models
-│   └── ticket.py        # Ticket dataclass with serialization
+│   ├── ticket.py        # Ticket dataclass with serialization
+│   └── znuny.py         # ZnunyArticle, ZnunyTicketDetails, SiteVisit dataclasses
 │
 ├── services/            # Service Layer - Business Logic
 │   ├── __init__.py      # Service exports
 │   ├── extraction_service.py  # Portal extraction logic
 │   ├── znuny_service.py       # Znuny sync logic (3-layer caching)
-│   ├── stats_service.py       # Statistics/analytics/CSV export
+│   ├── stats_service.py       # Statistics/analytics/CSV export/staff performance trend
 │   ├── config_service.py      # Configuration management (DB-stored)
-│   └── scheduler_service.py   # Background job scheduling (dual-thread)
+│   ├── scheduler_service.py   # Background job scheduling (dual-thread)
+│   ├── startup_service.py     # app.py's startup diagnostics banner
+│   ├── backup_service.py      # Database snapshot creation
+│   └── staff_merge_service.py # Staff-name merge preview/execute orchestration
 │
 ├── controllers/         # Controller Layer - HTTP Handlers
 │   ├── __init__.py      # Router exports
@@ -49,7 +53,7 @@ Extractor/
 │   └── security.py      # Rate limiting, security headers, input sanitization
 │
 ├── templates/           # View Layer - Jinja2 HTML templates
-│   ├── base.html        # Base template with navbar, modal, CSS
+│   ├── base.html        # Base template with navbar, modal, CSS, dark mode toggle/CSS variables
 │   ├── dashboard.html   # Main dashboard (extends base.html)
 │   ├── tickets.html     # All tickets view (extends base.html)
 │   ├── staff_stats.html # Staff performance stats (extends base.html)
@@ -60,7 +64,9 @@ Extractor/
 │   └── admin.html       # Admin panel with Status, Staff & Config tabs
 │
 ├── static/              # Static assets
-│   └── js/common.js     # Shared JavaScript functions
+│   └── js/
+│       ├── common.js    # Shared JavaScript functions
+│       └── theme.js     # Dark mode toggle handler
 │
 ├── utils/               # Utilities
 │   ├── browser.py       # Playwright browser manager + asyncio monkeypatch
@@ -150,11 +156,18 @@ All templates use Jinja2 inheritance from `base.html`:
 Provides:
 - Bootstrap 5 CSS/JS + Bootstrap Icons
 - Responsive mobile CSS (breakpoints at 768px, 576px)
-- Collapsible navbar with hamburger menu
+- Collapsible navbar with hamburger menu, including the dark mode toggle (see below)
 - Loading overlay (full-screen spinner)
 - Ticket detail modal (shared across all pages)
-- Common CSS variables (--primary-color, --secondary-color, etc.)
-- Portal badge colors (Dhiraagu orange, Ooredoo purple, ROL blue, Medianet teal)
+- Common CSS variables (--primary-color, --secondary-color, --body-bg, --surface-bg, --subtle-bg, --border-color, --muted-color, --heading-color, etc.) with light defaults and a `[data-bs-theme="dark"]` override block
+- Portal badge colors (Dhiraagu orange, Ooredoo purple, ROL blue, Medianet teal) — solid/saturated, unchanged across themes
+
+### Dark Mode
+Toggle button in the navbar (`#themeToggleBtn`), backed by Bootstrap 5.3's native `data-bs-theme` attribute on `<html>`. On first visit it follows the OS/browser `prefers-color-scheme`; clicking the toggle persists an explicit choice to `localStorage` (`theme` key), which then wins on every later visit. An inline `<script>` in `base.html`'s `<head>` (before the CSS loads) sets the theme ahead of first paint to avoid a flash of the wrong theme; `static/js/theme.js` owns the toggle button's click handler and the icon swap (moon/sun).
+
+- **Adding a new template:** if it extends `base.html`, dark mode works automatically — just avoid hardcoding colors in `extra_css`; use the CSS variables above, or Bootstrap's own theme-aware utilities (`bg-body-secondary`, `bg-*-subtle`) instead of the fixed `bg-light`/`bg-dark`/`table-light`/`table-dark` (those do **not** follow `data-bs-theme`, a real gotcha — see `.table-total-row` in `base.html` for the pattern used to replace `table-light` on JS-rendered "Total" summary rows).
+- **Standalone pages** that don't extend `base.html` (currently only `ticket_format.html`, opened in its own tab with no navbar) duplicate the inline flash-avoidance script and define their own small light/dark variable set, but skip the toggle button — they passively follow the stored/OS preference.
+- No dedicated automated tests exist for visual/CSS correctness (not practical to unit test); verified by launching the app and driving it with Playwright across every page in both themes.
 
 ### Template Blocks
 | Block | Purpose |
@@ -320,6 +333,8 @@ class Ticket:
 
 Methods: `to_dict()`, `from_dict(cls, data)`
 
+**Znuny domain models** (`models/znuny.py`): `ZnunyArticle`, `ZnunyTicketDetails`, `SiteVisit` dataclasses — used by `znuny_client.py`, `services/znuny_service.py`, and `scripts/backfill_site_visits.py`. (`customer_analysis/analyze.py` has its own separate `TicketRow`/`UserStats`/`SiteVisitRow` dataclasses — deliberately kept private to that standalone, decoupled script rather than moved here.)
+
 ### 3. Extractors (extractors/)
 
 All extractors inherit from `BaseExtractor` and implement:
@@ -349,9 +364,13 @@ Business logic separated from HTTP handlers:
 |---------|------|----------------|
 | `ExtractionService` | extraction_service.py | Run portal extractions, maps portal names to extractor classes |
 | `ZnunyService` | znuny_service.py | Znuny sync, ticket checking, article fetch, site visit extraction |
-| `StatsService` | stats_service.py | Dashboard stats, staff metrics, reports, CSV exports |
+| `StatsService` | stats_service.py | Dashboard stats, staff metrics, reports, CSV exports, staff performance trend formatting |
 | `ConfigService` | config_service.py | DB-stored config management, password masking |
 | `SchedulerService` | scheduler_service.py | Background job scheduling (dual persistent worker threads) |
+| `BackupService` | backup_service.py | Database snapshot creation (SQLite online backup API) |
+| `StaffMergeService` | staff_merge_service.py | Staff-name merge: same-name validation, preview/execute orchestration around `Database.get_staff_merge_preview`/`merge_staff_names` |
+
+`services/startup_service.py::run_startup_check()` (called from `app.py`'s lifespan, not part of the table above since it's not business logic in the same sense) builds and logs the startup diagnostics banner.
 
 ### 5. Controllers Layer (controllers/)
 
@@ -485,11 +504,11 @@ What it does:
 
 **Times:** the API returns timestamps in Znuny's system timezone, which is **UTC** (`OTRSTimeZone`). `_parse_dt()` parses them as UTC and converts to Maldives time (`MALDIVES_TZ`, +05:00). Do **not** tag the raw string as `MALDIVES_TZ` directly — that stores everything 5 hours early.
 
+**Testability:** `ZnunyClient(http_client=...)` accepts an optional injected `httpx.Client`, for tests that want to mock HTTP responses directly (e.g. via `httpx.MockTransport`, see `tests/test_znuny_client_http.py`) instead of monkeypatching `_ticket_search`/`_ticket_get`. Defaults to `None`, which preserves the lazy class-level shared client every real call site uses. The caches/login state below are deliberately **not** injectable/instance-level — see the next section for why.
+
 **Key Classes:**
-- `ZnunyClient` - Main client with class-level shared HTTP session + caches (persist across instances)
-- `ZnunyArticle` - Article/note data structure (article_number, sender, via, subject, created_at, created_by, body)
-- `ZnunyTicketDetails` - Full ticket details with articles list (includes owner, state, queue, priority, total_article_count)
-- `SiteVisit` - Parsed site visit data (includes address, customer_name)
+- `ZnunyClient` - Main client with class-level shared HTTP session + caches (persist across instances); optional injected `http_client` for tests
+- `ZnunyArticle`, `ZnunyTicketDetails`, `SiteVisit` - Domain dataclasses, now in `models/znuny.py` (imported into this module, not defined here)
 - `ZnunyClientSync` - Backward compat wrapper
 
 **Key Methods:**
@@ -501,8 +520,8 @@ What it does:
 - `extract_isp_ticket_id_from_title()` - Parse ISP portal/ticket_id from Znuny title (pure regex)
 - `get_site_visit_tickets()` - Get tickets with "site visit" in title
 
-**Class-level shared state** (persists across sync cycles):
-- `_shared_http` - httpx client (connection reuse)
+**Class-level shared state** (persists across sync cycles — deliberately kept class-level rather than instance-level: `ZnunyService` constructs a fresh `ZnunyClient()` every sync cycle, relying on this state surviving across those instantiations, and `scheduler_service.py`'s `_nuke_all_browsers()` clears it via `ZnunyClient.<attr>` directly on the class as part of its periodic reset, independent of any particular instance):
+- `_shared_http` - httpx client (connection reuse); bypassed when an instance is constructed with `http_client=` (see Testability above)
 - `_shared_open_tickets_cache`, `_shared_cache_timestamp` - Open-ticket cache (6min TTL)
 - `_shared_details_cache` - Per-ticket detail cache (max 200 entries)
 - `_number_to_id_cache` - Ticket number → internal TicketID map
@@ -539,7 +558,7 @@ operating_hours_enabled, operating_hours_start, operating_hours_end
 
 **Credential guard:** Extractions are skipped if no portal credentials exist in the database yet.
 
-**Current version:** `APP_VERSION = "1.6.2"` in `config.py`
+**Current version:** `APP_VERSION = "1.16.0"` in `config.py`
 
 ## Important Timestamps
 
@@ -593,6 +612,23 @@ taskkill //F //PID <pid>
 - Old server still running on port 8000 → new code not loaded
 - Port already in use error → kill the existing process first
 - Changes not reflected → clear `__pycache__` directories
+
+## Testing
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v --tb=short
+```
+
+**Isolation:** an autouse fixture in `tests/conftest.py` (`isolated_db_path`) monkeypatches `Config.DATABASE_PATH` to a fresh temp file for every test — `Database.__init__` defaults to `Config.DATABASE_PATH` whenever constructed with no argument, and most services/controllers construct their own `Database()` this way rather than receiving one via DI, so patching the class attribute (not just the `get_db()` singleton) is what keeps every code path a test can reach off the real production DB. A second autouse fixture (`_reset_znuny_class_state`) resets `ZnunyClient`'s class-level caches/login state around each test for the same reason. The shared `client` fixture (FastAPI `TestClient`) is deliberately **not** used as `with TestClient(app) as client:` — entering that context manager runs `app.py`'s lifespan, starting the real background scheduler (and, for Dhiraagu, a real headed browser).
+
+**What's covered:** `database.py` core CRUD, the business-logic services extracted from it (`stats_service.py`'s CSV export/staff performance formatting, `backup_service.py`, `staff_merge_service.py`), `field_visits.py` controller endpoints, `startup_service.py`, and `znuny_client.py` — both its pure parsing helpers/caching logic (monkeypatched `_ticket_search`/`_ticket_get`) and its actual HTTP/JSON layer (`httpx.MockTransport` via the injectable `ZnunyClient(http_client=...)`). API-level tests hit real routes through `TestClient`.
+
+**Not covered (inherently hard to unit test, verified manually instead):** Playwright extractor scraping logic (`extractors/`), the scheduler's threading/timing (`scheduler_service.py`), and anything requiring the live Znuny REST API end-to-end.
+
+**`scripts/manual_checks/`** holds pre-pytest exploration scripts (Selenium, live credentials) that are *not* part of the automated suite — see that directory's own README. `pytest`'s `testpaths = ["tests"]` (in `pyproject.toml`) means they're never auto-discovered even without an explicit `--ignore`.
+
+**Coverage gate:** `pyproject.toml`'s `[tool.coverage.report] fail_under = 50` is enforced only in CI's second test step (`.github/workflows/ci.yml`, `continue-on-error: true` — informational, not blocking). Actual coverage of `database.py` + `services/` is currently ~30%; most of the gap is in `scheduler_service.py` and `znuny_service.py`, both dominated by code that needs a live scheduler thread or live external API to exercise meaningfully.
 
 ## Docker Deployment
 
@@ -994,7 +1030,7 @@ When ISP tickets disappear from the portal but weren't found in Znuny open ticke
 
 ## Static File Versioning
 
-- `APP_VERSION` is defined in `config.py` (currently `"1.6.2"`)
+- `APP_VERSION` is defined in `config.py` (currently `"1.16.0"`)
 - Templates use `?v={{ app_version }}` query strings on static file URLs
 - Global `fetch()` override in `common.js` adds `cache: 'no-store'` to all local API calls
 - When you update static files, increment `APP_VERSION` to bust browser cache

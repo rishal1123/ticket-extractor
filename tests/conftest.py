@@ -4,18 +4,19 @@ Pytest configuration and fixtures.
 
 import os
 import sys
-import pytest
 import tempfile
+
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database import Database, now_maldives
+from datetime import datetime, timedelta, timezone
+
 from config import Config
+from database import Database, now_maldives
 from models.ticket import Ticket
 from znuny_client import ZnunyClient
-from datetime import datetime, timezone, timedelta
-
 
 # Maldives timezone
 MVT = timezone(timedelta(hours=5))
@@ -75,6 +76,7 @@ def client(isolated_db_path):
     tests only exercise route handlers, not the scheduler.
     """
     from fastapi.testclient import TestClient
+
     from app import app
     from controllers.dependencies import reset_db
 

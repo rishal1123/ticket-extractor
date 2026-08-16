@@ -1,24 +1,22 @@
 """
-Characterization tests for controllers/field_visits.py's two endpoints that
-currently bypass the Database abstraction with hand-written SQL against
-db._get_connection() directly: GET /assigned-staff and PUT /{visit_id}.
-
-These pin down CURRENT behavior before Phase 4 of the MVC cleanup replaces
-the raw SQL (including an f-string-built UPDATE) with proper Database
-methods.
+Characterization tests for controllers/field_visits.py's GET /assigned-staff
+and PUT /{visit_id} endpoints, written against the raw db._get_connection()
+SQL those routes originally used (including an f-string-built UPDATE) and
+kept passing after Phase 4 of the MVC cleanup moved that SQL into proper
+Database methods (get_assigned_staff_names, update_site_visit) -- confirming
+the behavior is unchanged.
 """
 
 from database import Database, now_maldives
-from config import Config
 
 
 def _seed_site_visit(isolated_db_path, **overrides):
     db = Database(isolated_db_path)
-    fields = dict(
-        znuny_ticket_id="ZNY1", article_id=1, site_type="Installation",
-        service_provider="Test ISP", scheduled_time="10:00", assigned_to="Staff A",
-        visit_date="2026-08-15", article_created_at=now_maldives(),
-    )
+    fields = {
+        "znuny_ticket_id": "ZNY1", "article_id": 1, "site_type": "Installation",
+        "service_provider": "Test ISP", "scheduled_time": "10:00", "assigned_to": "Staff A",
+        "visit_date": "2026-08-15", "article_created_at": now_maldives(),
+    }
     fields.update(overrides)
     db.upsert_site_visit(**fields)
     with db._get_connection() as conn:

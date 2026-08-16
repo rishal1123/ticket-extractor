@@ -12,7 +12,7 @@ from starlette.background import BackgroundTask
 from typing import Optional
 
 from database import Database, now_maldives
-from services import ExtractionService, StatsService, ZnunyService, BackupService, StaffMergeService
+from services import StatsService, BackupService, StaffMergeService
 from services.scheduler_service import get_scheduler
 from config import Config
 from utils.logger import get_logger

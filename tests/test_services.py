@@ -2,13 +2,10 @@
 Unit tests for service layer.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 from datetime import datetime, timedelta, timezone
 
-from services.stats_service import StatsService
 from services.config_service import ConfigService
-
+from services.stats_service import StatsService
 
 MVT = timezone(timedelta(hours=5))
 
