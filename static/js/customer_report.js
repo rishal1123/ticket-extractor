@@ -51,7 +51,7 @@
       grand += row;
       body += `<tr><td>${esc(r)}</td>${cells}<td class="text-end fw-bold">${row}</td></tr>`;
     });
-    const foot = `<tr class="table-light fw-bold"><td>Total</td>${cols.map((c) => `<td class="text-end">${colTot[c]}</td>`).join('')}<td class="text-end">${grand}</td></tr>`;
+    const foot = `<tr class="table-total-row fw-bold"><td>Total</td>${cols.map((c) => `<td class="text-end">${colTot[c]}</td>`).join('')}<td class="text-end">${grand}</td></tr>`;
     const head = cols.map((c) => `<th class="text-end">${esc(c)}</th>`).join('');
     return `<div class="table-container mb-3"><h6 class="mb-2">${esc(title)}</h6>
       <div class="table-responsive" style="max-height:420px;overflow:auto">
@@ -105,7 +105,7 @@
       const tk = grpT.get(p) || 0; const cs = (grpC.get(p) || new Set()).size; gT += tk; gC += cs;
       grows += `<tr><td>${esc(p)}*</td><td class="text-end">${tk}</td><td class="text-end">${cs}</td></tr>`;
     });
-    grows += `<tr class="table-light fw-bold"><td>Total</td><td class="text-end">${gT}</td><td class="text-end">${gC}</td></tr>`;
+    grows += `<tr class="table-total-row fw-bold"><td>Total</td><td class="text-end">${gT}</td><td class="text-end">${gC}</td></tr>`;
     html += `<div class="table-container mb-3"><h6 class="mb-2"><i class="bi bi-people me-1"></i>Tickets by Customer Group</h6>
       <div class="table-responsive"><table class="table table-sm mb-0" style="max-width:520px"><thead class="table-light"><tr><th>Group</th><th class="text-end">Tickets</th><th class="text-end">Customers</th></tr></thead><tbody>${grows}</tbody></table></div></div>`;
 

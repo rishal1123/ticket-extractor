@@ -14,6 +14,17 @@
     <link rel="apple-touch-icon" href="/static/favicon.svg?v={{ app_version }}">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <script>
+        // Set data-bs-theme before first paint so there's no flash of the wrong
+        // theme: an explicit stored choice wins, otherwise follow the OS/browser
+        // preference. static/js/theme.js (loaded later) owns the toggle button
+        // and persisting a new explicit choice.
+        (function () {
+            var stored = localStorage.getItem('theme');
+            var theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-bs-theme', theme);
+        })();
+    </script>
     <style>
         :root {
             --primary-color: #2c3e50;
@@ -21,13 +32,49 @@
             --success-color: #27ae60;
             --warning-color: #f39c12;
             --danger-color: #e74c3c;
+            --primary-gradient-end: #34495e;
+
+            --body-bg: #f5f6fa;
+            --surface-bg: #ffffff;
+            --subtle-bg: #f8f9fa;
+            --border-color: #dee2e6;
+            --muted-color: #6c757d;
+            --row-hover-bg: #f0f4f8;
+            --mismatch-bg: #fff3cd;
+            --mismatch-hover-bg: #ffe8a1;
+            --overlay-bg: rgba(255, 255, 255, 0.85);
+            /* Text-role variant of --primary-color: that variable also serves as a
+               navbar/modal-header BACKGROUND, so it can't just invert with the
+               theme the way a text color needs to -- this one is for headings/
+               emphasized text specifically. */
+            --heading-color: var(--primary-color);
+        }
+        [data-bs-theme="dark"] {
+            --primary-color: #34495e;
+            --secondary-color: #5dade2;
+            --success-color: #2ecc71;
+            --warning-color: #f5b041;
+            --danger-color: #ec7063;
+            --primary-gradient-end: #1c2833;
+
+            --body-bg: #14181d;
+            --surface-bg: #1e242b;
+            --subtle-bg: #262d35;
+            --border-color: #3a434d;
+            --muted-color: #9aa5b1;
+            --row-hover-bg: #262d35;
+            --mismatch-bg: #4d3b12;
+            --mismatch-hover-bg: #5c4717;
+            --overlay-bg: rgba(20, 24, 29, 0.85);
+            --heading-color: #cfd8e3;
         }
         body {
-            background-color: #f5f6fa;
+            background-color: var(--body-bg);
+            color: var(--bs-body-color);
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         .navbar {
-            background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-gradient-end) 100%);
             padding: 0.75rem 1rem;
         }
         .stat-card {
@@ -48,26 +95,26 @@
             font-weight: 700;
         }
         .filter-section {
-            background: white;
+            background: var(--surface-bg);
             border-radius: 12px;
             padding: 1rem 1.25rem;
             margin-bottom: 1.25rem;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         }
         .table-container {
-            background: white;
+            background: var(--surface-bg);
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
             padding: 1.25rem;
         }
         .table thead th {
-            background-color: #f8f9fa;
-            border-bottom: 2px solid #dee2e6;
+            background-color: var(--subtle-bg);
+            border-bottom: 2px solid var(--border-color);
             font-weight: 600;
             font-size: 0.8rem;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            color: #6c757d;
+            color: var(--muted-color);
             white-space: nowrap;
         }
         .table tbody td {
@@ -83,6 +130,11 @@
         .badge-ooredoo { background-color: #9b59b6; }
         .badge-rol { background-color: #3498db; }
         .badge-medianet { background-color: #1abc9c; }
+        /* Bootstrap's table-light is a fixed light shade that doesn't follow
+           data-bs-theme -- use this for "Total" summary rows instead. */
+        .table-total-row td {
+            background-color: var(--subtle-bg) !important;
+        }
         .znuny-status {
             display: inline-flex;
             align-items: center;
@@ -95,21 +147,21 @@
             transition: background-color 0.15s;
         }
         .ticket-row:hover {
-            background-color: #f0f4f8 !important;
+            background-color: var(--row-hover-bg) !important;
         }
         .ticket-row.completed {
-            background-color: #f8f9fa;
+            background-color: var(--subtle-bg);
             opacity: 0.7;
         }
         .ticket-row.znuny-mismatch {
-            background-color: #fff3cd !important;
-            box-shadow: inset 3px 0 0 #dc3545;
+            background-color: var(--mismatch-bg) !important;
+            box-shadow: inset 3px 0 0 var(--danger-color);
         }
         .ticket-row.znuny-mismatch:hover {
-            background-color: #ffe8a1 !important;
+            background-color: var(--mismatch-hover-bg) !important;
         }
         .modal-header {
-            background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-gradient-end) 100%);
             color: white;
             padding: 1rem 1.5rem;
         }
@@ -117,26 +169,26 @@
             padding: 1.5rem;
         }
         .info-card {
-            background: #f8f9fa;
+            background: var(--subtle-bg);
             border-radius: 8px;
             padding: 0.75rem 1rem;
             height: 100%;
         }
         .info-card .label {
             font-size: 0.75rem;
-            color: #6c757d;
+            color: var(--muted-color);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             margin-bottom: 0.25rem;
         }
         .info-card .value {
             font-weight: 600;
-            color: #2c3e50;
+            color: var(--heading-color);
         }
         .section-title {
             font-size: 0.9rem;
             font-weight: 600;
-            color: var(--primary-color);
+            color: var(--heading-color);
             margin-bottom: 1rem;
             display: flex;
             align-items: center;
@@ -149,7 +201,7 @@
         /* Article type color accents */
         .article-phone { border-left: 3px solid var(--warning-color); }
         .article-internal { border-left: 3px solid var(--secondary-color); }
-        .article-email { border-left: 3px solid #6c757d; }
+        .article-email { border-left: 3px solid var(--muted-color); }
         .article-sitevisit { border-left: 3px solid var(--success-color); }
         .article-body-content {
             max-height: 250px;
@@ -157,21 +209,21 @@
             line-height: 1.6;
             font-size: 0.85rem;
             padding: 0.5rem;
-            background: #f8f9fa;
+            background: var(--subtle-bg);
             border-radius: 4px;
         }
         .article-subject {
             font-weight: 600;
             font-size: 0.85rem;
-            color: var(--primary-color);
+            color: var(--heading-color);
             margin-bottom: 0.5rem;
             padding-bottom: 0.25rem;
-            border-bottom: 1px solid #dee2e6;
+            border-bottom: 1px solid var(--border-color);
         }
         .article-preview {
             display: block;
             font-size: 0.75rem;
-            color: #999;
+            color: var(--muted-color);
             font-weight: normal;
             white-space: nowrap;
             overflow: hidden;
@@ -196,7 +248,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(255, 255, 255, 0.85);
+            background: var(--overlay-bg);
             display: none;
             justify-content: center;
             align-items: center;
@@ -212,7 +264,7 @@
         .form-label {
             font-size: 0.8rem;
             font-weight: 600;
-            color: #6c757d;
+            color: var(--muted-color);
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
@@ -436,6 +488,9 @@
                         <a href="/admin" class="btn btn-outline-light btn-sm{% if active_page == 'admin' %} active{% endif %}">
                             <i class="bi bi-gear me-1"></i>Admin
                         </a>
+                        <button type="button" class="btn btn-outline-light btn-sm" id="themeToggleBtn" title="Toggle dark mode" aria-label="Toggle dark mode">
+                            <i class="bi bi-moon-stars" id="themeToggleIcon"></i>
+                        </button>
                         {% block nav_buttons %}{% endblock %}
                     </div>
                 </div>
@@ -482,6 +537,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/common.js?v={{ app_version }}"></script>
+    <script src="/static/js/theme.js?v={{ app_version }}"></script>
     <script>
         {% block script %}{% endblock %}
     </script>

@@ -456,7 +456,7 @@ async function showTicketDetail(ticketId, callbacks = {}) {
                 <div class="col-12 mt-3">
                     <div class="section-title"><i class="bi bi-chat-left-text"></i> Portal Notes</div>
                     <div class="notes-container">
-                        ${ticket.notes ? `<pre class="bg-light p-3 rounded small mb-0" style="white-space: pre-wrap;">${escapeHtml(ticket.notes)}</pre>` : '<p class="text-muted small">No notes</p>'}
+                        ${ticket.notes ? `<pre class="bg-body-secondary p-3 rounded small mb-0" style="white-space: pre-wrap;">${escapeHtml(ticket.notes)}</pre>` : '<p class="text-muted small">No notes</p>'}
                     </div>
                 </div>
             </div>

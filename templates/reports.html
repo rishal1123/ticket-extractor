@@ -449,7 +449,7 @@ function renderReportPortalTable(portalData) {
     const totalPending = portalData.portals.reduce((sum, p) => sum + (p.pending || 0), 0);
 
     tbody.innerHTML += `
-        <tr class="table-light fw-bold">
+        <tr class="table-total-row fw-bold">
             <td>Total</td>
             <td class="text-center">${totalTickets}</td>
             <td class="text-center">${totalInZnuny}</td>
@@ -490,7 +490,7 @@ function renderReportPerfTable(stats) {
             <td class="text-center">${over10}</td>
             <td class="text-center">${pctOver}%</td>
         </tr>
-        <tr class="table-light fw-bold">
+        <tr class="table-total-row fw-bold">
             <td>Total Tickets</td>
             <td class="text-center">${total}</td>
             <td class="text-center">100%</td>

@@ -16,7 +16,7 @@
     border-left: 4px solid;
     border-radius: 8px;
     padding: 0.75rem;
-    background: white;
+    background: var(--surface-bg);
     margin-bottom: 0.5rem;
 }
 .portal-dhiraagu { border-color: #e65100; }
@@ -30,8 +30,11 @@
 }
 .portal-card.paused {
     border-color: #6c757d !important;
-    background: #f8f9fa;
+    background: var(--subtle-bg);
     opacity: 0.75;
+}
+[data-bs-theme="dark"] .portal-card.stale {
+    background: #3a1f1f;
 }
 @keyframes pulse-stale {
     0%, 100% { box-shadow: none; }
@@ -57,7 +60,7 @@
     transition: background-color 0.2s;
 }
 .log-row:hover {
-    background-color: #f8f9fa;
+    background-color: var(--subtle-bg);
 }
 .level-info { background-color: #17a2b8; }
 .level-warning { background-color: #ffc107; color: #212529; }
@@ -74,15 +77,15 @@
     text-overflow: ellipsis;
 }
 .config-section {
-    background: white;
+    background: var(--surface-bg);
     border-radius: 12px;
     padding: 1.25rem;
     margin-bottom: 1rem;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 .config-section h6 {
-    color: #2c3e50;
-    border-bottom: 2px solid #3498db;
+    color: var(--heading-color);
+    border-bottom: 2px solid var(--secondary-color);
     padding-bottom: 0.5rem;
     margin-bottom: 1rem;
 }
@@ -95,10 +98,10 @@
     cursor: pointer;
 }
 .nav-tabs .nav-link {
-    color: #6c757d;
+    color: var(--muted-color);
 }
 .nav-tabs .nav-link.active {
-    color: #2c3e50;
+    color: var(--heading-color);
     font-weight: 600;
 }
 @media (max-width: 768px) {
@@ -363,7 +366,7 @@
     <!-- Log Stats Summary -->
     <div class="row g-2 mb-2">
         <div class="col-3 col-md-2">
-            <div class="text-center bg-light rounded py-1">
+            <div class="text-center bg-secondary bg-opacity-10 rounded py-1">
                 <div class="small fw-bold" id="logTotalCount">0</div>
                 <div class="small text-muted">Total</div>
             </div>
@@ -1032,7 +1035,7 @@
             </div>
             <div class="row g-2 mb-2">
                 <div class="col-4 col-md-2">
-                    <div class="text-center bg-light rounded py-1">
+                    <div class="text-center bg-secondary bg-opacity-10 rounded py-1">
                         <div class="small fw-bold" id="apiLogTotalCount">0</div>
                         <div class="small text-muted">Total</div>
                     </div>
