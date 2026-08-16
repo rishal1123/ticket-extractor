@@ -63,6 +63,28 @@ def isolated_db_path(monkeypatch):
 
 
 @pytest.fixture
+def client(isolated_db_path):
+    """
+    Create a test client backed by an isolated temp database.
+
+    Deliberately NOT `with TestClient(app) as client:` — entering the context
+    manager runs app.py's lifespan, which starts the real background
+    scheduler (and, for Dhiraagu, a real headed browser). A bare
+    `TestClient(app)` makes requests without ever firing startup/shutdown, so
+    tests only exercise route handlers, not the scheduler.
+    """
+    from fastapi.testclient import TestClient
+    from app import app
+    from controllers.dependencies import reset_db
+
+    reset_db()
+    try:
+        yield TestClient(app)
+    finally:
+        reset_db()
+
+
+@pytest.fixture
 def sample_ticket():
     """Create a sample ticket for testing."""
     return Ticket(

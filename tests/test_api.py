@@ -3,34 +3,11 @@ Unit tests for API endpoints.
 """
 
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch, Mock
 import sys
 import os
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-@pytest.fixture
-def client(isolated_db_path):
-    """
-    Create a test client backed by an isolated temp database.
-
-    Deliberately NOT `with TestClient(app) as client:` — entering the context
-    manager runs app.py's lifespan, which starts the real background
-    scheduler (and, for Dhiraagu, a real headed browser). A bare
-    `TestClient(app)` makes requests without ever firing startup/shutdown, so
-    tests only exercise route handlers, not the scheduler.
-    """
-    from app import app
-    from controllers.dependencies import reset_db
-
-    reset_db()
-    try:
-        yield TestClient(app)
-    finally:
-        reset_db()
 
 
 class TestHealthEndpoint:
