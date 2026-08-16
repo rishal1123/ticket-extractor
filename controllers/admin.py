@@ -56,12 +56,12 @@ async def generate_staff_snapshots(
     regenerates that day; with no date it backfills every day that has activity."""
     if date:
         count = db.generate_staff_daily_snapshot(date)
-        return success_response({"dates": 1, "date": date, "staff": count})
+        return success_response("Staff snapshot generated", {"dates": 1, "date": date, "staff": count})
     dates = db.get_staff_activity_dates()
     total = 0
     for d in dates:
         total += db.generate_staff_daily_snapshot(d)
-    return success_response({"dates": len(dates), "staff_rows": total})
+    return success_response("Staff snapshots generated", {"dates": len(dates), "staff_rows": total})
 
 
 @router.get("/scheduler-status")

@@ -13,10 +13,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 @pytest.fixture
-def client():
-    """Create test client."""
+def client(isolated_db_path):
+    """
+    Create a test client backed by an isolated temp database.
+
+    Deliberately NOT `with TestClient(app) as client:` — entering the context
+    manager runs app.py's lifespan, which starts the real background
+    scheduler (and, for Dhiraagu, a real headed browser). A bare
+    `TestClient(app)` makes requests without ever firing startup/shutdown, so
+    tests only exercise route handlers, not the scheduler.
+    """
     from app import app
-    return TestClient(app)
+    from controllers.dependencies import reset_db
+
+    reset_db()
+    try:
+        yield TestClient(app)
+    finally:
+        reset_db()
 
 
 class TestHealthEndpoint:
@@ -139,6 +153,18 @@ class TestAdminEndpoints:
         """Test login summary returns 200."""
         response = client.get("/api/admin/login-summary")
         assert response.status_code == 200
+
+    def test_generate_staff_snapshots_returns_flattened_shape(self, client):
+        """success_response's message must stay a string, with the data dict
+        flattened into the response — not nested under 'message' as a dict."""
+        response = client.post("/api/admin/generate-staff-snapshots")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["success"] is True
+        assert isinstance(data["message"], str)
+        assert "dates" in data
+        assert "staff_rows" in data
 
 
 class TestErrorHandling:

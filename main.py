@@ -14,11 +14,10 @@ import signal
 import sys
 import time
 
-import schedule
-
 from config import Config
-from database import Database, now_maldives
-from services import ExtractionService, ZnunyService
+from database import Database
+from services import ExtractionService
+from services.scheduler_service import get_scheduler
 from utils.logger import setup_logger, get_logger
 
 logger = get_logger("main")
@@ -46,57 +45,26 @@ def run_extraction(portal_name: str = None, headless: bool = False):
         return list(results.get("portals", {}).values())
 
 
-def sync_znuny_for_new_tickets(db: Database):
-    """Sync Znuny status and details for tickets not yet checked using ZnunyService."""
-    logger.info("Starting Znuny sync for unchecked tickets")
-    znuny_service = ZnunyService(db)
-    result = znuny_service.sync_unchecked_tickets()
-    logger.info(f"Znuny sync complete: {result}")
-    return result.get("found", 0)
-
-
-def scheduled_extraction():
-    """Function called by scheduler."""
-    logger.info("Starting scheduled extraction")
-    db = Database()
-
-    # Run extraction
-    results = run_extraction(headless=True)
-
-    # Summary
-    total_found = sum(r.get("tickets_found", 0) for r in results)
-    total_new = sum(r.get("tickets_new", 0) for r in results)
-    total_updated = sum(r.get("tickets_updated", 0) for r in results)
-    failed = [r["portal"] for r in results if r.get("status") == "failed"]
-
-    logger.info(f"Extraction complete: {total_found} found, {total_new} new, {total_updated} updated")
-    if failed:
-        logger.warning(f"Failed portals: {', '.join(failed)}")
-
-    # Sync Znuny for newly found tickets
-    try:
-        sync_znuny_for_new_tickets(db)
-    except Exception as e:
-        logger.error(f"Znuny sync failed: {e}")
-
-
 def run_scheduler():
-    """Run the extraction scheduler."""
+    """
+    Run the background scheduler in the foreground, without the web server.
+
+    Delegates to services.scheduler_service.SchedulerService -- the same
+    scheduler app.py's lifespan starts -- instead of a second, divergent
+    schedule/extraction/sync loop. SchedulerService.start() runs its own
+    background thread, so this just blocks the main thread until a shutdown
+    signal flips `running` (see signal_handler above), then stops it.
+    """
     global running
 
-    interval = Config.get_extraction_interval()
-    logger.info(f"Starting scheduler with {interval} minute interval")
-
-    # Run immediately on start
-    scheduled_extraction()
-
-    # Schedule periodic runs
-    schedule.every(interval).minutes.do(scheduled_extraction)
+    scheduler = get_scheduler()
+    scheduler.start()
+    logger.info("Scheduler started (no-dashboard mode)")
 
     while running:
-        schedule.run_pending()
         time.sleep(1)
 
+    scheduler.stop()
     logger.info("Scheduler stopped")
 
 

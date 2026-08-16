@@ -11,6 +11,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import Database
+from config import Config
 from models.ticket import Ticket
 from datetime import datetime, timezone, timedelta
 
@@ -32,6 +33,32 @@ def temp_db():
     try:
         os.unlink(db_path)
     except:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def isolated_db_path(monkeypatch):
+    """
+    Point Config.DATABASE_PATH at a fresh temp file for every test.
+
+    `Database.__init__` defaults to `Config.DATABASE_PATH` whenever it's
+    constructed with no argument, and most services/controllers construct
+    their own `Database()` this way rather than receiving one via DI. Patching
+    the class attribute (not just the get_db() singleton) is what actually
+    keeps every code path a test can reach off the real production DB.
+    Autouse so a future test that forgets to ask for it is still protected.
+    """
+    with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+        db_path = f.name
+
+    monkeypatch.setattr(Config, "DATABASE_PATH", db_path)
+    Database(db_path)  # create schema up front
+
+    yield db_path
+
+    try:
+        os.unlink(db_path)
+    except OSError:
         pass
 
 

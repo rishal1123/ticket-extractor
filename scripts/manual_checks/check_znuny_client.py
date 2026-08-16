@@ -1,10 +1,10 @@
-"""Quick test of Znuny client."""
+"""Quick manual check of Znuny client against the live REST API."""
 from znuny_client import ZnunyClient
 
-def test():
+def check():
     client = ZnunyClient()
 
-    # Test search for a known ticket ID pattern
+    # Search for a known ticket ID pattern
     test_ids = ["OOR-2001287", "DHG-12345", "ROL250141"]
 
     for ticket_id in test_ids:
@@ -13,7 +13,7 @@ def test():
         print(f"  Found: {found}, Znuny ID: {znuny_id}")
 
     client.close()
-    print("\nTest complete.")
+    print("\nCheck complete.")
 
 if __name__ == "__main__":
-    test()
+    check()

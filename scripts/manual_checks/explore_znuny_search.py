@@ -168,7 +168,7 @@ def search_via_toolbar(driver, search_term):
         print(f"Error: {e}")
         return False
 
-def test_znuny_search():
+def explore_znuny_search():
     driver = setup_browser()
 
     try:
@@ -204,4 +204,4 @@ def test_znuny_search():
         print("\nBrowser closed.")
 
 if __name__ == "__main__":
-    test_znuny_search()
+    explore_znuny_search()

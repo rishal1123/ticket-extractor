@@ -64,6 +64,11 @@ backups/
 # Claude Code
 .claude/
 
+# Test artifacts
+.coverage
+.pytest_cache/
+htmlcov/
+
 # OS
 .DS_Store
 Thumbs.db

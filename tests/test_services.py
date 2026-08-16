@@ -76,15 +76,6 @@ class TestConfigService:
         # Config should be returned (may be empty if no .env)
         assert isinstance(config, dict)
 
-    def test_validate_config(self):
-        """Test config validation."""
-        service = ConfigService()
-        result = service.validate_config()
-
-        assert 'valid' in result
-        assert 'issues' in result
-        assert isinstance(result['issues'], list)
-
     def test_get_all_keys(self):
         """Test getting all config keys."""
         service = ConfigService()

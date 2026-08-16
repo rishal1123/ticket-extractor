@@ -12,7 +12,6 @@ The application follows MVC (Model-View-Controller) pattern with a service layer
 Extractor/
 ├── main.py              # CLI entry point, runs extraction + dashboard
 ├── app.py               # MVC FastAPI app (recommended entry point)
-├── dashboard.py         # Legacy entry point (deprecated, redirects to app.py)
 ├── database.py          # SQLite database operations (Repository, ~2970 lines)
 ├── config.py            # Configuration from DB + .env fallback + APP_VERSION
 ├── znuny_client.py      # Znuny integration via Generic Interface REST API (httpx)
@@ -71,6 +70,9 @@ Extractor/
 │   ├── tickets.db       # SQLite database (includes credentials in app_settings)
 │   └── browser_sessions/# Playwright persistent browser contexts per portal
 │
+├── scripts/              # One-off/maintenance scripts (not part of the app import graph)
+│   └── manual_checks/    # Manual, not-CI, live-credential exploration scripts (Selenium/httpx)
+│
 ├── .env                 # Environment variables (local dev fallback only)
 ├── entrypoint.sh        # Docker entrypoint (DB migration check + app start)
 ├── Dockerfile           # Docker container configuration (Playwright + Chromium)
@@ -90,9 +92,8 @@ Extractor/
 | **Utility** | `utils/` | Browser management, logging |
 
 ### Entry Points
-- `app.py` - Main entry point (recommended, MVC architecture with FastAPI lifespan)
-- `main.py` - CLI with options for extraction modes (--once, --portal, --dashboard-only)
-- `dashboard.py` - Legacy entry point (deprecated, redirects to app.py)
+- `app.py` - Main entry point (recommended, MVC architecture with FastAPI lifespan). This is what the Docker image actually runs (`entrypoint.sh` ends with `exec python app.py`).
+- `main.py` - CLI with options for extraction modes (--once, --portal, --dashboard-only, --no-dashboard). `--no-dashboard` runs the same `services/scheduler_service.py` `SchedulerService` app.py's lifespan starts (blocking the CLI's main thread), not a separate scheduling implementation.
 
 ## Browser Technology
 
@@ -570,9 +571,6 @@ python main.py --portal dhiraagu   # Extract from specific portal only
 python main.py --dashboard-only    # Run web server only (no extraction)
 python main.py --no-dashboard      # Run scheduler only (no web server)
 python main.py --visible           # Show browser windows (default: headless)
-
-# Legacy (deprecated)
-python dashboard.py
 ```
 
 The app runs on http://localhost:8000 by default.
