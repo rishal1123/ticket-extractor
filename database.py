@@ -1474,6 +1474,22 @@ class Database:
                 "error_message": row["error_message"]
             } for row in cursor.fetchall()}
 
+    def get_znuny_table_counts(self) -> dict:
+        """Row counts for the Znuny-derived tables not covered by get_stats()."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as c FROM znuny_tickets")
+            znuny_tickets = cursor.fetchone()["c"]
+            cursor.execute("SELECT COUNT(*) as c FROM znuny_articles")
+            znuny_articles = cursor.fetchone()["c"]
+            cursor.execute("SELECT COUNT(*) as c FROM site_visits")
+            site_visits = cursor.fetchone()["c"]
+        return {
+            "znuny_tickets": znuny_tickets,
+            "znuny_articles": znuny_articles,
+            "site_visits": site_visits,
+        }
+
     def get_stats(self) -> dict:
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -2825,6 +2841,85 @@ class Database:
                 "pending": row["pending"] or 0,
                 "avg_time_minutes": round(row["avg_time"], 1) if row["avg_time"] else None
             } for row in cursor.fetchall()]
+
+    def get_assigned_staff_names(self) -> list:
+        """Distinct staff names that have been assigned a site visit. A single
+        row's assigned_to can hold multiple comma-separated names (multi-staff
+        visits), so those are split before deduping."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT assigned_to FROM site_visits
+                WHERE assigned_to IS NOT NULL AND assigned_to != ''
+                ORDER BY assigned_to
+            """)
+            staff_set = set()
+            for row in cursor.fetchall():
+                for name in (row["assigned_to"] or "").split(","):
+                    name = name.strip()
+                    if name:
+                        staff_set.add(name)
+            return sorted(staff_set)
+
+    def update_site_visit(self, visit_id: int, data: dict) -> dict:
+        """Update a site visit's scheduled_time/assigned_to/status. Recalculates
+        time_taken_minutes when scheduled_time changes and the visit is already
+        completed. Returns {"success": bool, "message": str}."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            updates = []
+            params = []
+
+            if "scheduled_time" in data:
+                updates.append("scheduled_time = ?")
+                params.append(data["scheduled_time"])
+
+            if "assigned_to" in data:
+                updates.append("assigned_to = ?")
+                params.append(data["assigned_to"])
+
+            if "status" in data:
+                updates.append("status = ?")
+                params.append(data["status"])
+
+            if not updates:
+                return {"success": False, "message": "No fields to update"}
+
+            updates.append("updated_at = ?")
+            params.append(now_maldives())
+            params.append(visit_id)
+
+            cursor.execute(f"""
+                UPDATE site_visits
+                SET {', '.join(updates)}
+                WHERE id = ?
+            """, params)
+
+            if cursor.rowcount == 0:
+                return {"success": False, "message": "Site visit not found"}
+
+            # Recalculate duration if scheduled_time was changed and visit is completed
+            if "scheduled_time" in data:
+                cursor.execute("""
+                    UPDATE site_visits
+                    SET time_taken_minutes = CASE
+                        WHEN ticket_completed_at IS NOT NULL AND visit_date IS NOT NULL AND scheduled_time IS NOT NULL THEN
+                            CAST(
+                                (julianday(SUBSTR(ticket_completed_at, 1, 19)) - julianday(visit_date || ' ' ||
+                                    CASE
+                                        WHEN LENGTH(scheduled_time) <= 5 THEN scheduled_time || ':00'
+                                        ELSE SUBSTR(scheduled_time, 1, 8)
+                                    END
+                                )) * 24 * 60 AS INTEGER
+                            )
+                        ELSE time_taken_minutes
+                    END
+                    WHERE id = ?
+                """, (visit_id,))
+
+            logger.info(f"Updated site visit {visit_id}: {data}")
+            return {"success": True, "message": "Site visit updated"}
 
     def _row_to_ticket(self, row) -> Ticket:
         keys = row.keys()
