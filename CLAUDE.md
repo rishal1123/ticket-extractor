@@ -761,6 +761,15 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - Account # extracted from contact name parentheses via regex
 - Board cards carry only id+status; the detail page (everything else) is opened once per **new** ticket only. Known tickets are presence-only, so their fields are captured once at first sighting; notes not fetched
 
+## Formatter Package (`formatter/`)
+
+`formatter/` (`formatter/model/`, `formatter/services/`) is a **shared domain-logic package, not a competing MVC hierarchy** — it doesn't duplicate this app's `models/`/`services/`/`controllers/` by accident. It was originally built for a standalone Flask/tkinter "paste raw ISP text, get a formatted ticket block" tool (`formatter/model/ticket_model.py`'s own docstring: *"This is the MVC 'model' that the controller talks to"* refers to that standalone tool's controller/view, which live outside this repo — there is no Flask/tkinter entry point here, only the reusable `model`/`services` layer). Two real, load-bearing consumers inside this app depend on it directly:
+
+- **Extractors** (`extractors/dhiraagu.py`, `medianet.py`, `rol.py`) import formatting helpers straight from `formatter.model.formatters` (`build_address`, `clean_building_code`, `RolFormatter`) for address/text cleanup during extraction.
+- **`utils/ticket_formatter.py`** wraps `formatter.model`/`formatter.services` (detection, `TicketModel`, `rules_store`, `clipboard`) to power this app's own ticket-formatting admin feature, explicitly to keep output identical to the standalone tool's.
+
+Because of this, don't move `formatter/model`/`formatter/services` into `models/`/`services/` — they aren't domain models of this app's own ticket/Znuny/staff data, they're ISP text-parsing/formatting utilities intentionally shared with an external tool. Treat `formatter/` as a small internal library the extractor app happens to depend on, not orphaned structure.
+
 ## Common Tasks
 
 ### Adding a New Portal
