@@ -10,8 +10,11 @@ from formatter.model.formatters import clean_building_code
 class MedianetExtractor(BaseExtractor):
     """Extractor for Medianet CRM.COM portal.
 
-    This portal uses a Kanban-style board with columns for different statuses.
-    Tickets don't disappear when completed - they move to "Closed" status.
+    Uses the Service Requests List view (a flat, paginated table) rather than
+    the Kanban board. The list's default filter ("Closed Status is false")
+    already excludes closed tickets, and list rows link directly to the
+    ticket detail page via a UUID href — no per-ticket-type iteration or
+    card-matching-by-text is needed like the old board approach required.
     """
 
     # SPA-heavy portal — skip images. Reset browser if it exceeds 1.5GB.
@@ -27,13 +30,18 @@ class MedianetExtractor(BaseExtractor):
     LOGIN_PASSWORD_SELECTOR = "input[type='password']"
     LOGIN_SUBMIT_SELECTOR = "button[type='submit']"
 
-    # Service Requests Board page
-    SERVICE_REQUESTS_URL = "https://app.crm.com/crm/service-requests-board"
+    BASE_URL = "https://app.crm.com"
+    SERVICE_REQUESTS_LIST_URL = "https://app.crm.com/crm/service-requests-list"
 
-    # Board selectors
-    BOARD_COLUMN_SELECTOR = ".board-column"
-    COLUMN_TITLE_SELECTOR = ".card-title, .title"
-    TICKET_CARD_SELECTOR = ".draggable"
+    # List view selectors
+    LIST_PAGE_READY_SELECTOR = "button[data-test='showFilters']"
+    FILTER_BADGE_SELECTOR = "span.filter-badge:not(.border-dashed)"
+    FILTER_DELETE_BUTTON_SELECTOR = "button[data-test^='delete-filter']"
+    SHOWS_LABEL_SELECTOR = "span[data-test^='shows[']"
+    ROWS_PER_PAGE_TOGGLE_SELECTOR = "button.btn-size-per-page"
+    ROWS_PER_PAGE_ITEM_SELECTOR = ".dropdown-menu .dropdown-item"
+    TICKET_LIST_CARD_SELECTOR = "a[data-test='serviceRequestLink']"
+    NEXT_PAGE_SELECTOR = "li.page-item:not(.disabled) > a[data-test='nextPage']"
 
     # Ticket detail page selectors
     TICKET_NUMBER_SELECTOR = "span[data-test='serviceRequestNumber']"
@@ -56,12 +64,6 @@ class MedianetExtractor(BaseExtractor):
     # Notes section
     NOTES_CARD_SELECTOR = "[data-test='notesCard']"
     NOTES_CONTENT_SELECTOR = "[data-test='notesCard'] .card-body"
-
-    # React Select dropdown for ticket type filter
-    TICKET_TYPE_DROPDOWN_SELECTOR = ".react-select__control"
-    TICKET_TYPE_DROPDOWN_MENU_SELECTOR = ".react-select__menu"
-    TICKET_TYPE_OPTION_SELECTOR = ".react-select__option"
-    TICKET_TYPE_CURRENT_VALUE_SELECTOR = "[data-test='singleValue']"
 
     # ============================================================
 
@@ -122,21 +124,17 @@ class MedianetExtractor(BaseExtractor):
                 return False
 
             # If redirected away from login, session is active
-            # Now navigate to the board and wait for it to load
-            self.logger.info("is_logged_in: Session active, navigating to board")
-            self._goto_spa(self.SERVICE_REQUESTS_URL)
+            # Now navigate to the service requests list and wait for it to load
+            self.logger.info("is_logged_in: Session active, navigating to service requests list")
+            self._goto_spa(self.SERVICE_REQUESTS_LIST_URL)
             time.sleep(3)
 
-            # Wait for board columns to render (SPA content)
             try:
-                self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=30000)
-                columns = self.browser.page.query_selector_all(self.BOARD_COLUMN_SELECTOR)
-                self.logger.info(f"is_logged_in: Found {len(columns)} board columns")
-                if len(columns) > 0:
-                    self.logger.info("Session valid - board loaded successfully")
-                    return True
+                self.browser.page.wait_for_selector(self.LIST_PAGE_READY_SELECTOR, timeout=30000)
+                self.logger.info("Session valid - service requests list loaded successfully")
+                return True
             except Exception:
-                self.logger.info("is_logged_in: Board columns did not appear in time")
+                self.logger.info("is_logged_in: Service requests list did not load in time")
 
             return False
         except Exception as e:
@@ -218,74 +216,43 @@ class MedianetExtractor(BaseExtractor):
             return False
 
     def extract_tickets(self) -> list[Ticket]:
-        """Extract tickets from the Kanban board, iterating through all ticket types."""
+        """Extract tickets from the Service Requests List view."""
         all_tickets = []
-        seen_ticket_ids = set()  # Avoid duplicates across types
 
         try:
-            # Navigate to Service Requests Board
-            self.logger.info("Navigating to Service Requests Board")
-            self._goto_spa(self.SERVICE_REQUESTS_URL)
+            self.logger.info("Navigating to Service Requests List")
+            self._goto_spa(self.SERVICE_REQUESTS_LIST_URL)
             time.sleep(5)
 
-            # Wait for board to load
-            self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=15000)
+            self.browser.page.wait_for_selector(self.LIST_PAGE_READY_SELECTOR, timeout=20000)
 
-            # Get all available ticket types from the dropdown
-            ticket_types = self._get_ticket_type_options()
-            self.logger.info(f"Found {len(ticket_types)} ticket types: {ticket_types}")
+            # Default filter is "Closed Status is false" (mirrors the board's
+            # exclude-Closed-column behavior). Drop any other filter (e.g. a
+            # leftover queue/type filter) so every queue is visible.
+            self._remove_non_default_filters()
+            self._ensure_show_50_rows()
 
-            # Iterate through each ticket type
-            for ticket_type in ticket_types:
+            list_entries = self._collect_list_tickets()
+            self.logger.info(f"Found {len(list_entries)} tickets in list view")
+
+            for i, entry in enumerate(list_entries):
+                ticket_id = entry["ticket_id"]
                 try:
-                    # Navigate back to board page first
-                    self.logger.info(f"Navigating to board for ticket type: {ticket_type}")
-                    self._goto_spa(self.SERVICE_REQUESTS_URL)
-                    time.sleep(3)
+                    # Known ticket: register presence only. Updates come from Znuny.
+                    if self.is_known_ticket(ticket_id):
+                        all_tickets.append(self.presence_ticket(ticket_id))
+                        continue
 
-                    # Wait for board to load
-                    self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=30000)
+                    self.logger.info(f"Processing new ticket {i+1}/{len(list_entries)}: {ticket_id}")
+                    self._goto_spa(entry["portal_url"])
+                    self.browser.page.wait_for_selector(self.TICKET_NUMBER_SELECTOR, timeout=15000)
+                    time.sleep(1)
 
-                    # Select the ticket type
-                    self._select_ticket_type(ticket_type)
-                    time.sleep(3)
-
-                    # Wait for board to refresh
-                    self.browser.page.wait_for_selector(self.BOARD_COLUMN_SELECTOR, timeout=10000)
-
-                    # Get all ticket cards from the board for this type
-                    ticket_cards = self._get_all_ticket_cards()
-                    self.logger.info(f"Found {len(ticket_cards)} tickets for type '{ticket_type}'")
-
-                    # Extract details for each ticket
-                    for i, card_info in enumerate(ticket_cards):
-                        try:
-                            ticket_id = card_info['ticket_id']
-
-                            # Skip if we've already processed this ticket
-                            if ticket_id in seen_ticket_ids:
-                                self.logger.debug(f"Skipping duplicate ticket: {ticket_id}")
-                                continue
-
-                            # Known ticket: register presence only. The board card has
-                            # nothing beyond id+status, but we deliberately skip the
-                            # detail-page click to cut load — updates come from Znuny.
-                            if self.is_known_ticket(ticket_id):
-                                all_tickets.append(self.presence_ticket(ticket_id))
-                                seen_ticket_ids.add(ticket_id)
-                                continue
-
-                            self.logger.info(f"Processing new ticket {i+1}/{len(ticket_cards)}: {ticket_id}")
-                            ticket = self._extract_ticket_details(card_info)
-                            if ticket:
-                                all_tickets.append(ticket)
-                                seen_ticket_ids.add(ticket_id)
-                        except Exception as e:
-                            self.logger.warning(f"Error extracting ticket {card_info.get('ticket_id', 'unknown')}: {e}")
-                            continue
-
+                    ticket = self._parse_ticket_detail_page("")
+                    if ticket:
+                        all_tickets.append(ticket)
                 except Exception as e:
-                    self.logger.warning(f"Error processing ticket type '{ticket_type}': {e}")
+                    self.logger.warning(f"Error extracting ticket {ticket_id}: {e}")
                     continue
 
         except Exception as e:
@@ -293,159 +260,87 @@ class MedianetExtractor(BaseExtractor):
 
         return all_tickets
 
-    def _get_ticket_type_options(self) -> list[str]:
-        """Get all available ticket type options from the React Select dropdown."""
-        options = []
+    def _remove_non_default_filters(self):
+        """Remove any filter other than 'Closed Status is false'.
+
+        Ensures no queue/type filter (left over from a prior session or a
+        saved view) hides tickets from other queues.
+        """
         try:
-            # Click the dropdown to open it
-            dropdown = self.browser.page.query_selector(self.TICKET_TYPE_DROPDOWN_SELECTOR)
-            dropdown.click()
-            time.sleep(1)
+            for _ in range(10):  # safety cap against unexpected re-render loops
+                badges = self.browser.page.query_selector_all(self.FILTER_BADGE_SELECTOR)
+                target = None
+                for badge in badges:
+                    text = (badge.text_content() or "")
+                    if "closed status" not in text.lower():
+                        target = badge
+                        break
+                if not target:
+                    break
+                delete_btn = target.query_selector(self.FILTER_DELETE_BUTTON_SELECTOR)
+                if not delete_btn:
+                    break
+                delete_btn.click()
+                time.sleep(1.5)
+        except Exception as e:
+            self.logger.warning(f"Error removing extra filters: {e}")
 
-            # Wait for menu to appear
-            self.browser.page.wait_for_selector(self.TICKET_TYPE_DROPDOWN_MENU_SELECTOR, timeout=5000)
+    def _ensure_show_50_rows(self):
+        """Set the page size to 50 rows if it isn't already."""
+        try:
+            label = self.browser.page.query_selector(self.SHOWS_LABEL_SELECTOR)
+            current = label.get_attribute("data-test") if label else None
+            if current == "shows[50]":
+                return
 
-            # Get all options
-            option_elements = self.browser.page.query_selector_all(self.TICKET_TYPE_OPTION_SELECTOR)
-            for opt in option_elements:
-                text = (opt.text_content() or "").strip()
-                # Skip placeholder options
-                if text and not text.lower().startswith("select"):
-                    options.append(text)
-
-            # Close dropdown by pressing Escape
-            self.browser.page.keyboard.press("Escape")
+            toggle = self.browser.page.query_selector(self.ROWS_PER_PAGE_TOGGLE_SELECTOR)
+            if not toggle:
+                return
+            toggle.click()
             time.sleep(0.5)
 
-        except Exception as e:
-            self.logger.warning(f"Error getting ticket type options: {e}")
-            # If we can't get options, try to get current value at least
-            try:
-                current_value = self.browser.page.query_selector(self.TICKET_TYPE_CURRENT_VALUE_SELECTOR)
-                if current_value and (current_value.text_content() or "").strip():
-                    options.append((current_value.text_content() or "").strip())
-            except Exception:
-                pass
-
-        return options if options else ["Customer Inquiry"]  # Default fallback
-
-    def _select_ticket_type(self, ticket_type: str):
-        """Select a ticket type from the React Select dropdown."""
-        try:
-            # Click the dropdown to open it
-            dropdown = self.browser.page.query_selector(self.TICKET_TYPE_DROPDOWN_SELECTOR)
-            dropdown.click()
-            time.sleep(1)
-
-            # Wait for menu to appear
-            self.browser.page.wait_for_selector(self.TICKET_TYPE_DROPDOWN_MENU_SELECTOR, timeout=5000)
-
-            # Find and click the option
-            option_elements = self.browser.page.query_selector_all(self.TICKET_TYPE_OPTION_SELECTOR)
-            for opt in option_elements:
-                if (opt.text_content() or "").strip() == ticket_type:
-                    opt.click()
-                    time.sleep(1)
+            items = self.browser.page.query_selector_all(self.ROWS_PER_PAGE_ITEM_SELECTOR)
+            for item in items:
+                text = (item.text_content() or "").strip()
+                if text.replace(" ", "") == "50rows":
+                    item.click()
+                    time.sleep(1.5)
                     return
-
-            # If exact match not found, close dropdown
-            self.browser.page.query_selector("body").click()
-
         except Exception as e:
-            self.logger.warning(f"Error selecting ticket type '{ticket_type}': {e}")
+            self.logger.warning(f"Error setting rows per page to 50: {e}")
 
-    def _get_all_ticket_cards(self) -> list[dict]:
-        """Get all ticket cards from the first 2 board columns (skip Closed column)."""
-        ticket_cards = []
+    def _collect_list_tickets(self) -> list[dict]:
+        """Walk every page of the list view, collecting ticket id + detail URL."""
+        tickets = []
+        seen_ids = set()
 
-        try:
-            columns = self.browser.page.query_selector_all(self.BOARD_COLUMN_SELECTOR)
-            self.logger.info(f"Found {len(columns)} board columns")
+        for _ in range(100):  # safety cap against pagination loops
+            try:
+                self.browser.page.wait_for_selector(self.TICKET_LIST_CARD_SELECTOR, timeout=15000)
+            except Exception:
+                # No tickets on this page (e.g. zero open tickets)
+                break
 
-            # Only process first 2 columns (skip Closed which is usually column 3)
-            for col_idx, col in enumerate(columns):
-                try:
-                    # Get column status
-                    title_el = col.query_selector_all(self.COLUMN_TITLE_SELECTOR)
-                    column_status = (title_el[0].text_content() or "").split('\n')[0] if title_el else "Unknown"
-
-                    # Skip Closed column
-                    if "closed" in column_status.lower():
-                        self.logger.info(f"Skipping Closed column: '{column_status}'")
-                        continue
-
-                    # Get tickets in this column
-                    cards = col.query_selector_all(self.TICKET_CARD_SELECTOR)
-                    self.logger.info(f"Column '{column_status}': {len(cards)} tickets")
-
-                    for card in cards:
-                        try:
-                            # Extract ticket ID from card using data-test attribute
-                            ticket_id_el = card.query_selector_all("span[data-test='serviceRequestNumber']")
-                            ticket_id = (ticket_id_el[0].text_content() or "").strip() if ticket_id_el else None
-
-                            if not ticket_id:
-                                # Fallback: try getting from card text
-                                card_text = (card.text_content() or "").strip()
-                                lines = card_text.split('\n')
-                                ticket_id = lines[0] if lines else None
-
-                            if ticket_id:
-                                ticket_cards.append({
-                                    'ticket_id': ticket_id,
-                                    'column_status': column_status,
-                                    'element': card
-                                })
-                        except Exception as e:
-                            self.logger.warning(f"Error parsing ticket card: {e}")
-
-                except Exception as e:
-                    self.logger.warning(f"Error processing column: {e}")
-
-        except Exception as e:
-            self.logger.error(f"Error getting ticket cards: {e}")
-
-        return ticket_cards
-
-    def _extract_ticket_details(self, card_info: dict) -> Ticket | None:
-        """Click on a ticket card and extract details from the detail page."""
-        try:
-            # Navigate back to board if needed
-            if "/service-requests-board" not in self.browser.page.url:
-                self._goto_spa(self.SERVICE_REQUESTS_URL)
-                time.sleep(3)
-
-                # Re-find the ticket card
-                self.browser.page.wait_for_selector(self.TICKET_CARD_SELECTOR, timeout=10000)
-
-            # Find and click the ticket card
-            ticket_id = card_info['ticket_id']
-            cards = self.browser.page.query_selector_all(self.TICKET_CARD_SELECTOR)
-            target_card = None
-
+            cards = self.browser.page.query_selector_all(self.TICKET_LIST_CARD_SELECTOR)
             for card in cards:
-                if ticket_id in (card.text_content() or ""):
-                    target_card = card
-                    break
+                number_el = card.query_selector(self.TICKET_NUMBER_SELECTOR)
+                ticket_id = (number_el.text_content() or "").strip() if number_el else None
+                href = card.get_attribute("href")
+                if not ticket_id or not href:
+                    continue
+                if ticket_id in seen_ids:
+                    continue
+                seen_ids.add(ticket_id)
+                portal_url = href if href.startswith("http") else f"{self.BASE_URL}{href}"
+                tickets.append({"ticket_id": ticket_id, "portal_url": portal_url})
 
-            if not target_card:
-                self.logger.warning(f"Could not find ticket card for {ticket_id}")
-                return None
-
-            # Click to open detail page
-            target_card.click()
-            time.sleep(3)
-
-            # Wait for detail page to load
-            self.browser.page.wait_for_url("**/service-request/**", timeout=10000)
+            next_link = self.browser.page.query_selector(self.NEXT_PAGE_SELECTOR)
+            if not next_link:
+                break
+            next_link.click()
             time.sleep(2)
 
-            # Extract ticket details
-            return self._parse_ticket_detail_page(card_info['column_status'])
-
-        except Exception as e:
-            self.logger.error(f"Error extracting ticket details: {e}")
-            return None
+        return tickets
 
     def _parse_ticket_detail_page(self, board_status: str) -> Ticket | None:
         """Parse the ticket detail page and extract all information."""

@@ -788,14 +788,14 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - High timeout (30s) due to portal slowness
 
 ### Medianet
-- Portal: CRM.COM React SPA at `https://app.crm.com/crm/service-requests-board`
+- Portal: CRM.COM React SPA; ticket enumeration uses the flat **Service Requests List** view at `https://app.crm.com/crm/service-requests-list` (not the Kanban board)
 - Login: Two-step (email first, then password) at lighter `/account/login` URL
 - SPA navigation: Uses `wait_until="commit"` (not "load") with 60s timeout
-- Board-based Kanban UI with ticket type dropdown (React Select)
-- Columns: New, Survey, Installation, etc. (Closed is skipped)
+- List view's default filter ("Closed Status is false") already excludes closed tickets, mirroring the old board's skip-Closed-column behavior; the extractor defensively removes any other filter badge (e.g. a leftover queue/type filter) so every queue is visible in one pass — no per-type dropdown iteration needed
+- Page size is forced to 50 rows/page (`Shows` dropdown); pagination via the `Next` link is followed until exhausted
 - Higher memory limit: 1500 MB (vs 800 MB default)
 - Account # extracted from contact name parentheses via regex
-- Board cards carry only id+status; the detail page (everything else) is opened once per **new** ticket only. Known tickets are presence-only, so their fields are captured once at first sighting; notes not fetched
+- List rows carry a direct UUID href to the ticket detail page but not the full field set (address/account/type live only on the detail page). Known tickets are presence-only (id from the row is enough); the detail page is opened once per **new** ticket only, navigating straight to its href. Notes not fetched
 
 ## Formatter Package (`formatter/`)
 
