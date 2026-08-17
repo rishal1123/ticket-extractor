@@ -98,14 +98,19 @@
 
     let html = '';
 
-    // Customer group
+    // Customer group. Customers total is customers.size (distinct across the
+    // whole table), not a sum of each group's own distinct count -- a
+    // customer with tickets under more than one prefix (e.g. both UD-* and
+    // DH-*) would otherwise be counted once per group it appears in,
+    // inflating the Total above the real distinct-customer figure shown in
+    // the stat card.
     const glist = prefs.length ? prefs : DATA.prefixes.map((p) => p.toUpperCase());
-    let grows = ''; let gT = 0, gC = 0;
+    let grows = ''; let gT = 0;
     glist.forEach((p) => {
-      const tk = grpT.get(p) || 0; const cs = (grpC.get(p) || new Set()).size; gT += tk; gC += cs;
+      const tk = grpT.get(p) || 0; const cs = (grpC.get(p) || new Set()).size; gT += tk;
       grows += `<tr><td>${esc(p)}*</td><td class="text-end">${tk}</td><td class="text-end">${cs}</td></tr>`;
     });
-    grows += `<tr class="table-total-row fw-bold"><td>Total</td><td class="text-end">${gT}</td><td class="text-end">${gC}</td></tr>`;
+    grows += `<tr class="table-total-row fw-bold"><td>Total</td><td class="text-end">${gT}</td><td class="text-end">${customers.size}</td></tr>`;
     html += `<div class="table-container mb-3"><h6 class="mb-2"><i class="bi bi-people me-1"></i>Tickets by Customer Group</h6>
       <div class="table-responsive"><table class="table table-sm mb-0" style="max-width:520px"><thead class="table-light"><tr><th>Group</th><th class="text-end">Tickets</th><th class="text-end">Customers</th></tr></thead><tbody>${grows}</tbody></table></div></div>`;
 
