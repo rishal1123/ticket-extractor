@@ -833,9 +833,21 @@ class ZnunyClient:
             art_created_str = art_created.strftime("%Y-%m-%d %H:%M:%S") if art_created else ""
 
             # Attribute notes to the staff who wrote them (agent-sender articles only).
+            # The bot-owner fallback only applies to Phone-channel articles: that's
+            # writerbot's own ticket-creation article, whose From header leaks the
+            # customer's identity instead of the bot's. Confirmed against production
+            # data that this is Phone-channel-specific (every Phone article on a
+            # writerbot-owned ticket has the broken From; zero Internal articles do)
+            # -- so scoping the fallback to `via` here, rather than blanket-applying
+            # it to every article on the ticket, keeps other agents' genuine Internal
+            # notes/closes on a bot-owned ticket attributed to themselves instead of
+            # being overwritten with "writerbot".
             is_agent = str(a.get("SenderType")) == "agent"
             if is_agent:
-                art_created_by = owner if is_bot_owner else (sender or self._name_for(a.get("CreateBy"), ""))
+                if is_bot_owner and via == "Phone":
+                    art_created_by = owner
+                else:
+                    art_created_by = sender or self._name_for(a.get("CreateBy"), "")
             else:
                 art_created_by = ""
 

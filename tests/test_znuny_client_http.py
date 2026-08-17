@@ -124,6 +124,78 @@ class TestGetTicketDetailsOverHttp:
         assert call_count["TicketGet"] == 1
 
 
+class TestBotOwnerArticleAttribution:
+    """writerbot's own ticket-creation article has a broken From header (leaks
+    the customer's identity instead of the bot's) -- confirmed against
+    production data to be specifically a Phone-channel bug: every Phone
+    article on a writerbot-owned ticket has it, zero Internal articles do.
+    The owner-fallback must apply only to that Phone article, not blanket
+    every agent article on the ticket -- otherwise real staff closing/
+    updating a writerbot-owned ticket via an Internal note lose credit for
+    it (~428 real notes were misattributed to "writerbot" in production
+    before this fix)."""
+
+    def _ticket_with_articles(self, owner: str):
+        return {"Ticket": {
+            "TicketID": "1", "TicketNumber": "T1", "Title": "New Service",
+            "State": "open", "Owner": owner, "Queue": "OAN",
+            "Article": [
+                {
+                    "ArticleNumber": 1, "SenderType": "agent",
+                    "From": "0126941141 Arees Abdulla <noreply@example.com>",
+                    "CommunicationChannelID": 2,  # Phone
+                    "Subject": "New Service Order", "CreateTime": "2026-08-15 09:00:00",
+                    "Body": "", "CreateBy": 999,
+                },
+                {
+                    "ArticleNumber": 2, "SenderType": "agent",
+                    "From": '"Fathmath Shaza" <fathmath@example.mv>',
+                    "CommunicationChannelID": 3,  # Internal
+                    "Subject": "Close - Configured - New Service", "CreateTime": "2026-08-15 10:00:00",
+                    "Body": "", "CreateBy": 42,
+                },
+            ],
+        }}
+
+    def test_phone_article_falls_back_to_bot_owner(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/TicketSearch"):
+                return httpx.Response(200, json={"TicketID": ["1"]})
+            return httpx.Response(200, json=self._ticket_with_articles("writerbot"))
+
+        client = _client_with_handler(handler)
+        details = client.get_ticket_details("T1")
+
+        phone_article = next(a for a in details.articles if a.article_number == 1)
+        assert phone_article.sender == "0126941141 Arees Abdulla"  # raw parse, unchanged
+        assert phone_article.created_by == "writerbot"  # owner fallback applies
+
+    def test_internal_article_keeps_real_staff_attribution(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/TicketSearch"):
+                return httpx.Response(200, json={"TicketID": ["1"]})
+            return httpx.Response(200, json=self._ticket_with_articles("writerbot"))
+
+        client = _client_with_handler(handler)
+        details = client.get_ticket_details("T1")
+
+        internal_article = next(a for a in details.articles if a.article_number == 2)
+        assert internal_article.created_by == "Fathmath Shaza"  # NOT overwritten with "writerbot"
+
+    def test_non_bot_owner_ticket_unaffected(self):
+        """Same shape, but a non-bot owner: both articles should use their own sender."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/TicketSearch"):
+                return httpx.Response(200, json={"TicketID": ["1"]})
+            return httpx.Response(200, json=self._ticket_with_articles("realagent"))
+
+        client = _client_with_handler(handler)
+        details = client.get_ticket_details("T1")
+
+        phone_article = next(a for a in details.articles if a.article_number == 1)
+        assert phone_article.created_by == "0126941141 Arees Abdulla"  # not a bot ticket, no fallback
+
+
 class TestSearchClosedByAccountOverHttp:
     def test_returns_matches_from_fulltext_search(self):
         def handler(request: httpx.Request) -> httpx.Response:
