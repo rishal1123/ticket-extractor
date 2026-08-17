@@ -4,29 +4,38 @@ _build_details_from_ticket).
 
 Background: writerbot (an external integration that auto-creates ISP tickets
 via /api/external/isp-tickets) sets its own agent-typed article's From header
-to the customer's account+name instead of its own identity. Our creator
-resolution harvested that bad name into the CreateBy-id -> display-name
-cache, so every ticket it created showed the customer string as "created by"
-instead of "writerbot". The code fix (see git history) stops this from
-happening going forward and self-corrects any OPEN ticket the routine sync
-touches -- but CLOSED tickets aren't part of that routine sync, so ones
-already wrong before the fix stay wrong until something re-touches them.
-This script corrects those existing rows directly: for any ticket owned by a
-known bot login, the correct "created by" value is simply that bot login
-(same value the fixed code now uses), so no live Znuny call is needed.
+to the customer's account+name instead of its own identity -- but ONLY on
+that one Phone-channel ticket-creation article. v1 of this script (and the
+znuny_client.py code it matched at the time) treated the whole TICKET as
+suspect: every agent-typed article on a bot-owned ticket got created_by
+force-set to the bot login, including later Internal-channel articles that
+real staff added when closing/updating the ticket -- those already had a
+perfectly good From header, just now overwritten. Confirmed against
+production data: every Phone article on a writerbot-owned ticket has the
+broken From; zero Internal articles do. v2 corrects that overreach:
+  - Phone-channel articles on a bot-owned ticket: created_by = the bot login
+    (unchanged from v1 -- this is the one case the fallback is actually for).
+  - Non-Phone articles on a bot-owned ticket: created_by is restored from the
+    article's own `sender` column (the correctly-parsed From header, which v1
+    never touched -- only created_by was overwritten, so the real name is
+    still sitting right there to recover from). Rows where sender is empty
+    are left alone (nothing safe to restore from) rather than guessed at.
 
-Columns fixed (only rows currently wrong; a bot's own already-correct rows
-are left untouched):
-  - znuny_tickets.created_by       (all tickets owned by a bot login)
-  - tickets.znuny_created_by       (ISP tickets linked to one of those)
-  - znuny_articles.created_by      (agent-typed articles on those tickets;
-                                     articles with created_by='' -- i.e. the
-                                     non-agent customer articles -- are never
-                                     touched)
+Columns fixed (only rows currently wrong; already-correct rows are left
+untouched):
+  - znuny_tickets.created_by       (all tickets owned by a bot login -- the
+                                     bot genuinely did create the ticket, so
+                                     this stays forced to the bot login)
+  - tickets.znuny_created_by       (ISP tickets linked to one of those, same
+                                     reasoning as above)
+  - znuny_articles.created_by      (agent-typed articles on those tickets,
+                                     channel-aware per above; articles with
+                                     created_by='' -- i.e. the non-agent
+                                     customer articles -- are never touched)
 
 Idempotent and re-runnable: after the fix, nothing matches "owner is a bot
-but created_by isn't", so a second run finds 0 rows. Takes a timestamped DB
-backup before applying.
+but created_by is wrong for its channel", so a second run finds 0 rows.
+Takes a timestamped DB backup before applying.
 
 Auto-run: entrypoint.sh runs this with --apply on every container start.
 A successful --apply run sets MIGRATION_FLAG in app_settings, so normal
@@ -34,6 +43,8 @@ restarts after the first skip straight past the check (this script is DB-
 only/fast either way, but the flag keeps it from re-writing a backup file on
 every single restart). Pass --force to bypass the flag and re-verify
 everything regardless (e.g. if BOT_OWNER_LOGINS gains a new entry later).
+Bumped to v2 (new flag name) so this re-runs once more on top of a DB where
+v1 already ran, to correct the Internal-article overreach described above.
 
 Run inside the container:
     docker exec ticket-extractor python scripts/fix_bot_creator_attribution.py          # dry-run (default)
@@ -57,11 +68,14 @@ if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) == 0:
 sys.path.insert(0, ROOT)
 from znuny_client import ZnunyClient  # noqa: E402 -- just reads a class constant, no network/init
 
-MIGRATION_FLAG = "migration_fix_bot_creator_attribution_v1"
+MIGRATION_FLAG = "migration_fix_bot_creator_attribution_v2"
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Backfill created_by to the real bot login for known bot-owned tickets.")
+    ap = argparse.ArgumentParser(
+        description="Fix created_by for bot-owned tickets: force it to the bot login on "
+                     "the Phone-channel article (the one with a genuinely broken sender), "
+                     "restore it from `sender` everywhere else.")
     ap.add_argument("--apply", action="store_true", help="Apply the fix (default is a dry-run).")
     ap.add_argument("--force", action="store_true",
                      help="Re-verify everything even if MIGRATION_FLAG is already set.")
@@ -96,7 +110,7 @@ def main():
         shutil.copy2(DB_PATH, bak)
         print(f"Backup     : {bak}")
 
-    counts = {"znuny_tickets": 0, "tickets": 0, "znuny_articles": 0}
+    counts = {"znuny_tickets": 0, "tickets": 0, "znuny_articles_phone": 0, "znuny_articles_restored": 0}
     samples = []
 
     for bot in bot_logins:
@@ -131,22 +145,42 @@ def main():
                 cur.execute("UPDATE tickets SET znuny_created_by = ? WHERE id = ?", (bot, r["id"]))
         counts["tickets"] += len(rows)
 
-        # 3. znuny_articles.created_by (agent-typed articles only -- never touch
-        #    the empty created_by that non-agent/customer articles legitimately have)
+        # 3a. znuny_articles.created_by on the Phone-channel article -- the one
+        #     genuine case (the bot's own From header is broken). Same as v1.
         rows = cur.execute(
             """
             SELECT a.id, a.created_by FROM znuny_articles a
             JOIN znuny_tickets z ON z.znuny_ticket_id = a.znuny_ticket_id
-            WHERE z.owner = ? AND a.created_by != '' AND a.created_by != ?
+            WHERE z.owner = ? AND a.via = 'Phone' AND a.created_by != '' AND a.created_by != ?
             """,
             (bot, bot),
         ).fetchall()
         for r in rows:
             if len(samples) < 8:
-                samples.append(f"  znuny_articles#{r['id']} created_by: {r['created_by']!r} -> {bot!r}")
+                samples.append(f"  znuny_articles#{r['id']} (Phone) created_by: {r['created_by']!r} -> {bot!r}")
             if apply:
                 cur.execute("UPDATE znuny_articles SET created_by = ? WHERE id = ?", (bot, r["id"]))
-        counts["znuny_articles"] += len(rows)
+        counts["znuny_articles_phone"] += len(rows)
+
+        # 3b. znuny_articles.created_by on non-Phone articles -- v1's overreach.
+        #     Restore from the article's own `sender` (never touched by v1, so
+        #     the real name is recoverable). Rows where sender is empty are
+        #     skipped -- nothing safe to restore from.
+        rows = cur.execute(
+            """
+            SELECT a.id, a.created_by, a.sender FROM znuny_articles a
+            JOIN znuny_tickets z ON z.znuny_ticket_id = a.znuny_ticket_id
+            WHERE z.owner = ? AND a.via != 'Phone' AND a.created_by = ?
+              AND a.sender != '' AND a.sender != ?
+            """,
+            (bot, bot, bot),
+        ).fetchall()
+        for r in rows:
+            if len(samples) < 8:
+                samples.append(f"  znuny_articles#{r['id']} (non-Phone) created_by: {r['created_by']!r} -> {r['sender']!r}")
+            if apply:
+                cur.execute("UPDATE znuny_articles SET created_by = ? WHERE id = ?", (r["sender"], r["id"]))
+        counts["znuny_articles_restored"] += len(rows)
 
     print("\nRows with wrong created_by (to be fixed):" if not apply else "\nRows fixed:")
     for k, v in counts.items():
@@ -159,7 +193,10 @@ def main():
     if apply:
         cur.execute(
             "INSERT OR REPLACE INTO app_settings (key, value, description) VALUES (?, ?, ?)",
-            (MIGRATION_FLAG, "1", "Backfilled created_by to the real bot login for known bot-owned tickets"),
+            (MIGRATION_FLAG, "1",
+             "Backfilled created_by to the bot login for bot-owned Phone articles, and "
+             "restored real staff attribution (from sender) on non-Phone articles v1 had "
+             "over-corrected"),
         )
         conn.commit()
         print("\nDone.")

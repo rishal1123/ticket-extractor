@@ -127,8 +127,12 @@ python scripts/fix_relocation_ticket_types.py --apply || echo "WARN: relocation 
 # ones already wrong stay wrong until this runs (see
 # scripts/fix_bot_creator_attribution.py for the full rationale). DB-only, no
 # network calls, so this is fast regardless of history size. Tracks its own
-# completion (migration_fix_bot_creator_attribution_v1 in app_settings), so
-# restarts after a clean first run skip straight past it.
+# completion (migration_fix_bot_creator_attribution_v2 in app_settings), so
+# restarts after a clean first run skip straight past it. Bumped to v2 to
+# correct v1's overreach -- v1 force-attributed EVERY agent article on a
+# bot-owned ticket to the bot, including real staff's own Internal-channel
+# notes; v2 restores those from the article's own sender, only keeping the
+# bot attribution on the one Phone-channel article that's actually the bot's.
 echo "Checking one-time bot creator-attribution backfill..."
 python scripts/fix_bot_creator_attribution.py --apply || echo "WARN: bot creator-attribution backfill failed; will retry on next restart"
 
