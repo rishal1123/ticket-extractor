@@ -13,6 +13,28 @@ if [ -f requirements.txt ]; then
     pip install --no-cache-dir -r requirements.txt || echo "WARN: pip install failed; using baked-in deps"
 fi
 
+# Self-heal a corrupted/incomplete Playwright browser cache. Firefox (Dhiraagu)
+# and Chromium (the other 3 portals) binaries live in /root/.cache/ms-playwright,
+# baked into the image at build time -- not on the persistent volume. If that
+# cache ever loses files (disk pressure, a bad layer, manual tampering), Firefox
+# fails deep inside launch_persistent_context with an opaque
+# "ENOENT ... firefox-<rev>/firefox/lock" instead of a clear "not installed"
+# error. Checking executable_path (no actual browser launch) is cheap and
+# version-proof; `playwright install` is idempotent and fast when nothing is
+# missing, so this doesn't meaningfully slow down the common-case restart.
+echo "Verifying Playwright browser installs..."
+if ! python -c "
+from playwright.sync_api import sync_playwright
+import os, sys
+with sync_playwright() as p:
+    for browser in (p.firefox, p.chromium):
+        if not os.path.exists(browser.executable_path):
+            sys.exit(1)
+"; then
+    echo "WARN: Playwright browser cache incomplete/corrupted — reinstalling..."
+    playwright install firefox chromium || echo "WARN: playwright install failed; extraction may fail until this is resolved"
+fi
+
 # Database init + migration check BEFORE starting the app.
 # Database() applies the schema/migrations on construction; running it here (and
 # failing fast under `set -e`) guarantees the DB is fully migrated before the
