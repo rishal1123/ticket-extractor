@@ -299,6 +299,9 @@
                 <div class="extraction-info">
                     <small class="text-white-50">Znuny needs closing</small>
                 </div>
+                <div class="today-count mt-1">
+                    <small class="badge bg-dark bg-opacity-50 text-white border-0" id="ispClosedZnunyOpenSuspendedBadge" style="display: none;">Suspended: <span id="ispClosedZnunyOpenSuspended">0</span></small>
+                </div>
             </div>
         </div>
     </div>
@@ -1140,6 +1143,13 @@ function renderZnunyOpenIspClosed(tickets) {
     countBadge.textContent = tickets.length + (tickets.length === 1 ? ' ticket' : ' tickets');
     countBadge.className = 'badge ' + (tickets.length > 0 ? 'bg-danger' : 'bg-success');
     setStatValue('ispClosedZnunyOpenCount', tickets.length);
+
+    // Break out Suspended tickets separately -- they disappeared from the portal
+    // while suspended rather than genuinely completed, so mixing them into the
+    // plain "Znuny needs closing" count would overstate how much cleanup is owed.
+    const suspendedCount = tickets.filter(t => t.status === 'Suspended').length;
+    document.getElementById('ispClosedZnunyOpenSuspended').textContent = suspendedCount;
+    document.getElementById('ispClosedZnunyOpenSuspendedBadge').style.display = suspendedCount > 0 ? '' : 'none';
 
     if (tickets.length === 0) {
         tbody.innerHTML = `
