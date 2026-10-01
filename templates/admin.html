@@ -33,12 +33,24 @@
     background: var(--subtle-bg);
     opacity: 0.75;
 }
+.portal-card.cf-paused {
+    border-color: #fd7e14 !important;
+    background: #fff8f0;
+    animation: pulse-cf-paused 2s infinite;
+}
 [data-bs-theme="dark"] .portal-card.stale {
     background: #3a1f1f;
+}
+[data-bs-theme="dark"] .portal-card.cf-paused {
+    background: #3a2a1a;
 }
 @keyframes pulse-stale {
     0%, 100% { box-shadow: none; }
     50% { box-shadow: 0 0 8px rgba(220, 53, 69, 0.3); }
+}
+@keyframes pulse-cf-paused {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 8px rgba(253, 126, 20, 0.4); }
 }
 .event-badge {
     font-size: 0.7rem;
@@ -1319,19 +1331,22 @@ async function renderPortalStatusCards(data, lastExtraction) {
         const lastEvent = data.last_events?.[portal];
         const lastEventTime = lastEvent?.created_at ? formatTime(lastEvent.created_at) : '--';
         const lastLog = lastExtraction?.[portal];
+        const isCfPaused = (schedulerData.manual_cf_paused || []).includes(portal);
 
         // Check staleness: >15 min since last extraction
         let isStale = false;
         let ageMinutes = 0;
-        if (lastLog?.extracted_at && !isPaused) {
+        if (lastLog?.extracted_at && !isPaused && !isCfPaused) {
             const extractedAt = new Date(lastLog.extracted_at);
             ageMinutes = Math.round((Date.now() - extractedAt.getTime()) / 60000);
             if (ageMinutes > 15) isStale = true;
         }
 
-        const cardClass = isPaused ? 'paused' : isStale ? 'stale' : '';
+        const cardClass = isCfPaused ? 'cf-paused' : isPaused ? 'paused' : isStale ? 'stale' : '';
         let statusLine = '';
-        if (isPaused) {
+        if (isCfPaused) {
+            statusLine = `<div class="small text-warning mt-1"><i class="bi bi-shield-exclamation me-1"></i>Needs manual Cloudflare bypass</div>`;
+        } else if (isPaused) {
             statusLine = `<div class="small text-muted mt-1"><i class="bi bi-pause-circle me-1"></i>Paused until ${startLabel}</div>`;
         } else if (isStale) {
             statusLine = `<div class="small text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>Stale (${ageMinutes}m ago)</div>`;

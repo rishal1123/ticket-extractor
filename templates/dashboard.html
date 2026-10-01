@@ -89,6 +89,22 @@
     opacity: 0.65;
     filter: grayscale(40%);
 }
+/* Waiting on a human to clear a Cloudflare challenge via noVNC - not broken,
+   but needs action, so distinct from both "stale" (red, looks dead) and
+   "paused" (grey, nothing to do). */
+.stat-card.cf-paused {
+    border-color: #fd7e14 !important;
+    border-left-color: #fd7e14 !important;
+    background: #fff8f0 !important;
+    animation: pulse-cf-paused 2s infinite;
+}
+[data-bs-theme="dark"] .stat-card.cf-paused {
+    background: #3a2a1a !important;
+}
+@keyframes pulse-cf-paused {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 8px rgba(253, 126, 20, 0.4); }
+}
 .stat-card.disabled {
     opacity: 0.55;
     filter: grayscale(80%);
@@ -1219,6 +1235,7 @@ function updateExtractionInfo(portal, info) {
     }
     if (card) card.classList.remove('disabled');
 
+    const isCfPaused = (schedulerData?.manual_cf_paused || []).includes(portal);
     const isPaused = schedulerData?.operating_hours?.enabled && !schedulerData?.within_operating_hours;
     const startHour = schedulerData?.operating_hours?.start_hour ?? 7;
     const startLabel = startHour === 0 ? '12:00 AM' : startHour < 12 ? `${startHour}:00 AM` : startHour === 12 ? '12:00 PM' : `${startHour - 12}:00 PM`;
@@ -1226,21 +1243,26 @@ function updateExtractionInfo(portal, info) {
     // Check staleness
     let isStale = false;
     let ageMinutes = 0;
-    if (info?.extracted_at && !isPaused) {
+    if (info?.extracted_at && !isPaused && !isCfPaused) {
         const extractedAt = new Date(info.extracted_at);
         ageMinutes = Math.round((Date.now() - extractedAt.getTime()) / 60000);
         if (ageMinutes > 15) isStale = true;
     }
 
-    // Apply card classes
+    // Apply card classes. CF-pause (waiting on a human via noVNC) takes
+    // precedence - it's a known, actionable state, not "dead" (stale) or
+    // "nothing to do" (operating-hours paused).
     if (card) {
-        card.classList.remove('stale', 'paused');
-        if (isPaused) card.classList.add('paused');
+        card.classList.remove('stale', 'paused', 'cf-paused');
+        if (isCfPaused) card.classList.add('cf-paused');
+        else if (isPaused) card.classList.add('paused');
         else if (isStale) card.classList.add('stale');
     }
 
     let statusLine = '';
-    if (isPaused) {
+    if (isCfPaused) {
+        statusLine = `<small class="d-block text-warning mt-1"><i class="bi bi-shield-exclamation"></i> Needs manual Cloudflare bypass</small>`;
+    } else if (isPaused) {
         statusLine = `<small class="d-block text-muted mt-1"><i class="bi bi-pause-circle"></i> Paused until ${startLabel}</small>`;
     } else if (isStale) {
         statusLine = `<small class="d-block text-danger mt-1"><i class="bi bi-exclamation-triangle"></i> Stale (${ageMinutes}m)</small>`;

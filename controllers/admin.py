@@ -93,6 +93,8 @@ async def get_scheduler_status():
             result["portals_enabled"] = status["portals_enabled"]
         if "nocbot_configured" in status:
             result["nocbot_configured"] = status["nocbot_configured"]
+        if "manual_cf_paused" in status:
+            result["manual_cf_paused"] = status["manual_cf_paused"]
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error getting scheduler status: {e}")
