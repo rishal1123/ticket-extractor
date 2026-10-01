@@ -43,9 +43,13 @@ class MedianetExtractor(BaseExtractor):
     TICKET_LIST_CARD_SELECTOR = "a[data-test='serviceRequestLink']"
     NEXT_PAGE_SELECTOR = "li.page-item:not(.disabled) > a[data-test='nextPage']"
 
+    # List view ticket number (card rows use a different data-test than the
+    # detail page breadcrumb as of the portal's Oct 2026 UI refresh)
+    TICKET_LIST_NUMBER_SELECTOR = "span[data-test='activityName']"
+
     # Ticket detail page selectors
     TICKET_NUMBER_SELECTOR = "span[data-test='serviceRequestNumber']"
-    TICKET_STATUS_BADGE_SELECTOR = ".breadcrumb .badge"
+    TICKET_STATUS_BADGE_SELECTOR = ".breadcrumb span[data-test^='serviceRequestStatus-']"
     CONTACT_NAME_SELECTOR = "span[data-test='contact']"
     CONTACT_PHONE_SELECTOR = "span[data-test='contact-phone-number']"
     CONTACT_EMAIL_SELECTOR = "span[data-test='contact-email_address']"
@@ -323,7 +327,7 @@ class MedianetExtractor(BaseExtractor):
 
             cards = self.browser.page.query_selector_all(self.TICKET_LIST_CARD_SELECTOR)
             for card in cards:
-                number_el = card.query_selector(self.TICKET_NUMBER_SELECTOR)
+                number_el = card.query_selector(self.TICKET_LIST_NUMBER_SELECTOR)
                 ticket_id = (number_el.text_content() or "").strip() if number_el else None
                 href = card.get_attribute("href")
                 if not ticket_id or not href:
@@ -357,17 +361,24 @@ class MedianetExtractor(BaseExtractor):
             # Status from badge
             status = self._get_element_text(self.TICKET_STATUS_BADGE_SELECTOR) or board_status
 
-            # Contact information
-            contact_name_raw = self._get_element_text(self.CONTACT_NAME_SELECTOR)
-            contact_name = contact_name_raw
+            # Contact information. The account number used to be embedded in the
+            # contact name itself, e.g. "Rise and Shine (7610023404100858)"; the
+            # portal's Oct 2026 UI refresh moved it to a separate "Account-(id)"
+            # line under the name, so try that first and fall back to the old
+            # in-name parentheses for resilience against either format.
+            contact_name = self._get_element_text(self.CONTACT_NAME_SELECTOR)
             account_number = None
 
-            # Extract account number from parentheses, e.g., "Rise and Shine (7610023404100858)"
-            if contact_name_raw and '(' in contact_name_raw:
-                match = re.search(r'\((\d+)\)', contact_name_raw)
+            account_meta = self._get_sibling_detail_text('contact')
+            if account_meta:
+                match = re.search(r'\((\d+)\)', account_meta)
                 if match:
                     account_number = match.group(1)
-                contact_name = contact_name_raw.split('(')[0].strip()
+            elif contact_name and '(' in contact_name:
+                match = re.search(r'\((\d+)\)', contact_name)
+                if match:
+                    account_number = match.group(1)
+                contact_name = contact_name.split('(')[0].strip()
 
             # Address - same building-code-only style the Medianet ticket formatter
             # displays (badge tag and neighborhood/area dropped, e.g.
@@ -388,8 +399,13 @@ class MedianetExtractor(BaseExtractor):
 
             address = clean_building_code(address_raw) or None
 
-            # Team
-            team = self._get_element_text(self.TEAM_SELECTOR)
+            # Team. Previously its own data-test span; the Oct 2026 UI refresh
+            # folded it into the "Assigned to" card as "User · TEAM" text next
+            # to the assignee's name, with no dedicated selector of its own.
+            assigned_meta = self._get_sibling_detail_text('assignedUserName')
+            team = assigned_meta.split('·')[-1].strip() if assigned_meta and '·' in assigned_meta else None
+            if not team:
+                team = self._get_element_text(self.TEAM_SELECTOR)
 
             # Queue/Type (ticket type)
             ticket_type = self._get_element_text(self.QUEUE_NAME_SELECTOR)
@@ -454,6 +470,29 @@ class MedianetExtractor(BaseExtractor):
         except Exception as e:
             self.logger.debug(f"Could not get element text for {selector}: {e}")
         return None
+
+    def _get_sibling_detail_text(self, data_test: str) -> str | None:
+        """Get the muted 'label · value' text next to a detail-page field.
+
+        Several detail-page cards (Contact, Assigned to) render as a
+        `.inline-editable` block: a wrapper div around the primary
+        `[data-test=...]` span, with a `span.text-muted` sibling holding
+        secondary text (e.g. "Account-(282326)" or "User · HDC").
+        """
+        try:
+            handle = self.browser.page.query_selector(f"[data-test='{data_test}']")
+            if not handle:
+                return None
+            text = handle.evaluate(
+                "el => { const card = el.closest('.inline-editable'); "
+                "if (!card) return null; "
+                "const sib = card.querySelector('span.text-muted'); "
+                "return sib ? sib.textContent.trim() : null; }"
+            )
+            return text or None
+        except Exception as e:
+            self.logger.debug(f"Could not get sibling detail text for {data_test}: {e}")
+            return None
 
     def _extract_notes(self) -> str | None:
         """Extract notes from the Notes card on the detail page."""
