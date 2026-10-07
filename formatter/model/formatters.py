@@ -610,26 +610,55 @@ class MedianetFormatter(BaseFormatter):
     manual_fields = (("ticket_url", "Ticket URL"),)
 
     def _contact(self, text: str) -> tuple[str, str, str, str]:
-        """Parse the Contact Details block -> (name, account, phone_raw, address_raw).
+        """Parse the Contact card -> (name, account, phone_raw, address_raw).
 
-        The block is "Name (account)" then phone, then address — but some tickets
-        slip an email line in between, so identify each line by shape (skip emails,
-        pick the phone, take the first address-like line) rather than by position.
+        Before the portal's Oct 2026 UI refresh this was a "Contact Details"
+        heading with "Name (account)" combined on one line, then phone, then
+        address. The refresh renamed the heading to "Contact", inserted a
+        "View Contact" link line and a 2-letter avatar-initials line right
+        after it, and split the name and account onto separate lines
+        ("Khadheeja Iaadha" then "Account-(135569)"). Identify each line by
+        shape rather than fixed position so this tolerates either layout,
+        and fall back to the pre-refresh shape for raw dumps captured
+        before the change.
         """
-        block = lines_after_label(text, "Contact Details", 6)
-        name_account = block[0] if block else ""
-        phone_raw = ""
-        address_raw = ""
-        for line in block[1:]:
+        block = lines_after_label(text, "Contact", 10)
+        name = account = phone_raw = address_raw = ""
+        for line in block:
+            if not line or line.lower() == "view contact":
+                continue
+            if re.fullmatch(r"[A-Z]{1,3}", line):  # avatar initials, e.g. "KI"
+                continue
             if looks_like_email(line):
+                continue
+            m = re.match(r"Account-\((\d*)\)", line, re.IGNORECASE)
+            if m:
+                account = account or m.group(1)
                 continue
             if not phone_raw and looks_like_phone(line):
                 phone_raw = line
-            elif not address_raw and "," in line:  # addresses are comma-separated
+                continue
+            if not address_raw and "," in line:  # addresses are comma-separated
                 address_raw = line
+                continue
+            if not name:
+                name = line
+
+        if not name and not account:
+            # Pre-refresh dump: "Contact Details" heading, "Name (account)" combined.
+            old_block = lines_after_label(text, "Contact Details", 6)
+            name_account = old_block[0] if old_block else ""
+            for line in old_block[1:]:
+                if looks_like_email(line):
+                    continue
+                if not phone_raw and looks_like_phone(line):
+                    phone_raw = line
+                elif not address_raw and "," in line:
+                    address_raw = line
+            name, account = split_name_account(name_account)
+
         if not address_raw:
             address_raw = field_after_label(text, "Where") or ""
-        name, account = split_name_account(name_account)
         return name, account, phone_raw, address_raw
 
     def address_id_for_validation(self, text: str) -> Optional[str]:
