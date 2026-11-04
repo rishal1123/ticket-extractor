@@ -60,17 +60,20 @@ class DhiraaguExtractor(BaseExtractor):
     # Pre-login selector (click Third Party button to show login form)
     THIRDPARTY_BUTTON_XPATH = "xpath=//button[.//span[contains(text(), 'Third Party')]]"
 
-    # Login page selectors
-    LOGIN_USERNAME_SELECTOR = "#email"
-    LOGIN_PASSWORD_SELECTOR = "#password"
+    # Login page selectors. A Nov 2026 Filament upgrade moved these from plain
+    # #email/#password ids to Filament's standard "data.*" form-field naming
+    # (matching the detail page's [id^='data.'] convention below).
+    LOGIN_USERNAME_SELECTOR = "[id='data.email']"
+    LOGIN_PASSWORD_SELECTOR = "[id='data.password']"
     LOGIN_BUTTON_SELECTOR = "button[type='submit']"
 
     # Orders/Tickets page URL
     ORDERS_PAGE_URL = "https://afas.dhiraagu.com.mv/orders/hdc"
 
-    # Filament table selectors
-    TABLE_SELECTOR = "table.filament-tables-table"
-    TABLE_ROW_SELECTOR = "table.filament-tables-table tbody tr"
+    # Filament table selectors. Same Nov 2026 Filament upgrade renamed the
+    # table's CSS class from "filament-tables-table" to "fi-ta-table".
+    TABLE_SELECTOR = "table.fi-ta-table"
+    TABLE_ROW_SELECTOR = "table.fi-ta-table tbody tr"
 
     # Pagination - Filament uses wire:click for pagination
     NEXT_PAGE_XPATH = "xpath=//button[contains(@wire:click, 'nextPage')]"
@@ -81,17 +84,24 @@ class DhiraaguExtractor(BaseExtractor):
 
     # ============================================================
 
-    # Column indices in the table (0-based)
-    COL_SERVICE_NUM = 0    # Service #
-    COL_ORDER_NUM = 1      # Order #
-    COL_ADDRESS = 2        # Address
-    COL_SERVICE_TYPE = 3   # Service type
-    COL_ORDER_TYPE = 4     # Order type (New Service, Relocation, etc.)
-    COL_STATUS = 5         # Status
-    COL_CUSTOMER_NAME = 6  # Customer name
-    COL_PRIORITY = 7       # Priority (Normal, etc.)
-    COL_SUBMITTED_DATE = 8 # Submitted date (portal_created_at)
-    COL_KPI = 9            # KPI (e.g., "30 Hr 40 Min")
+    # Column indices in the table (0-based). The Nov 2026 Filament upgrade
+    # inserted a new bulk-select checkbox column at 0 (shifting everything
+    # else by one), swapped Order # and Service # to appear in that order,
+    # and replaced the old Customer name column with a new ONT Port column
+    # -- customer name is no longer in the list view at all; it's only
+    # available from the detail page's data.customer_name field (see
+    # _extract_detail_page_data), which new/backfilled tickets already visit.
+    COL_SELECT = 0          # Bulk-select checkbox (unused)
+    COL_ORDER_NUM = 1       # Order #
+    COL_SERVICE_NUM = 2     # Service #
+    COL_ADDRESS = 3         # Address
+    COL_SERVICE_TYPE = 4    # Service type
+    COL_ORDER_TYPE = 5      # Order type (New Service, Relocation, etc.)
+    COL_STATUS = 6          # Status
+    COL_ONT_PORT = 7        # ONT Port (new; was Customer name before the upgrade)
+    COL_PRIORITY = 8        # Priority (Normal, etc.)
+    COL_SUBMITTED_DATE = 9  # Submitted date (portal_created_at)
+    COL_KPI = 10            # KPI (e.g., "30 Hr 40 Min")
 
     def detail_url(self, ticket) -> str | None:
         """Detail-page URL used to capture the raw dump for the formatter.
@@ -365,7 +375,7 @@ class DhiraaguExtractor(BaseExtractor):
             for row in rows:
                 try:
                     cells = row.query_selector_all("td")
-                    if len(cells) < 10:
+                    if len(cells) < 11:
                         continue
 
                     submitted_date_str = self._get_cell_text_by_element(cells[self.COL_SUBMITTED_DATE]) if len(cells) > self.COL_SUBMITTED_DATE else None
@@ -378,7 +388,9 @@ class DhiraaguExtractor(BaseExtractor):
                         'status': self._get_cell_text_by_element(cells[self.COL_STATUS]) if len(cells) > self.COL_STATUS else None,
                         'portal_created_at': self._parse_date(submitted_date_str) if submitted_date_str else None,
                         'kpi': self._get_cell_text_by_element(cells[self.COL_KPI]) if len(cells) > self.COL_KPI else None,
-                        'customer_name': self._get_cell_text_by_element(cells[self.COL_CUSTOMER_NAME]) if len(cells) > self.COL_CUSTOMER_NAME else None,
+                        # No longer in the list view (replaced by ONT Port) -
+                        # only available from the detail page.
+                        'customer_name': None,
                     }
                     if not order_data['service_num']:
                         continue
