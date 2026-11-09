@@ -48,7 +48,9 @@
 .quick-filter-btn.active {
     background-color: var(--secondary-color);
     border-color: var(--secondary-color);
-    color: white;
+    /* --secondary-color is a mid blue in light (white on it = 3.2:1) and a
+       lighter one in dark (2.5:1), so the label is dark against both. */
+    color: #06202e;
 }
 .sync-info {
     font-size: 0.8rem;

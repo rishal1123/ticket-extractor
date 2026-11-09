@@ -43,7 +43,7 @@
     <div class="col-6 col-md-4 col-lg-2">
         <div class="stat-card card h-100">
             <div class="card-body p-2 text-center">
-                <div class="fs-4 fw-bold" style="color: #8a2be2;" id="reportZnunyTickets">--</div>
+                <div class="fs-4 fw-bold" style="color: var(--accent-violet);" id="reportZnunyTickets">--</div>
                 <div class="small text-muted">Znuny Only</div>
             </div>
         </div>
@@ -520,7 +520,7 @@ function renderReportStaffTable(staff) {
                 <td><span class="badge ${rankClass}">${rank}</span></td>
                 <td><strong>${escapeHtml(s.name)}</strong></td>
                 <td class="text-center"><span class="badge bg-success">${s.tickets_created || 0}</span></td>
-                <td class="text-center d-none d-md-table-cell"><span class="badge" style="background-color: #8a2be2;">${s.znuny_only_count || 0}</span></td>
+                <td class="text-center d-none d-md-table-cell"><span class="badge" style="background-color: var(--accent-violet); color: var(--on-accent);">${s.znuny_only_count || 0}</span></td>
                 <td class="text-center d-none d-sm-table-cell"><span class="badge bg-info">${s.articles_count || 0}</span></td>
                 <td class="text-center d-none d-lg-table-cell"><span class="badge bg-warning text-dark">${s.site_visits_total || 0}</span></td>
                 <td class="text-center"><strong class="${perfClass}">${onTimePct}%</strong></td>

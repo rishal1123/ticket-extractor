@@ -59,13 +59,14 @@
     }
 }
 .delayed-date-filter.active {
-    background-color: #0d6efd !important;
-    border-color: #0d6efd !important;
-    color: white !important;
+    background-color: var(--accent-isp-total) !important;
+    border-color: var(--accent-isp-total) !important;
+    /* The dark-mode accent is a light blue — white on it is 2.4:1. */
+    color: var(--on-accent) !important;
 }
 .delayed-time-filter.active {
-    background-color: #dc3545 !important;
-    border-color: #dc3545 !important;
+    background-color: var(--alert-card-red) !important;
+    border-color: var(--alert-card-red) !important;
     color: white !important;
 }
 .portal-card-link {
@@ -76,9 +77,12 @@
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
+/* NOTE: this swaps the card's BACKGROUND, so it's only safe on the plain
+   (surface-colored) cards. A solid-filled card must use .stale-solid below —
+   see the comment there. */
 .stat-card.stale {
-    border-color: #dc3545 !important;
-    border-left-color: #dc3545 !important;
+    border-color: var(--alert-card-red) !important;
+    border-left-color: var(--alert-card-red) !important;
     background: #fff5f5 !important;
     animation: pulse-stale 2s infinite;
 }
@@ -93,8 +97,8 @@
    but needs action, so distinct from both "stale" (red, looks dead) and
    "paused" (grey, nothing to do). */
 .stat-card.cf-paused {
-    border-color: #fd7e14 !important;
-    border-left-color: #fd7e14 !important;
+    border-color: var(--alert-card-orange) !important;
+    border-left-color: var(--alert-card-orange) !important;
     background: #fff8f0 !important;
     animation: pulse-cf-paused 2s infinite;
 }
@@ -150,9 +154,14 @@
     gap: 5px;
     font-size: 0.75rem;
     font-weight: 600;
-    color: #198754;
+    color: #146c43;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+}
+/* That green is only 3.9:1 on the dark page background. The dot is lifted to
+   match so the label and its indicator stay one element visually. */
+[data-bs-theme="dark"] .live-indicator {
+    color: #75b798;
 }
 .live-dot {
     width: 8px;
@@ -160,6 +169,9 @@
     border-radius: 50%;
     background: #198754;
     animation: live-pulse 2s ease-in-out infinite;
+}
+[data-bs-theme="dark"] .live-dot {
+    background: #75b798;
 }
 @keyframes live-pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.5); }
@@ -180,10 +192,10 @@
 <div class="row mb-4 g-3" id="statsRow">
     <div class="col-6 col-md-4 col-lg-2">
         <a href="/tickets" class="text-decoration-none">
-            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #0d6efd;" title="View all tickets (active across all ISPs)">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-isp-total);" title="View all tickets (active across all ISPs)">
                 <div class="card-body text-center py-3">
-                    <div class="stat-value" style="color: #0d6efd;" id="totalIspOpenCount">0</div>
-                    <div class="fw-semibold mb-1" style="color: #0d6efd;">Total ISP Open</div>
+                    <div class="stat-value" style="color: var(--accent-isp-total);" id="totalIspOpenCount">0</div>
+                    <div class="fw-semibold mb-1" style="color: var(--accent-isp-total);">Total ISP Open</div>
                     <div class="extraction-info">
                         <small class="text-muted">Across Dhiraagu, Ooredoo, ROL, Medianet</small>
                     </div>
@@ -195,10 +207,10 @@
         </a>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #e65100;" onclick="openPortal('dhiraagu')" title="Open Dhiraagu Portal">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-dhiraagu);" onclick="openPortal('dhiraagu')" title="Open Dhiraagu Portal">
             <div class="card-body text-center py-3">
-                <div class="stat-value" style="color: #e65100;" id="dhiraaguCount">0</div>
-                <div class="portal-name fw-semibold mb-1" style="color: #e65100;">Dhiraagu</div>
+                <div class="stat-value" style="color: var(--accent-dhiraagu);" id="dhiraaguCount">0</div>
+                <div class="portal-name fw-semibold mb-1" style="color: var(--accent-dhiraagu);">Dhiraagu</div>
                 <div class="extraction-info" id="dhiraaguExtraction">
                     <small class="text-muted">--</small>
                 </div>
@@ -210,10 +222,10 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #9b59b6;" onclick="openPortal('ooredoo')" title="Open Ooredoo Portal">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-ooredoo);" onclick="openPortal('ooredoo')" title="Open Ooredoo Portal">
             <div class="card-body text-center py-3">
-                <div class="stat-value" style="color: #9b59b6;" id="ooredooCount">0</div>
-                <div class="portal-name fw-semibold mb-1" style="color: #9b59b6;">Ooredoo</div>
+                <div class="stat-value" style="color: var(--accent-ooredoo);" id="ooredooCount">0</div>
+                <div class="portal-name fw-semibold mb-1" style="color: var(--accent-ooredoo);">Ooredoo</div>
                 <div class="extraction-info" id="ooredooExtraction">
                     <small class="text-muted">--</small>
                 </div>
@@ -224,7 +236,7 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #3498db;" onclick="openPortal('rol')" title="Open ROL Portal">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-rol);" onclick="openPortal('rol')" title="Open ROL Portal">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-primary" id="rolCount">0</div>
                 <div class="portal-name text-primary fw-semibold mb-1">ROL</div>
@@ -238,10 +250,10 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #1abc9c;" onclick="openPortal('medianet')" title="Open Medianet Portal">
+        <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-medianet);" onclick="openPortal('medianet')" title="Open Medianet Portal">
             <div class="card-body text-center py-3">
-                <div class="stat-value" style="color: #1abc9c;" id="medianetCount">0</div>
-                <div class="portal-name fw-semibold mb-1" style="color: #1abc9c;">Medianet</div>
+                <div class="stat-value" style="color: var(--accent-medianet);" id="medianetCount">0</div>
+                <div class="portal-name fw-semibold mb-1" style="color: var(--accent-medianet);">Medianet</div>
                 <div class="extraction-info" id="medianetExtraction">
                     <small class="text-muted">--</small>
                 </div>
@@ -253,15 +265,15 @@
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <a href="/znuny-tickets" class="text-decoration-none">
-            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #7c3aed;" title="View all Znuny tickets">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-znuny);" title="View all Znuny tickets">
                 <div class="card-body text-center py-3">
-                    <div class="stat-value" style="color: #7c3aed;" id="todayZnunyCount">0</div>
-                    <div class="fw-semibold mb-1" style="color: #7c3aed;">Today's Znuny</div>
+                    <div class="stat-value" style="color: var(--accent-znuny);" id="todayZnunyCount">0</div>
+                    <div class="fw-semibold mb-1" style="color: var(--accent-znuny);">Today's Znuny</div>
                     <div class="extraction-info">
                         <small class="text-muted">Tickets entered today</small>
                     </div>
                     <div class="today-count mt-1">
-                        <small class="badge" style="background-color: #7c3aed; color: white;">Articles: <span id="todayZnunyArticles">0</span></small>
+                        <small class="badge" style="background-color: var(--accent-znuny); color: var(--on-accent);">Articles: <span id="todayZnunyArticles">0</span></small>
                     </div>
                 </div>
             </div>
@@ -269,10 +281,10 @@
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <a href="/field-visits" class="text-decoration-none">
-            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #f39c12;" title="View site visits">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-visits);" title="View site visits">
                 <div class="card-body text-center py-3">
-                    <div class="stat-value" style="color: #f39c12;" id="pendingSiteVisits">0</div>
-                    <div class="fw-semibold mb-1" style="color: #f39c12;">Pending Visits</div>
+                    <div class="stat-value" style="color: var(--accent-visits);" id="pendingSiteVisits">0</div>
+                    <div class="fw-semibold mb-1" style="color: var(--accent-visits);">Pending Visits</div>
                     <div class="extraction-info">
                         <small class="text-muted">Today: <span id="todaySiteVisitsCreated">0</span> new</small>
                     </div>
@@ -285,10 +297,10 @@
     </div>
     <div class="col-6 col-md-4 col-lg-2">
         <a href="/tickets" class="text-decoration-none">
-            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid #2c3e50;" title="View all tickets">
+            <div class="stat-card card h-100 portal-card-link" style="border-left: 4px solid var(--accent-isp-today);" title="View all tickets">
                 <div class="card-body text-center py-3">
-                    <div class="stat-value" style="color: #2c3e50;" id="todayExtractedTotal">0</div>
-                    <div class="fw-semibold mb-1" style="color: #2c3e50;">Today's ISP</div>
+                    <div class="stat-value" style="color: var(--accent-isp-today);" id="todayExtractedTotal">0</div>
+                    <div class="fw-semibold mb-1" style="color: var(--accent-isp-today);">Today's ISP</div>
                     <div class="extraction-info">
                         <small class="text-muted">Completed: <span id="todayCompletedCount">0</span></small>
                     </div>
@@ -297,23 +309,23 @@
         </a>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" id="notInZnunyCard" style="background-color: #dc3545; border: none;" onclick="filterFromCard('false')" title="Click to filter the tickets table">
+        <div class="stat-card card h-100 portal-card-link" id="notInZnunyCard" style="background-color: var(--alert-card-red); border: none;" onclick="filterFromCard('false')" title="Click to filter the tickets table">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="notInZnuny">0</div>
                 <div class="fw-semibold mb-1 text-white" id="notInZnunyLabel">Not in Znuny</div>
                 <div class="extraction-info">
-                    <small class="text-white-50" id="znunySyncInfo">--</small>
+                    <small class="alert-card-sub" id="znunySyncInfo">--</small>
                 </div>
             </div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" style="background-color: #fd7e14; border: none;" onclick="scrollToSection('znunyOpenIspClosedSection')" title="ISP ticket completed on the portal but its Znuny ticket is still open — click to view">
+        <div class="stat-card card h-100 portal-card-link" style="background-color: var(--alert-card-orange); border: none;" onclick="scrollToSection('znunyOpenIspClosedSection')" title="ISP ticket completed on the portal but its Znuny ticket is still open — click to view">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="ispClosedZnunyOpenCount">0</div>
                 <div class="fw-semibold mb-1 text-white">ISP Closed, Znuny Open</div>
                 <div class="extraction-info">
-                    <small class="text-white-50">Znuny needs closing</small>
+                    <small class="alert-card-sub">Znuny needs closing</small>
                 </div>
                 <div class="today-count mt-1">
                     <small class="badge bg-dark bg-opacity-50 text-white border-0" id="ispClosedZnunyOpenSuspendedBadge" style="display: none;">Suspended: <span id="ispClosedZnunyOpenSuspended">0</span></small>
@@ -322,24 +334,24 @@
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" style="background-color: #d63384; border: none;" onclick="filterFromCard('znuny_closed_isp_open')" title="Znuny ticket closed but the ISP ticket is still active on the portal — click to filter">
+        <div class="stat-card card h-100 portal-card-link" style="background-color: var(--alert-card-pink); border: none;" onclick="filterFromCard('znuny_closed_isp_open')" title="Znuny ticket closed but the ISP ticket is still active on the portal — click to filter">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="znunyClosedIspOpenCount">0</div>
                 <div class="fw-semibold mb-1 text-white">Znuny Closed, ISP Open</div>
                 <div class="extraction-info">
-                    <small class="text-white-50">Portal needs a check</small>
+                    <small class="alert-card-sub">Portal needs a check</small>
                 </div>
             </div>
         </div>
     </div>
     <div class="col-6 col-md-4 col-lg-2">
-        <div class="stat-card card h-100 portal-card-link" id="ontExistsCard" style="background-color: #17a2b8; border: none;" onclick="filterByOntExists()" title="Active ISP tickets whose address has a confirmed ONT in SMX (via NocBot) — click to filter">
+        <div class="stat-card card h-100 portal-card-link" id="ontExistsCard" style="background-color: var(--alert-card-teal); border: none;" onclick="filterByOntExists()" title="Active ISP tickets whose address has a confirmed ONT in SMX (via NocBot) — click to filter">
             <div class="card-body text-center py-3">
                 <div class="stat-value text-white" id="ontExistsCount">0</div>
                 <div class="fw-semibold mb-1 text-white">ONT Exists</div>
                 <div class="extraction-info">
-                    <small class="text-white-50">Confirmed in SMX</small>
-                    <small class="text-white-50 d-block" id="ontLastChecked">Last update: --</small>
+                    <small class="alert-card-sub">Confirmed in SMX</small>
+                    <small class="alert-card-sub d-block" id="ontLastChecked">Last update: --</small>
                 </div>
             </div>
         </div>
@@ -405,7 +417,7 @@
         </div>
     </div>
     <div class="mt-2" id="ontFilterBadge" style="display: none;">
-        <span class="badge" style="background-color: #17a2b8;">
+        <span class="badge" style="background-color: var(--alert-card-teal);">
             Filtering: ONT Exists
             <i class="bi bi-x-circle ms-1" style="cursor: pointer;" onclick="clearOntExistsFilter()" title="Clear ONT filter"></i>
         </span>
@@ -925,15 +937,18 @@ async function loadZnunySyncStatus() {
 
         notInZnunyEl.textContent = notInZnuny;
 
-        // Apply paused/stale classes
-        cardEl.classList.remove('stale', 'paused');
+        // Apply paused/stale classes. This is a SOLID card (white text on a
+        // filled background), so it takes .stale-solid's pulsing ring — plain
+        // .stale would swap the fill for a near-white pink and leave the white
+        // text on it at a 1.1:1 contrast ratio, i.e. invisible exactly when the
+        // card is trying to raise an alarm.
+        cardEl.classList.remove('stale-solid', 'paused');
         if (isPaused) {
             cardEl.classList.add('paused');
-            cardEl.style.backgroundColor = '#6c757d';
+            cardEl.style.backgroundColor = 'var(--alert-card-gray)';
             syncInfoEl.innerHTML = `<small><i class="bi bi-pause-circle"></i> Paused until ${startLabel}</small>`;
         } else if (isStale) {
-            cardEl.classList.add('stale');
-            cardEl.style.backgroundColor = '#dc3545';
+            cardEl.classList.add('stale-solid');
             const lastSyncTime = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
             syncInfoEl.innerHTML = `
                 <span class="extraction-status failed">Stale</span>
@@ -943,13 +958,13 @@ async function loadZnunySyncStatus() {
             // Normal state - green when 0, red when > 0
             const lastSyncTime = status.last_sync_time ? formatRelativeTime(status.last_sync_time) : '--';
             if (notInZnuny === 0) {
-                cardEl.style.backgroundColor = '#27ae60';
+                cardEl.style.backgroundColor = 'var(--alert-card-green)';
                 syncInfoEl.innerHTML = `
                     <span class="extraction-status success">OK</span>
                     <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>
                 `;
             } else {
-                cardEl.style.backgroundColor = '#dc3545';
+                cardEl.style.backgroundColor = 'var(--alert-card-red)';
                 syncInfoEl.innerHTML = `
                     <span class="extraction-status failed">Pending</span>
                     <span class="d-block" style="opacity: 0.8;">${lastSyncTime}</span>

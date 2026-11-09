@@ -10,14 +10,18 @@
     font-weight: 600;
 }
 .date-filter.active {
-    background-color: #0d6efd !important;
-    border-color: #0d6efd !important;
-    color: white !important;
+    background-color: var(--accent-isp-total) !important;
+    border-color: var(--accent-isp-total) !important;
+    /* White fails on the dark theme's lighter blue (2.4:1); --on-accent is the
+       readable foreground for whichever tone the theme is showing. */
+    color: var(--on-accent) !important;
 }
 .time-filter.active {
     background-color: #f39c12 !important;
     border-color: #f39c12 !important;
-    color: white !important;
+    /* This amber is the same in both themes and white on it is 2.2:1 either
+       way, so the label is simply always dark. */
+    color: #2b1d00 !important;
 }
 {% endblock %}
 
@@ -35,7 +39,7 @@
     <div class="col-6 col-md">
         <div class="stat-card card h-100" style="border-left: 4px solid #27ae60;">
             <div class="card-body text-center py-2">
-                <div class="stat-value" style="color:#27ae60;" id="sumOpen">0</div>
+                <div class="stat-value" style="color: var(--accent-green);" id="sumOpen">0</div>
                 <div class="text-muted small">Open</div>
             </div>
         </div>
@@ -51,7 +55,7 @@
     <div class="col-6 col-md">
         <div class="stat-card card h-100" style="border-left: 4px solid #7c3aed;">
             <div class="card-body text-center py-2">
-                <div class="stat-value" style="color:#7c3aed;" id="sumInZnuny">0</div>
+                <div class="stat-value" style="color: var(--accent-znuny);" id="sumInZnuny">0</div>
                 <div class="text-muted small">In Znuny</div>
             </div>
         </div>
@@ -75,7 +79,7 @@
     <div class="col-6 col-md">
         <div class="stat-card card h-100" style="border-left: 4px solid #8e44ad;">
             <div class="card-body text-center py-2">
-                <div class="stat-value" style="color:#8e44ad;" id="sumZnunyClosed">0</div>
+                <div class="stat-value" style="color: var(--accent-violet);" id="sumZnunyClosed">0</div>
                 <div class="text-muted small">Znuny Closed</div>
             </div>
         </div>
