@@ -158,6 +158,31 @@ python scripts/fix_relocation_ticket_types.py --apply || echo "WARN: relocation 
 echo "Checking one-time bot creator-attribution backfill..."
 python scripts/fix_bot_creator_attribution.py --apply || echo "WARN: bot creator-attribution backfill failed; will retry on next restart"
 
+# Startup repair: un-swap Dhiraagu ticket_id/account on currently-open tickets.
+# A Nov 2026 portal Filament upgrade shifted the orders-table columns; the
+# extractor fix for it kept building the Ticket with the two ids in each other's
+# column, so for a stretch every Dhiraagu ticket was stored with the Service #
+# as its ticket_id. Since ticket_id IS the portal's ticket identity, each
+# already-open order was re-inserted as a new row under its Service # while the
+# original row — no longer "found" under the id being used — was marked
+# complete. This un-swaps the ids and merges those duplicates back into the
+# original rows (preserving their real first-seen created_at, Znuny link and
+# article/site-visit history); see scripts/fix_dhiraagu_id_account_swap.py for
+# the full rationale and how a swap is identified.
+#
+# MUST run before app.py: with the mapping restored, the extractor keys on the
+# Order # again, so an un-repaired original row would be re-found while still
+# marked complete and recorded as a REOPEN — which wipes its Znuny link and
+# raw_dump and resets created_at, destroying the history this repair preserves.
+#
+# DB-only, no network, and deliberately NOT flag-guarded: it only ever touches
+# rows it can prove are swapped, so on a healthy DB it finds nothing and returns
+# in well under a second. Staying unflagged means later restarts also catch
+# stragglers (e.g. a row whose raw_dump hadn't been captured yet on an earlier
+# run). It only takes a DB backup when it's actually about to change something.
+echo "Checking Dhiraagu ticket_id/account swap repair..."
+python scripts/fix_dhiraagu_id_account_swap.py --apply || echo "WARN: Dhiraagu id/account swap repair failed; will retry on next restart"
+
 # Remove stale Chrome profile locks (SingletonLock/SingletonCookie/SingletonSocket)
 # left in the persistent browser sessions by a previous container. These live on
 # the named volume, so on a container RECREATE the new container has a different
