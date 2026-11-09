@@ -91,9 +91,17 @@ class DhiraaguExtractor(BaseExtractor):
     # -- customer name is no longer in the list view at all; it's only
     # available from the detail page's data.customer_name field (see
     # _extract_detail_page_data), which new/backfilled tickets already visit.
+    #
+    # FIELD MAPPING (do not swap these again): the Order # is this portal's
+    # ticket identity -- it goes to ``Ticket.ticket_id`` -- and the Service #
+    # (the circuit-style BB…/TV…/FIB… code) goes to ``Ticket.account``, which
+    # is what the Znuny account search and the ticket formatter's
+    # ``account_id_for_validation`` both expect. Every Dhiraagu row ever stored
+    # follows that mapping, so flipping it creates duplicate records for the
+    # same order and breaks presence/completion tracking.
     COL_SELECT = 0          # Bulk-select checkbox (unused)
-    COL_ORDER_NUM = 1       # Order #
-    COL_SERVICE_NUM = 2     # Service #
+    COL_ORDER_NUM = 1       # Order # -> ticket_id
+    COL_SERVICE_NUM = 2     # Service # -> account
     COL_ADDRESS = 3         # Address
     COL_SERVICE_TYPE = 4    # Service type
     COL_ORDER_TYPE = 5      # Order type (New Service, Relocation, etc.)
@@ -107,15 +115,16 @@ class DhiraaguExtractor(BaseExtractor):
         """Detail-page URL used to capture the raw dump for the formatter.
 
         The order detail page is keyed by the ORDER number (shown as "View #
-        <order>"), which we store in ``ticket.account`` — NOT by ``ticket_id``,
-        which holds the SERVICE number (e.g. FIB7981) and is not a valid
-        /orders/hdc/ path. Prefer the real URL captured during extraction
-        (``portal_url``); fall back to building one from the order number.
+        <order>"), which we store in ``ticket.ticket_id`` — NOT by
+        ``ticket.account``, which holds the SERVICE number (e.g. FIB7981) and is
+        not a valid /orders/hdc/ path. Always prefer the real URL captured during
+        extraction (``portal_url``), which is what the portal's own row links
+        use; only fall back to building one from the order number.
         """
         portal_url = getattr(ticket, "portal_url", None)
         if portal_url:
             return portal_url
-        order_no = getattr(ticket, "account", None)
+        order_no = getattr(ticket, "ticket_id", None)
         if order_no:
             return f"{self.ORDERS_PAGE_URL}/{order_no}?activeRelationManager=notes"
         return None
@@ -258,7 +267,7 @@ class DhiraaguExtractor(BaseExtractor):
             # --- LISTING PHASE (URL-based pagination) ---
             # Walk pages via ?page=N (Livewire/Laravel honor the `page` query param)
             # collecting every row's data WITHOUT visiting detail pages, so the table
-            # state is never disturbed. Dedupe by service_num and stop when a page
+            # state is never disturbed. Dedupe by order_num and stop when a page
             # yields no NEW rows — robust whether or not the per-page select took
             # effect and regardless of the pagination-button markup.
             # Known tickets missing a customer name (it lives only on the detail
@@ -283,16 +292,18 @@ class DhiraaguExtractor(BaseExtractor):
                     self.browser.wait_for_element(self.TABLE_SELECTOR, timeout=15)
                     time.sleep(1)
                 page_orders = self._collect_page_orders()
-                fresh = [o for o in page_orders if o['service_num'] not in seen_ids]
+                # Keyed by order_num: that's the Ticket.ticket_id this portal
+                # stores (see the FIELD MAPPING note on the column indices).
+                fresh = [o for o in page_orders if o['order_num'] not in seen_ids]
                 self.logger.info(f"Page {page_num}: {len(page_orders)} rows ({len(fresh)} new)")
                 if not fresh:
                     break
                 for order_data in fresh:
-                    seen_ids.add(order_data['service_num'])
-                    if self.is_known_ticket(order_data['service_num']):
-                        tickets.append(self.presence_ticket(order_data['service_num']))
-                        known_status_map[order_data['service_num']] = order_data.get('status')
-                        if (order_data['service_num'] in missing_customer_ids
+                    seen_ids.add(order_data['order_num'])
+                    if self.is_known_ticket(order_data['order_num']):
+                        tickets.append(self.presence_ticket(order_data['order_num']))
+                        known_status_map[order_data['order_num']] = order_data.get('status')
+                        if (order_data['order_num'] in missing_customer_ids
                                 and len(backfill_targets) < BACKFILL_LIMIT):
                             backfill_targets.append(order_data)
                     else:
@@ -330,7 +341,7 @@ class DhiraaguExtractor(BaseExtractor):
                     if ticket:
                         tickets.append(ticket)
                 except Exception as e:
-                    self.logger.warning(f"Error enriching {order_data.get('service_num')}: {e}")
+                    self.logger.warning(f"Error enriching {order_data.get('order_num')}: {e}")
                     fallback = self._build_ticket_from_order(order_data)
                     if fallback:
                         tickets.append(fallback)
@@ -351,11 +362,11 @@ class DhiraaguExtractor(BaseExtractor):
                         time.sleep(2)
                         customer = self._extract_detail_page_data().get('customer_name')
                         if customer and self.db.update_ticket_customer(
-                            "dhiraagu", od['service_num'], customer
+                            "dhiraagu", od['order_num'], customer
                         ):
                             filled += 1
                     except Exception as e:
-                        self.logger.debug(f"Customer backfill failed for {od.get('service_num')}: {e}")
+                        self.logger.debug(f"Customer backfill failed for {od.get('order_num')}: {e}")
                 if filled:
                     self.logger.info(f"Backfilled customer name for {filled} known Dhiraagu ticket(s)")
 
@@ -392,7 +403,8 @@ class DhiraaguExtractor(BaseExtractor):
                         # only available from the detail page.
                         'customer_name': None,
                     }
-                    if not order_data['service_num']:
+                    # order_num is the ticket identity — a row without it is unusable.
+                    if not order_data['order_num']:
                         continue
 
                     # Capture the detail-page link (resolved to an absolute URL) so we
@@ -421,9 +433,9 @@ class DhiraaguExtractor(BaseExtractor):
         try:
             return Ticket(
                 portal="dhiraagu",
-                ticket_id=order_data['service_num'],
+                ticket_id=order_data['order_num'],      # Order # is the ticket identity
                 address=order_data.get('address'),
-                account=order_data.get('order_num'),
+                account=order_data.get('service_num'),  # Service # (BB…/TV…/FIB…)
                 customer_name=order_data.get('customer_name'),
                 ticket_type=order_data.get('order_type'),
                 portal_created_at=order_data.get('portal_created_at'),
@@ -459,9 +471,9 @@ class DhiraaguExtractor(BaseExtractor):
             # Create ticket with all data
             return Ticket(
                 portal="dhiraagu",
-                ticket_id=order_data['service_num'],  # Service Number as ticket ID
+                ticket_id=order_data['order_num'],      # Order Number as ticket ID
                 address=address,
-                account=order_data.get('order_num'),  # Order Number as account
+                account=order_data.get('service_num'),  # Service Number as account
                 customer_name=customer_name,
                 ticket_type=order_data.get('order_type'),
                 portal_created_at=portal_created_at,

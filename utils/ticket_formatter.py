@@ -69,7 +69,9 @@ def manual_from_ticket(ticket) -> dict:
 
     Dhiraagu's only manual field is "Order URL ID" — the /orders/hdc/{id} segment
     of the order URL. Derive it from the ticket's portal_url, falling back to the
-    ticket_id (the extractor builds the detail URL from ticket_id anyway).
+    ticket_id, which holds the ORDER number (NOT ticket.account, which holds the
+    Service # — see DhiraaguExtractor's FIELD MAPPING note); that's the same
+    fallback DhiraaguExtractor.detail_url() uses.
 
     Medianet's "Ticket URL" is UUID-based (no template to rebuild it from a
     ticket id parsed out of the dump), so it's taken as-is from portal_url --
