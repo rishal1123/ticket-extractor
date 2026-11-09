@@ -10,6 +10,26 @@
 {% block nav_buttons %}{% endblock %}
 
 {% block extra_css %}
+/* Kiosk mode (wall-mounted monitor): the stat cards, nothing else. base.html
+   hides the navbar; this hides the rest of the dashboard — action buttons,
+   filters, the ticket tables, the Znuny-vs-portal mismatch list and the
+   delayed-ticket analysis — none of which can be read or used from across a
+   room. Written as "everything except the cards" rather than a list of
+   sections to hide, so a section added later stays off the wall by default
+   instead of silently appearing on it.
+   Depends on base.html wrapping {% raw %}{% block content %}{% endraw %} in .container-fluid.px-4. */
+html.kiosk-mode .container-fluid.px-4 > *:not(#statsRow) {
+    display: none !important;
+}
+html.kiosk-mode .container-fluid.px-4 {
+    padding-top: 1rem;
+}
+/* The floating refresh button lives outside that container, and nobody taps a
+   wall monitor — the page auto-refreshes every 30s anyway. The kiosk reveal
+   tab stays, since it's the only way back out. */
+html.kiosk-mode .refresh-btn {
+    display: none !important;
+}
 .portal-name {
     font-size: 1rem;
 }
