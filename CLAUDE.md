@@ -160,6 +160,9 @@ Provides:
 - Loading overlay (full-screen spinner)
 - Ticket detail modal (shared across all pages)
 - Common CSS variables (--primary-color, --secondary-color, --body-bg, --surface-bg, --subtle-bg, --border-color, --muted-color, --heading-color, etc.) with light defaults and a `[data-bs-theme="dark"]` override block
+- Contrast tokens for the colored stat cards — `--accent-*` (per-card number/label color), `--alert-card-*` (solid "needs attention" fills, including the green all-clear and grey paused states), `--alert-card-sub` (sub-label on those fills) and `--on-accent` (text sitting ON an accent fill). **Never write a card color as an inline hex, and never set one from JS as a literal** (`el.style.backgroundColor = '#dc3545'` beats the element's own themed inline style) — a literal keeps its light value in dark mode, which is how `#2c3e50` "Today's ISP" ended up at a 1.4:1 ratio (invisible). Both themes are tuned to AA against their own background: dark lifts what's too dark, light deepens the vivid tones that can't hold 4.5:1 on white
+- Bootstrap's own palette needs re-toning at both ends, and the overrides are in the same block: its `.text-*` utilities and `.btn-outline-*` buttons keep light-mode brand colors in dark mode (`.text-primary` is 3.4:1 on a dark card), while `.text-warning`/`.text-info`/`.btn-outline-warning` and the `.bg-info`/`.bg-warning` badges are the unreadable ones in *light* mode (amber on white is 1.6:1). Portal badge fills stay fixed across themes, so each one's **text** color is chosen per fill rather than defaulting to white
+- Every page is AA-clean in both themes as of this writing; re-run the audit described under Dark Mode before changing a color token
 - Portal badge colors (Dhiraagu orange, Ooredoo purple, ROL blue, Medianet teal) — solid/saturated, unchanged across themes
 
 ### Dark Mode
@@ -167,7 +170,12 @@ Toggle button in the navbar (`#themeToggleBtn`), backed by Bootstrap 5.3's nativ
 
 - **Adding a new template:** if it extends `base.html`, dark mode works automatically — just avoid hardcoding colors in `extra_css`; use the CSS variables above, or Bootstrap's own theme-aware utilities (`bg-body-secondary`, `bg-*-subtle`) instead of the fixed `bg-light`/`bg-dark`/`table-light`/`table-dark` (those do **not** follow `data-bs-theme`, a real gotcha — see `.table-total-row` in `base.html` for the pattern used to replace `table-light` on JS-rendered "Total" summary rows).
 - **Standalone pages** that don't extend `base.html` (currently only `ticket_format.html`, opened in its own tab with no navbar) duplicate the inline flash-avoidance script and define their own small light/dark variable set, but skip the toggle button — they passively follow the stored/OS preference.
-- No dedicated automated tests exist for visual/CSS correctness (not practical to unit test); verified by launching the app and driving it with Playwright across every page in both themes.
+- No dedicated automated tests exist for visual/CSS correctness (not practical to unit test); verified by launching the app and driving it with Playwright across every page in both themes. For contrast specifically, a screenshot isn't enough — walk the DOM in-page, resolve each text node's effective background up the ancestor chain, and compute the WCAG ratio (4.5:1 normal text, 3:1 for ≥24px or ≥18.66px bold). Drive the local app against a **copy** of the DB with the `cfg_*` URL/username/password rows deleted: the scheduler's `_has_db_credentials()` gate then skips both jobs, so no browser launches and no live portal/Znuny traffic happens (`--dashboard-only` does NOT do this — it calls `app.py`'s `run_app()`, lifespan and scheduler included).
+
+### Kiosk Mode
+For a wall-mounted monitor. A navbar button (`#kioskToggleBtn`) turns it on, a small corner tab (`.kiosk-reveal-btn`) turns it back off, and `?kiosk=1` / `?kiosk=0` pins it from a URL — useful for the monitor's own bookmark. The choice persists in `localStorage` (`kioskMode`) and is applied by the inline `<head>` script before first paint, same as the theme. `static/js/kiosk.js` owns the toggle buttons.
+
+`base.html` hides the navbar; **the dashboard additionally hides everything except the stat cards** (`#statsRow`) — action buttons, filters, the ticket tables, the mismatch list, the delayed-ticket analysis and the floating refresh button, none of which can be read or used from across a room. That rule is written as "every child of the content container *except* `#statsRow`", so a section added to the dashboard later stays off the wall by default instead of silently appearing on it; it depends on `base.html` wrapping the `content` block in `.container-fluid.px-4`. Other pages only lose the navbar.
 
 ### Template Blocks
 | Block | Purpose |
@@ -212,7 +220,7 @@ Key functions available to all pages:
 | portal | TEXT | Source portal (dhiraagu, ooredoo, rol, medianet) |
 | ticket_id | TEXT | Portal's ticket ID (UNIQUE with portal) |
 | address | TEXT | Customer address |
-| account | TEXT | Account ID (ROL display ID, Medianet account #) |
+| account | TEXT | Account ID (Dhiraagu Service #, ROL display ID, Medianet account #) |
 | customer_name | TEXT | Customer name |
 | ticket_type | TEXT | Type of ticket |
 | portal_created_at | DATETIME | When ticket was created on ISP portal |
@@ -678,6 +686,18 @@ Key points:
 - `entrypoint.sh` runs DB migration check (`Database()` init) before starting the app
 - `shm_size: '2gb'` in docker-compose for Chromium stability
 
+### Startup data repairs (`entrypoint.sh`)
+
+`entrypoint.sh` runs a series of one-time/self-healing data repairs **before** `exec python app.py`, so they always complete before the scheduler's first extraction/sync cycle. Each is either guarded by an `app_settings` flag (when re-applying would damage fresh data) or inherently idempotent, and each is wired as `python scripts/<name>.py --apply || echo "WARN: …"` so a failure warns and retries next restart instead of blocking startup. Inline SQL migrations (`migration_clear_dhiraagu_dumps_v3`, `migration_clear_stale_reopen_znuny_v2`) live in the script itself; larger ones live in `scripts/`:
+
+| Repair | Guard | Notes |
+|--------|-------|-------|
+| `scripts/fix_relocation_ticket_types.py` | `migration_fix_relocation_ticket_types_v1` flag | Paced against NocBot's rate limit; genuinely blocks startup on a big first run |
+| `scripts/fix_bot_creator_attribution.py` | `migration_fix_bot_creator_attribution_v2` flag | DB-only, fast |
+| `scripts/fix_dhiraagu_id_account_swap.py` | none — idempotent by detection | Un-swaps Dhiraagu `ticket_id`/`account` and merges the duplicate rows that swap created (see the Dhiraagu field-mapping note). Unflagged on purpose so later restarts catch rows whose `raw_dump` arrived after an earlier run; backs the DB up only when it will actually change something. Covered by `tests/test_fix_dhiraagu_swap.py` |
+
+Local (non-Docker) runs start via `python app.py` and therefore **skip** these — run the relevant script by hand after pulling a production DB copy.
+
 ### Persistent Volumes
 
 | Volume | Purpose |
@@ -770,7 +790,8 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - Portal: Filament (Laravel admin panel) at `https://afas.dhiraagu.com.mv`
 - Login: "Third Party" button → email/password form
 - Extraction: Table with pagination (`wire:click="nextPage"`)
-- Detail page: clicked once per **new** ticket only, to read `[id='data.{field}']` selectors (known tickets are presence-only, no click)
+- **Field mapping:** the list view shows both an **Order #** (sequential, e.g. `0129530729`) and a **Service #** (circuit code, e.g. `BB20052084`). Order # → `ticket_id` (this portal's ticket identity, matching Znuny titles' "Order ID:"), Service # → `account` (what the Znuny account search and the formatter's `account_id_for_validation` expect). Their column positions have moved with portal upgrades; the mapping must not. See the FIELD MAPPING note in `extractors/dhiraagu.py`, pinned by `tests/test_dhiraagu_extractor.py`
+- Detail page: clicked once per **new** ticket only, to read `[id='data.{field}']` selectors (known tickets are presence-only, no click). Its URL path is an internal order id (e.g. `/orders/hdc/12856`), so `detail_url()` prefers the captured `portal_url` and only falls back to building one from the order number
 - Notes: not fetched (updates come from Znuny)
 
 ### Ooredoo
