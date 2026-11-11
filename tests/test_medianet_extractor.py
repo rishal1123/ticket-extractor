@@ -91,7 +91,7 @@ class TestAccountFromMutedLine:
     def test_account_line_alone(self, temp_db):
         ext = _extractor(temp_db, muted={'contact': [f"Account-({ACCOUNT_6})"]})
 
-        account, name = ext._parse_contact_account("Rise and Shine")
+        account, name = ext._resolve_contact("Rise and Shine")
 
         assert account == ACCOUNT_6
         assert name == "Rise and Shine"
@@ -102,7 +102,7 @@ class TestAccountFromMutedLine:
             'contact': ["7771234", "someone@example.com", f"Account-({ACCOUNT_6})"],
         })
 
-        account, _ = ext._parse_contact_account("Rise and Shine")
+        account, _ = ext._resolve_contact("Rise and Shine")
 
         assert account == ACCOUNT_6
 
@@ -110,14 +110,14 @@ class TestAccountFromMutedLine:
         """Tolerates the label being renamed again, as it was once already."""
         ext = _extractor(temp_db, muted={'contact': [f"({ACCOUNT_6})"]})
 
-        account, _ = ext._parse_contact_account("Rise and Shine")
+        account, _ = ext._resolve_contact("Rise and Shine")
 
         assert account == ACCOUNT_6
 
     def test_name_is_stripped_of_parens_even_when_muted_line_wins(self, temp_db):
         ext = _extractor(temp_db, muted={'contact': [f"Account-({ACCOUNT_6})"]})
 
-        account, name = ext._parse_contact_account(f"Rise and Shine ({ACCOUNT_16})")
+        account, name = ext._resolve_contact(f"Rise and Shine ({ACCOUNT_16})")
 
         assert account == ACCOUNT_6
         assert name == "Rise and Shine"
@@ -130,7 +130,7 @@ class TestFallbackToContactName:
         """The portal's 'Account-()' form must not suppress the name source."""
         ext = _extractor(temp_db, muted={'contact': ["Account-()"]})
 
-        account, name = ext._parse_contact_account(f"Rise and Shine ({ACCOUNT_16})")
+        account, name = ext._resolve_contact(f"Rise and Shine ({ACCOUNT_16})")
 
         assert account == ACCOUNT_16
         assert name == "Rise and Shine"
@@ -138,7 +138,7 @@ class TestFallbackToContactName:
     def test_phone_only_muted_span_falls_back_to_name(self, temp_db):
         ext = _extractor(temp_db, muted={'contact': ["7771234"]})
 
-        account, name = ext._parse_contact_account(f"Rise and Shine ({ACCOUNT_16})")
+        account, name = ext._resolve_contact(f"Rise and Shine ({ACCOUNT_16})")
 
         assert account == ACCOUNT_16
         assert name == "Rise and Shine"
@@ -146,7 +146,7 @@ class TestFallbackToContactName:
     def test_no_contact_card_at_all_falls_back_to_name(self, temp_db):
         ext = _extractor(temp_db, muted={})
 
-        account, name = ext._parse_contact_account(f"Rise and Shine ({ACCOUNT_16})")
+        account, name = ext._resolve_contact(f"Rise and Shine ({ACCOUNT_16})")
 
         assert account == ACCOUNT_16
         assert name == "Rise and Shine"
@@ -158,7 +158,7 @@ class TestFallbackToPageText:
     def test_parses_body_text_when_dom_sources_miss(self, temp_db):
         ext = _extractor(temp_db, muted={}, body_text=BODY_POST_REFRESH)
 
-        account, name = ext._parse_contact_account("Rise and Shine")
+        account, name = ext._resolve_contact("Rise and Shine")
 
         assert account == ACCOUNT_16
         assert name == "Rise and Shine"
@@ -169,16 +169,35 @@ class TestFallbackToPageText:
 
         ext = _extractor(temp_db, muted={}, body_text=BODY_POST_REFRESH)
 
-        account, _ = ext._parse_contact_account("Rise and Shine")
+        account, _ = ext._resolve_contact("Rise and Shine")
 
         assert account == MedianetFormatter().account_id_for_validation(BODY_POST_REFRESH)
+
+    def test_contact_card_absent_recovers_both_fields(self, temp_db):
+        """The S41882 shape: the card's XHR had not landed, so the DOM gave
+        neither name nor account, yet the page text holds both."""
+        ext = _extractor(temp_db, muted={}, body_text=BODY_POST_REFRESH)
+
+        account, name = ext._resolve_contact(None)
+
+        assert account == ACCOUNT_16
+        assert name == "Rise and Shine"
+
+    def test_dom_name_is_not_overwritten_by_page_text(self, temp_db):
+        """The fallback fills gaps; it must not override what the DOM gave."""
+        ext = _extractor(temp_db, muted={}, body_text=BODY_POST_REFRESH)
+
+        account, name = ext._resolve_contact("Preferred DOM Name")
+
+        assert account == ACCOUNT_16
+        assert name == "Preferred DOM Name"
 
 
 class TestNoAccountAvailable:
     def test_returns_none_and_keeps_name(self, temp_db):
         ext = _extractor(temp_db, muted={'contact': ["7771234"]}, body_text="Contact\n")
 
-        account, name = ext._parse_contact_account("Rise and Shine")
+        account, name = ext._resolve_contact("Rise and Shine")
 
         assert account is None
         assert name == "Rise and Shine"
@@ -186,7 +205,7 @@ class TestNoAccountAvailable:
     def test_handles_missing_contact_name(self, temp_db):
         ext = _extractor(temp_db, muted={}, body_text="")
 
-        account, name = ext._parse_contact_account(None)
+        account, name = ext._resolve_contact(None)
 
         assert account is None
         assert name is None
@@ -202,3 +221,27 @@ class TestSiblingDetailTexts:
         ext = _extractor(temp_db, muted={})
 
         assert ext._get_sibling_detail_texts('assignedUserName') == []
+
+
+class TestWaitForContactCard:
+    """The card is read only after its own XHR lands, not after a blind sleep."""
+
+    def test_waits_for_the_contact_selector(self, temp_db):
+        ext = _extractor(temp_db)
+        waited = []
+        ext.browser.page.wait_for_selector = lambda sel, timeout=None: waited.append((sel, timeout))
+
+        assert ext._wait_for_contact_card("S41882") is True
+        assert waited == [(MedianetExtractor.CONTACT_NAME_SELECTOR,
+                           MedianetExtractor.CONTACT_CARD_TIMEOUT)]
+
+    def test_timeout_is_not_fatal(self, temp_db):
+        """A card that never renders still leaves the rest of the page parseable."""
+        ext = _extractor(temp_db)
+
+        def boom(sel, timeout=None):
+            raise RuntimeError("timeout")
+
+        ext.browser.page.wait_for_selector = boom
+
+        assert ext._wait_for_contact_card("S41882") is False

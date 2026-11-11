@@ -695,6 +695,7 @@ Key points:
 | `scripts/fix_relocation_ticket_types.py` | `migration_fix_relocation_ticket_types_v1` flag | Paced against NocBot's rate limit; genuinely blocks startup on a big first run |
 | `scripts/fix_bot_creator_attribution.py` | `migration_fix_bot_creator_attribution_v2` flag | DB-only, fast |
 | `scripts/fix_dhiraagu_id_account_swap.py` | none — idempotent by detection | Un-swaps Dhiraagu `ticket_id`/`account` and merges the duplicate rows that swap created (see the Dhiraagu field-mapping note). Unflagged on purpose so later restarts catch rows whose `raw_dump` arrived after an earlier run; backs the DB up only when it will actually change something. Covered by `tests/test_fix_dhiraagu_swap.py` |
+| `scripts/fix_medianet_contact_fields.py` | none — only ever fills empty columns | Recovers NULL Medianet `account`/`customer_name` from `raw_dump` (see the Medianet account-number note). Unflagged so later restarts catch rows whose dump arrived later — the dump pass backfills only 5 older tickets per cycle. Covered by `tests/test_fix_medianet_contact_fields.py` |
 
 Local (non-Docker) runs start via `python app.py` and therefore **skip** these — run the relevant script by hand after pulling a production DB copy.
 
@@ -815,7 +816,8 @@ The background scheduler (managed by `SchedulerService` in `services/scheduler_s
 - List view's default filter ("Closed Status is false") already excludes closed tickets, mirroring the old board's skip-Closed-column behavior; the extractor defensively removes any other filter badge (e.g. a leftover queue/type filter) so every queue is visible in one pass — no per-type dropdown iteration needed
 - Page size is forced to 50 rows/page (`Shows` dropdown); pagination via the `Next` link is followed until exhausted
 - Higher memory limit: 1500 MB (vs 800 MB default)
-- Account # extracted from contact name parentheses via regex
+- **Account # / customer name:** the portal's Oct 2026 UI refresh moved the account number out of the contact name (`Rise and Shine (7610023404100858)`) onto its own muted line in the Contact card (`Account-(282326)`), and renders `Account-()` when the contact has no account id. `_resolve_contact()` tries every muted span in the card (labelled form first, then any parenthesised digits), then the in-name parentheses, then a shape-based parse of the page text via `MedianetFormatter._contact()` — each a real fallback, because treating them as alternatives is what silently stored NULL accounts. `account` is what the Znuny account search (sync Step 1.7) and the formatter's `account_id_for_validation` key off, so a NULL there breaks matching for that ticket. Pinned by `tests/test_medianet_extractor.py`
+- **The Contact card loads on its own XHR**, after the breadcrumb `TICKET_NUMBER_SELECTOR` renders, so the detail parse waits for `CONTACT_NAME_SELECTOR` (`CONTACT_CARD_TIMEOUT`) rather than sleeping. A blind sleep raced it and zeroed *both* `account` and `customer_name`; the later raw-dump pass (its own navigation, longer settle) saw the data fine, which is why those rows are recoverable from `raw_dump`. A timeout is non-fatal — the page-text fallback still covers both fields
 - List rows carry a direct UUID href to the ticket detail page but not the full field set (address/account/type live only on the detail page). Known tickets are presence-only (id from the row is enough); the detail page is opened once per **new** ticket only, navigating straight to its href. Notes not fetched
 
 ## Formatter Package (`formatter/`)

@@ -82,6 +82,8 @@ class MedianetExtractor(BaseExtractor):
 
     # Longer timeout for this SPA (default 10s is too short)
     SPA_TIMEOUT = 60000
+    # The Contact card arrives on its own XHR, after the breadcrumb renders
+    CONTACT_CARD_TIMEOUT = 8000
     # Login page URL (lighter than the full SPA board)
     LOGIN_URL = "https://app.crm.com/account/login"
 
@@ -259,7 +261,7 @@ class MedianetExtractor(BaseExtractor):
                     self.logger.info(f"Processing new ticket {i+1}/{len(list_entries)}: {ticket_id}")
                     self._goto_spa(entry["portal_url"])
                     self.browser.page.wait_for_selector(self.TICKET_NUMBER_SELECTOR, timeout=15000)
-                    time.sleep(1)
+                    self._wait_for_contact_card(ticket_id)
 
                     ticket = self._parse_ticket_detail_page("")
                     if ticket:
@@ -372,7 +374,7 @@ class MedianetExtractor(BaseExtractor):
 
             # Contact information
             contact_name_raw = self._get_element_text(self.CONTACT_NAME_SELECTOR)
-            account_number, contact_name = self._parse_contact_account(contact_name_raw)
+            account_number, contact_name = self._resolve_contact(contact_name_raw)
             if not account_number:
                 self.logger.warning(
                     f"No account number found for ticket {ticket_id} "
@@ -473,62 +475,96 @@ class MedianetExtractor(BaseExtractor):
             self.logger.debug(f"Could not get element text for {selector}: {e}")
         return None
 
-    def _parse_contact_account(self, contact_name_raw: str | None) -> tuple[str | None, str | None]:
-        """Resolve (account_number, cleaned_contact_name) from the Contact card.
+    def _wait_for_contact_card(self, ticket_id: str) -> bool:
+        """Wait for the Contact card to render before reading it.
 
-        Three independent sources are tried in order. Each later one is a true
-        *fallback*: an earlier source that is present but yields no digits must
-        not suppress the others. That is the bug this replaces — it stopped at
-        the first non-empty muted sibling, so a contact card whose first muted
-        span was a phone/email, or whose account line was the empty
-        "Account-()" form, stored a NULL account even when the number was
-        sitting in the contact name.
+        The SPA renders the breadcrumb (and so TICKET_NUMBER_SELECTOR) before
+        the Contact card's own XHR lands, so a blind sleep raced it: the parse
+        read an absent card and stored NULL account AND NULL customer_name,
+        while the later raw-dump pass — a second navigation with a longer
+        settle — saw the data fine. Wait for the card itself instead.
 
-        1. The muted "Account-(id)" lines of the Contact card (current layout).
-        2. Parentheses inside the contact name, "Name (id)" (pre-refresh layout).
-        3. The page's plain text, parsed by ``MedianetFormatter``, which
-           identifies lines by shape rather than by CSS class and so survives
-           DOM changes the selectors above do not.
+        Returns True if the card appeared. A timeout is not fatal: the rest of
+        the page is still worth parsing, and _resolve_contact() falls back to
+        the page text.
         """
-        contact_name = contact_name_raw
+        try:
+            self.browser.page.wait_for_selector(
+                self.CONTACT_NAME_SELECTOR, timeout=self.CONTACT_CARD_TIMEOUT
+            )
+            return True
+        except Exception:
+            self.logger.warning(
+                f"Contact card did not render for {ticket_id} within "
+                f"{self.CONTACT_CARD_TIMEOUT}ms - falling back to page text"
+            )
+            time.sleep(1)
+            return False
 
-        # Source 2's cleanup applies regardless of which source wins: the name
-        # should never keep a "(1234)" suffix in customer_name.
-        in_name = None
+    def _resolve_contact(self, contact_name_raw: str | None) -> tuple[str | None, str | None]:
+        """Resolve (account_number, customer_name) from the Contact card.
+
+        Several independent sources are tried in order, and each later one is a
+        true *fallback* — an earlier source that is present but unusable must
+        not suppress the others. Two separate defects made that necessary:
+
+        * The Oct 2026 refresh fix stopped at the first non-empty muted
+          sibling, so a card whose first muted span was a phone/email, or
+          whose account line was the empty "Account-()" form the portal
+          renders for contacts with no id, stored a NULL account even though
+          the number was sitting in the contact name.
+        * The card is loaded by its own XHR, so it could be missing from the
+          DOM entirely at parse time, which zeroed *both* fields.
+
+        Sources: the muted "Account-(id)" lines of the card; the parentheses
+        inside the contact name ("Name (id)", the pre-refresh layout); and
+        finally the page's plain text parsed by ``MedianetFormatter``, which
+        identifies lines by shape rather than by CSS class and so survives
+        both a late-rendering card and DOM changes the selectors cannot.
+        """
+        account = None
+        name = contact_name_raw
+
+        # The in-name parentheses are both an account source and a name
+        # cleanup: customer_name should never keep a "(1234)" suffix,
+        # whichever source ultimately supplies the account.
+        in_name_account = None
         if contact_name_raw and '(' in contact_name_raw:
             match = self.ACCOUNT_IN_NAME_RE.search(contact_name_raw)
             if match:
-                in_name = match.group(1)
-                contact_name = contact_name_raw.split('(')[0].strip() or None
+                in_name_account = match.group(1)
+                name = contact_name_raw.split('(')[0].strip() or None
 
-        # Source 1: muted "Account-(id)" siblings. Scan every muted span in the
-        # card, preferring an explicitly labelled one, then any parenthesised
-        # digit run, since the portal has already relabelled this field once.
+        # Muted siblings of the card. Scan them all, preferring an explicitly
+        # labelled "Account-(id)" over any bare parenthesised digit run, since
+        # the portal has already relabelled this field once.
         metas = self._get_sibling_detail_texts('contact')
-        for meta in metas:
-            match = self.ACCOUNT_META_RE.search(meta)
-            if match:
-                return match.group(1), contact_name
-        for meta in metas:
-            match = self.ACCOUNT_IN_NAME_RE.search(meta)
-            if match:
-                return match.group(1), contact_name
-
-        # Source 2
-        if in_name:
-            return in_name, contact_name
-
-        # Source 3: shape-based parse of the page text, shared with the
-        # formatter so both agree on what this portal's account number is.
-        try:
-            body_text = self.browser.page.inner_text("body")
-            account = MedianetFormatter().account_id_for_validation(body_text)
+        for pattern in (self.ACCOUNT_META_RE, self.ACCOUNT_IN_NAME_RE):
+            for meta in metas:
+                match = pattern.search(meta)
+                if match:
+                    account = match.group(1)
+                    break
             if account:
-                return account.strip() or None, contact_name
-        except Exception as e:
-            self.logger.debug(f"Formatter account fallback failed: {e}")
+                break
 
-        return None, contact_name
+        if not account:
+            account = in_name_account
+
+        # Shape-based parse of the page text, shared with the formatter so the
+        # two always agree on this portal's account number. Supplies whichever
+        # of the two fields the DOM did not — including both, when the card
+        # had not rendered at all.
+        if not account or not name:
+            try:
+                body_text = self.browser.page.inner_text("body")
+                parsed_name, parsed_account, _, _ = MedianetFormatter()._contact(body_text)
+                account = account or (parsed_account or "").strip() or None
+                name = name or (parsed_name or "").strip() or None
+            except Exception as e:
+                self.logger.debug(f"Formatter contact fallback failed: {e}")
+
+        return account, name
 
     def _get_sibling_detail_texts(self, data_test: str) -> list[str]:
         """Get the muted secondary texts next to a detail-page field.

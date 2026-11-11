@@ -183,6 +183,24 @@ python scripts/fix_bot_creator_attribution.py --apply || echo "WARN: bot creator
 echo "Checking Dhiraagu ticket_id/account swap repair..."
 python scripts/fix_dhiraagu_id_account_swap.py --apply || echo "WARN: Dhiraagu id/account swap repair failed; will retry on next restart"
 
+# Startup repair: recover NULL Medianet account/customer_name from raw_dump.
+# Medianet's Oct 2026 UI refresh moved the account number onto its own line in
+# the Contact card; the extractor's handling of that layout both short-circuited
+# on an unparseable muted span and raced the card's XHR, so rows were stored
+# with a NULL account and sometimes a NULL customer_name too. Those rows never
+# self-heal — Medianet is extract-once, so a known ticket is registered as
+# present without its detail page being reopened. The raw dump is captured in a
+# separate, later pass that did see the contact data, so the formatter can parse
+# it back out; see scripts/fix_medianet_contact_fields.py for the validation.
+#
+# DB-only, no network, and deliberately NOT flag-guarded: it only ever writes
+# into columns that are empty, so on a healthy DB it finds nothing and returns
+# in well under a second. Staying unflagged means later restarts also catch
+# stragglers, which matters here because the dump-capture pass backfills only
+# five older tickets per cycle. Backs up the DB only when it will change data.
+echo "Checking Medianet contact-field recovery..."
+python scripts/fix_medianet_contact_fields.py --apply || echo "WARN: Medianet contact-field recovery failed; will retry on next restart"
+
 # Remove stale Chrome profile locks (SingletonLock/SingletonCookie/SingletonSocket)
 # left in the persistent browser sessions by a previous container. These live on
 # the named volume, so on a container RECREATE the new container has a different
