@@ -4,7 +4,7 @@ from datetime import datetime
 
 from .base import BaseExtractor
 from models.ticket import Ticket
-from formatter.model.formatters import clean_building_code
+from formatter.model.formatters import MedianetFormatter, clean_building_code
 
 
 class MedianetExtractor(BaseExtractor):
@@ -68,6 +68,15 @@ class MedianetExtractor(BaseExtractor):
     # Notes section
     NOTES_CARD_SELECTOR = "[data-test='notesCard']"
     NOTES_CONTENT_SELECTOR = "[data-test='notesCard'] .card-body"
+
+    # Account id as rendered on its own line under the contact name since the
+    # Oct 2026 UI refresh, e.g. "Account-(282326)". The portal renders
+    # "Account-()" with no digits when the contact has no account id, so this
+    # must require at least one digit rather than matching the empty form.
+    ACCOUNT_META_RE = re.compile(r"account\s*-?\s*\((\d+)\)", re.IGNORECASE)
+    # Account id embedded in the contact name itself (pre-refresh layout),
+    # e.g. "Rise and Shine (7610023404100858)".
+    ACCOUNT_IN_NAME_RE = re.compile(r"\((\d+)\)")
 
     # ============================================================
 
@@ -361,24 +370,14 @@ class MedianetExtractor(BaseExtractor):
             # Status from badge
             status = self._get_element_text(self.TICKET_STATUS_BADGE_SELECTOR) or board_status
 
-            # Contact information. The account number used to be embedded in the
-            # contact name itself, e.g. "Rise and Shine (7610023404100858)"; the
-            # portal's Oct 2026 UI refresh moved it to a separate "Account-(id)"
-            # line under the name, so try that first and fall back to the old
-            # in-name parentheses for resilience against either format.
-            contact_name = self._get_element_text(self.CONTACT_NAME_SELECTOR)
-            account_number = None
-
-            account_meta = self._get_sibling_detail_text('contact')
-            if account_meta:
-                match = re.search(r'\((\d+)\)', account_meta)
-                if match:
-                    account_number = match.group(1)
-            elif contact_name and '(' in contact_name:
-                match = re.search(r'\((\d+)\)', contact_name)
-                if match:
-                    account_number = match.group(1)
-                contact_name = contact_name.split('(')[0].strip()
+            # Contact information
+            contact_name_raw = self._get_element_text(self.CONTACT_NAME_SELECTOR)
+            account_number, contact_name = self._parse_contact_account(contact_name_raw)
+            if not account_number:
+                self.logger.warning(
+                    f"No account number found for ticket {ticket_id} "
+                    f"(contact: {contact_name_raw!r})"
+                )
 
             # Address - same building-code-only style the Medianet ticket formatter
             # displays (badge tag and neighborhood/area dropped, e.g.
@@ -402,8 +401,11 @@ class MedianetExtractor(BaseExtractor):
             # Team. Previously its own data-test span; the Oct 2026 UI refresh
             # folded it into the "Assigned to" card as "User · TEAM" text next
             # to the assignee's name, with no dedicated selector of its own.
-            assigned_meta = self._get_sibling_detail_text('assignedUserName')
-            team = assigned_meta.split('·')[-1].strip() if assigned_meta and '·' in assigned_meta else None
+            team = None
+            for meta in self._get_sibling_detail_texts('assignedUserName'):
+                if '·' in meta:
+                    team = meta.split('·')[-1].strip()
+                    break
             if not team:
                 team = self._get_element_text(self.TEAM_SELECTOR)
 
@@ -471,28 +473,87 @@ class MedianetExtractor(BaseExtractor):
             self.logger.debug(f"Could not get element text for {selector}: {e}")
         return None
 
-    def _get_sibling_detail_text(self, data_test: str) -> str | None:
-        """Get the muted 'label · value' text next to a detail-page field.
+    def _parse_contact_account(self, contact_name_raw: str | None) -> tuple[str | None, str | None]:
+        """Resolve (account_number, cleaned_contact_name) from the Contact card.
+
+        Three independent sources are tried in order. Each later one is a true
+        *fallback*: an earlier source that is present but yields no digits must
+        not suppress the others. That is the bug this replaces — it stopped at
+        the first non-empty muted sibling, so a contact card whose first muted
+        span was a phone/email, or whose account line was the empty
+        "Account-()" form, stored a NULL account even when the number was
+        sitting in the contact name.
+
+        1. The muted "Account-(id)" lines of the Contact card (current layout).
+        2. Parentheses inside the contact name, "Name (id)" (pre-refresh layout).
+        3. The page's plain text, parsed by ``MedianetFormatter``, which
+           identifies lines by shape rather than by CSS class and so survives
+           DOM changes the selectors above do not.
+        """
+        contact_name = contact_name_raw
+
+        # Source 2's cleanup applies regardless of which source wins: the name
+        # should never keep a "(1234)" suffix in customer_name.
+        in_name = None
+        if contact_name_raw and '(' in contact_name_raw:
+            match = self.ACCOUNT_IN_NAME_RE.search(contact_name_raw)
+            if match:
+                in_name = match.group(1)
+                contact_name = contact_name_raw.split('(')[0].strip() or None
+
+        # Source 1: muted "Account-(id)" siblings. Scan every muted span in the
+        # card, preferring an explicitly labelled one, then any parenthesised
+        # digit run, since the portal has already relabelled this field once.
+        metas = self._get_sibling_detail_texts('contact')
+        for meta in metas:
+            match = self.ACCOUNT_META_RE.search(meta)
+            if match:
+                return match.group(1), contact_name
+        for meta in metas:
+            match = self.ACCOUNT_IN_NAME_RE.search(meta)
+            if match:
+                return match.group(1), contact_name
+
+        # Source 2
+        if in_name:
+            return in_name, contact_name
+
+        # Source 3: shape-based parse of the page text, shared with the
+        # formatter so both agree on what this portal's account number is.
+        try:
+            body_text = self.browser.page.inner_text("body")
+            account = MedianetFormatter().account_id_for_validation(body_text)
+            if account:
+                return account.strip() or None, contact_name
+        except Exception as e:
+            self.logger.debug(f"Formatter account fallback failed: {e}")
+
+        return None, contact_name
+
+    def _get_sibling_detail_texts(self, data_test: str) -> list[str]:
+        """Get the muted secondary texts next to a detail-page field.
 
         Several detail-page cards (Contact, Assigned to) render as a
         `.inline-editable` block: a wrapper div around the primary
-        `[data-test=...]` span, with a `span.text-muted` sibling holding
-        secondary text (e.g. "Account-(282326)" or "User · HDC").
+        `[data-test=...]` span, plus `span.text-muted` siblings holding
+        secondary text (e.g. "Account-(282326)" or "User · HDC"). A card can
+        hold several of them (phone, email, account), in an order the portal
+        is free to change, so return them all and let the caller pick.
         """
         try:
             handle = self.browser.page.query_selector(f"[data-test='{data_test}']")
             if not handle:
-                return None
-            text = handle.evaluate(
+                return []
+            texts = handle.evaluate(
                 "el => { const card = el.closest('.inline-editable'); "
-                "if (!card) return null; "
-                "const sib = card.querySelector('span.text-muted'); "
-                "return sib ? sib.textContent.trim() : null; }"
+                "if (!card) return []; "
+                "return Array.from(card.querySelectorAll('span.text-muted')) "
+                "  .map(s => (s.textContent || '').trim()).filter(Boolean); }"
             )
-            return text or None
+            return list(texts or [])
         except Exception as e:
-            self.logger.debug(f"Could not get sibling detail text for {data_test}: {e}")
-            return None
+            self.logger.debug(f"Could not get sibling detail texts for {data_test}: {e}")
+            return []
 
     def _extract_notes(self) -> str | None:
         """Extract notes from the Notes card on the detail page."""
